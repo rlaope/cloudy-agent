@@ -263,8 +263,13 @@ func readMeta(id, path string, modTime time.Time) (Meta, error) {
 	return m, nil
 }
 
-// logsDir returns the path to the session log directory.
+// logsDir returns the path to the session log directory. It honours
+// $CLOUDY_HOME (used by bastion / multi-user deployments) before falling
+// back to ~/.cloudy/logs.
 func logsDir() (string, error) {
+	if ch := os.Getenv("CLOUDY_HOME"); ch != "" {
+		return filepath.Join(ch, "logs"), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("session: home dir: %w", err)

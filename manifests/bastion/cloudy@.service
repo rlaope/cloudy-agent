@@ -1,0 +1,30 @@
+[Unit]
+Description=cloudy session tail for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+Environment=CLOUDY_HOME=/var/cloudy/%i
+# Set proxy / model env in /etc/profile.d/cloudy.sh OR uncomment below.
+# Environment=HTTPS_PROXY=http://proxy.internal:3128
+# Environment=NO_PROXY=*.internal,10.0.0.0/8,127.0.0.1,localhost
+ExecStart=/usr/local/bin/cloudy doctor --quiet
+Restart=on-failure
+RestartSec=30s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/cloudy/%i
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

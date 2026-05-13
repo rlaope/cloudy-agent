@@ -86,7 +86,8 @@ func buildSkillMarkdown(s *skillType) string {
 		}
 		fmt.Fprintln(&b)
 	}
-	fmt.Fprintln(&b, "## System prompt\n")
+	fmt.Fprintln(&b, "## System prompt")
+	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, s.SystemPrompt)
 	return b.String()
 }

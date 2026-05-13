@@ -178,15 +178,20 @@ func Save(path string, cfg Config) error {
 	return nil
 }
 
-// Path returns the resolved path to the user's config file. It honours
-// XDG_CONFIG_HOME when set; otherwise it falls back to ~/.cloudy/config.yaml.
+// Path returns the resolved path to the user's config file. Resolution order:
+// 1. $CLOUDY_HOME/config.yaml — explicit cloudy home, used by bastion
+//    deployments to give each shell user their own state directory.
+// 2. $XDG_CONFIG_HOME/cloudy/config.yaml — XDG-conformant location.
+// 3. ~/.cloudy/config.yaml — default.
 func Path() string {
+	if ch := os.Getenv("CLOUDY_HOME"); ch != "" {
+		return filepath.Join(ch, "config.yaml")
+	}
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		return filepath.Join(xdg, "cloudy", "config.yaml")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		// Best-effort fallback: use a relative path so callers don't panic.
 		return filepath.Join(".cloudy", "config.yaml")
 	}
 	return filepath.Join(home, ".cloudy", "config.yaml")

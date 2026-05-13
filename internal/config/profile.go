@@ -133,10 +133,13 @@ func SaveProfile(path string, p Profile) error {
 	return nil
 }
 
-// ProfilePath returns the resolved path to the cluster profile file. It
-// honours XDG_CONFIG_HOME when set; otherwise it falls back to
-// ~/.cloudy/profile.yaml.
+// ProfilePath returns the resolved path to the cluster profile file.
+// Resolution order matches Path: $CLOUDY_HOME, then $XDG_CONFIG_HOME/cloudy,
+// then ~/.cloudy.
 func ProfilePath() string {
+	if ch := os.Getenv("CLOUDY_HOME"); ch != "" {
+		return filepath.Join(ch, "profile.yaml")
+	}
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		return filepath.Join(xdg, "cloudy", "profile.yaml")
 	}
