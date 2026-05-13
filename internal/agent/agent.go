@@ -1,7 +1,7 @@
 // Package agent implements the cloudy ReAct (Reason+Act) loop.
 //
 // The agent drives a conversation with an LLM, dispatches tool calls to a
-// Registry, streams output to a render.Stream, and terminates when the model
+// Registry, emits incremental output to a render.Sink, and terminates when the model
 // produces a final text-only response or a safety limit is hit.
 //
 // Cross-cutting policies (duplicate-call detection, cost guard, audit log,
@@ -99,9 +99,9 @@ func New(opts Options) (*Agent, error) {
 }
 
 // Run executes the ReAct loop for userInput, streaming tokens and tool-call
-// blocks to stream. It returns the updated conversation history (including
+// blocks to sink. It returns the updated conversation history (including
 // the new user turn and all assistant/tool turns) or a typed error.
-func (a *Agent) Run(ctx context.Context, userInput string, stream *render.Stream) ([]llm.Message, error) {
+func (a *Agent) Run(ctx context.Context, userInput string, sink render.Sink) ([]llm.Message, error) {
 	sysPrompt := a.buildSystemPrompt()
 
 	msgs := make([]llm.Message, 0, len(a.opts.History)+2)
@@ -115,7 +115,7 @@ func (a *Agent) Run(ctx context.Context, userInput string, stream *render.Stream
 	defer func() { a.fireOnStop(ctx, finalErr) }()
 
 	for step := 0; step < a.opts.MaxSteps; step++ {
-		assistant, err := a.streamAssistantTurn(ctx, msgs, llmTools, stream)
+		assistant, err := a.streamAssistantTurn(ctx, msgs, llmTools, sink)
 		if err != nil {
 			finalErr = err
 			return msgs, err
@@ -129,7 +129,7 @@ func (a *Agent) Run(ctx context.Context, userInput string, stream *render.Stream
 		}
 
 		for _, tc := range assistant.ToolCalls {
-			toolMsg, err := a.dispatchTool(ctx, tc, stream)
+			toolMsg, err := a.dispatchTool(ctx, tc, sink)
 			if err != nil {
 				finalErr = err
 				msgs = append(msgs, toolMsg)
@@ -144,7 +144,7 @@ func (a *Agent) Run(ctx context.Context, userInput string, stream *render.Stream
 
 // streamAssistantTurn drains a single LLM streaming response, accumulating
 // text and tool calls.
-func (a *Agent) streamAssistantTurn(ctx context.Context, msgs []llm.Message, llmTools []llm.Tool, stream *render.Stream) (llm.Message, error) {
+func (a *Agent) streamAssistantTurn(ctx context.Context, msgs []llm.Message, llmTools []llm.Tool, sink render.Sink) (llm.Message, error) {
 	req := llm.Request{
 		Model:    a.opts.Model,
 		Messages: msgs,
@@ -169,12 +169,12 @@ func (a *Agent) streamAssistantTurn(ctx context.Context, msgs []llm.Message, llm
 		}
 		if chunk.DeltaText != "" {
 			textBuf.WriteString(chunk.DeltaText)
-			if stream != nil {
-				stream.WriteToken(chunk.DeltaText)
+			if sink != nil {
+				sink.WriteToken(chunk.DeltaText)
 			}
 		}
-		if chunk.Usage != nil && stream != nil {
-			stream.RecordUsage(*chunk.Usage)
+		if chunk.Usage != nil && sink != nil {
+			sink.RecordUsage(*chunk.Usage)
 		}
 		if chunk.ToolCall != nil {
 			tc := chunk.ToolCall
@@ -206,7 +206,7 @@ func (a *Agent) streamAssistantTurn(ctx context.Context, msgs []llm.Message, llm
 
 // dispatchTool runs one tool call through the hook chain and returns the
 // tool-result message destined for the LLM.
-func (a *Agent) dispatchTool(ctx context.Context, tc llm.ToolCall, stream *render.Stream) (llm.Message, error) {
+func (a *Agent) dispatchTool(ctx context.Context, tc llm.ToolCall, sink render.Sink) (llm.Message, error) {
 	for _, h := range a.hooks {
 		if err := h.BeforeToolCall(ctx, tc); err != nil {
 			return llm.Message{
@@ -217,7 +217,7 @@ func (a *Agent) dispatchTool(ctx context.Context, tc llm.ToolCall, stream *rende
 		}
 	}
 
-	obs, runErr := a.runTool(ctx, tc, stream)
+	obs, runErr := a.runTool(ctx, tc, sink)
 
 	for _, h := range a.hooks {
 		var hookErr error
@@ -238,27 +238,27 @@ func (a *Agent) dispatchTool(ctx context.Context, tc llm.ToolCall, stream *rende
 	}, nil
 }
 
-// runTool looks up and executes a single tool call, emitting to stream. If
+// runTool looks up and executes a single tool call, emitting to sink. If
 // the tool is unknown it returns a descriptive error observation rather
 // than aborting.
-func (a *Agent) runTool(ctx context.Context, tc llm.ToolCall, stream *render.Stream) (tools.Observation, error) {
-	if stream != nil {
-		stream.BeginToolCall(tc.Name, string(tc.Arguments))
+func (a *Agent) runTool(ctx context.Context, tc llm.ToolCall, sink render.Sink) (tools.Observation, error) {
+	if sink != nil {
+		sink.BeginToolCall(tc.Name, string(tc.Arguments))
 	}
 	tool, ok := a.registry.Get(tc.Name)
 	if !ok {
 		err := fmt.Errorf("tool %q is not available", tc.Name)
-		if stream != nil {
-			stream.EndToolCall("", err)
+		if sink != nil {
+			sink.EndToolCall("", err)
 		}
 		return tools.Observation{Text: err.Error()}, err
 	}
 	obs, err := tool.Run(ctx, tc.Arguments)
-	if stream != nil {
+	if sink != nil {
 		if err != nil {
-			stream.EndToolCall("", err)
+			sink.EndToolCall("", err)
 		} else {
-			stream.EndToolCall(obs.Text, nil)
+			sink.EndToolCall(obs.Text, nil)
 		}
 	}
 	return obs, err
