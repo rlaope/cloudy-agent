@@ -75,15 +75,25 @@ func RegisterAll(reg *tools.Registry, c Clients, skipReasons []string) {
 			newPprofHeapTool(c.Pprof),
 			newPprofAllocsTool(c.Pprof),
 			newPprofThreadcreateTool(c.Pprof),
+			newPprofCPUTool(c.Pprof),
 		)
 	} else {
 		reg.MarkSkipped("perf-pprof", composeReason("no pprof endpoints configured", skipReasons, "pprof"))
 	}
 
 	if len(c.NodeInspectors) > 0 {
-		reg.MustRegister(newNodeInspectorTargetsTool(c.NodeInspectors))
+		reg.MustRegister(
+			newNodeInspectorTargetsTool(c.NodeInspectors),
+			newV8CDPCPUProfileTool(c.NodeInspectors),
+		)
 	} else {
 		reg.MarkSkipped("perf-v8", composeReason("no node_inspectors endpoints configured", skipReasons, "node"))
+	}
+
+	if bin, err := linuxPerfSupported(); err == nil {
+		reg.MustRegister(newLinuxPerfRecordTool(bin))
+	} else {
+		reg.MarkSkipped("perf-linux", err.Error())
 	}
 }
 
