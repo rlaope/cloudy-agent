@@ -1,6 +1,11 @@
 // Package wiring assembles the tool registry, skill registry, and LLM provider
 // from config and environment, keeping those decisions out of both the TUI and
 // the CLI sub-commands.
+//
+// BuildRegistry's responsibility is intentionally narrow: build dependency
+// containers (Hub, Prom client map) and call each tool group's self-contained
+// RegisterAll helper. Adding a new tool group is "import its package, call
+// RegisterAll" — the function does not learn what tools exist inside.
 package wiring
 
 import (
@@ -17,7 +22,10 @@ import (
 	"github.com/rlaope/cloudy/internal/tools/py"
 )
 
-// Options controls which tool groups are built.
+// Options controls dependency construction. The set is intentionally small —
+// callers configure *what infrastructure exists*, not which tools to enable.
+// Tool groups that need no external deps (jvm/py/gpu local exec) are always
+// registered.
 type Options struct {
 	// KubeconfigPath is the path to a kubeconfig file. Empty = default discovery.
 	KubeconfigPath string
@@ -27,18 +35,11 @@ type Options struct {
 	// Contexts is the explicit list of kubeconfig contexts the Hub should
 	// expose. Empty = single-context mode using the kubeconfig current-context.
 	Contexts []string
-	// Profile, when non-nil, narrows the registry: the namespace checker is
-	// installed on the Hub and permission.FilterRegistry is applied before
-	// the registry is returned.
+	// Profile, when non-nil, narrows the registry through permission.Apply:
+	// namespace checker installed on the Hub, tool allow/deny applied last.
 	Profile *permission.Profile
 	// PromEndpoints is the list of Prometheus endpoints from config.
 	PromEndpoints []config.PrometheusEndpoint
-	// EnableJVM registers jvm.* tools (default: true; always registered).
-	EnableJVM bool
-	// EnablePython registers py.* tools (default: true; always registered).
-	EnablePython bool
-	// EnableGPU registers gpu.* tools (default: true; always registered).
-	EnableGPU bool
 }
 
 // KubeWarning is a non-fatal warning returned by BuildRegistry when the
@@ -57,85 +58,41 @@ func (w *KubeWarning) Error() string {
 // K8s tool construction failures return the registry with a *KubeWarning
 // rather than a hard error, so the CLI remains usable for help/version/skills
 // even when no kubeconfig is present.
-//
-// When opts.Profile is non-nil, the namespace allow/deny check is wired into
-// the K8s Hub and permission.FilterRegistry narrows the final tool set.
 func BuildRegistry(opts Options) (*tools.Registry, error) {
 	reg := tools.New()
 	var kubeWarn error
 
-	// --- Kubernetes tools ---
-	// Multi-context mode short-circuits ContextName; the Hub manages clients.
+	hub, err := buildHub(opts)
+	if err != nil {
+		kubeWarn = &KubeWarning{Err: err}
+	} else {
+		k8s.RegisterAll(reg, hub)
+	}
+
+	promClients := buildPromClients(opts.PromEndpoints)
+	prom.RegisterAll(reg, promClients)
+	gpu.RegisterAll(reg, promClients)
+	jvm.RegisterAll(reg)
+	py.RegisterAll(reg)
+
+	// Single Profile application point: namespace checker on the Hub plus
+	// tool allow/deny filter on the returned registry.
+	reg = permission.Apply(reg, opts.Profile, func(check func(string) error) {
+		if hub != nil {
+			hub.WithNamespaceChecker(check)
+		}
+	})
+	return reg, kubeWarn
+}
+
+// buildHub resolves opts.Contexts / opts.ContextName / opts.KubeconfigPath
+// into a *k8s.Hub. Single-context mode is preserved when Contexts is empty.
+func buildHub(opts Options) (*k8s.Hub, error) {
 	contexts := opts.Contexts
 	if len(contexts) == 0 && opts.ContextName != "" {
 		contexts = []string{opts.ContextName}
 	}
-	hub, err := k8s.NewHub(opts.KubeconfigPath, contexts)
-	if err != nil {
-		kubeWarn = &KubeWarning{Err: err}
-	} else {
-		if opts.Profile != nil {
-			profile := opts.Profile
-			hub.WithNamespaceChecker(func(ns string) error {
-				return permission.MatchNamespace(profile, ns)
-			})
-		}
-		reg.MustRegister(
-			k8s.NewListPodsTool(hub),
-			k8s.NewListNodesTool(hub),
-			k8s.NewListNamespacesTool(hub),
-			k8s.NewDescribePodTool(hub),
-			k8s.NewEventsTool(hub),
-			k8s.NewLogsTool(hub),
-			k8s.NewTopPodsTool(hub),
-			k8s.NewTopNodesTool(hub),
-		)
-	}
-
-	// --- Prometheus tools ---
-	promClients := buildPromClients(opts.PromEndpoints)
-	if len(promClients) > 0 {
-		reg.MustRegister(
-			prom.NewQueryTool(promClients),
-			prom.NewQueryRangeTool(promClients),
-			prom.NewLabelValuesTool(promClients),
-			prom.NewSeriesTool(promClients),
-		)
-		// DCGM needs prom clients too.
-		reg.MustRegister(gpu.NewDCGMTool(promClients))
-	}
-
-	// --- JVM tools (local exec; always registered) ---
-	if opts.EnableJVM {
-		reg.MustRegister(
-			jvm.NewJstatGCTool(),
-			jvm.NewJcmdGCTool(),
-			jvm.NewJcmdThreadTool(),
-			jvm.NewAsyncProfileTool(),
-		)
-	}
-
-	// --- Python tools (local exec; always registered) ---
-	if opts.EnablePython {
-		reg.MustRegister(
-			py.NewSpyDumpTool(),
-			py.NewSpyTopTool(),
-		)
-	}
-
-	// --- GPU nvidia-smi (local exec; always registered) ---
-	if opts.EnableGPU {
-		reg.MustRegister(gpu.NewNvidiaSMITool())
-	}
-
-	// Apply Permission Profile tool-name allow/deny last so wiring owns the
-	// full narrowing pipeline; callers no longer need to call FilterRegistry
-	// themselves.
-	if opts.Profile != nil {
-		reg = permission.FilterRegistry(reg, opts.Profile)
-	}
-
-	return reg, kubeWarn
+	return k8s.NewHub(opts.KubeconfigPath, contexts)
 }
 
 // buildPromClients converts a slice of PrometheusEndpoint config entries into
@@ -156,7 +113,6 @@ func buildPromClients(endpoints []config.PrometheusEndpoint) map[string]*prom.Cl
 		}
 		c, err := prom.NewClient(ep.URL, ep.BasicUser, basicPass, bearer)
 		if err != nil {
-			// Skip misconfigured endpoints; wiring continues.
 			continue
 		}
 		key := ep.Name

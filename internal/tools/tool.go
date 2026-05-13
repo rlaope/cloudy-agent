@@ -1,6 +1,12 @@
 // Package tools defines the Tool interface and Observation type used by the
-// cloudy ReAct agent. All tools registered with a Registry MUST be read-only;
-// any attempt to register a mutating tool causes a panic at load time.
+// cloudy ReAct agent.
+//
+// Read-only enforcement: cloudy enforces read-only at the *transport* layer —
+// internal/transport/readonly.go rejects any HTTP method outside GET/HEAD/
+// OPTIONS, and internal/transport/k8s.go rejects any kube verb outside
+// get/list/watch. The Tool interface intentionally does not carry a
+// ReadOnly() method: it would be type-redundant defense behind two hard
+// guards already in place. New tools cannot bypass the transport guards.
 package tools
 
 import (
@@ -24,8 +30,6 @@ type Observation struct {
 // Tool is the interface every registered tool must implement.
 //
 // Name conventions: dot-separated segments, e.g. "k8s.list_pods".
-// All tools registered with a Registry MUST return true from ReadOnly();
-// a false return causes Register to panic immediately.
 type Tool interface {
 	// Name returns the dot-separated tool identifier, e.g. "k8s.list_pods".
 	Name() string
@@ -37,10 +41,6 @@ type Tool interface {
 	// Schema returns the JSON Schema (as a raw JSON message) for the tool's
 	// arguments object. The LLM uses this schema to construct valid calls.
 	Schema() json.RawMessage
-
-	// ReadOnly must always return true for tools intended for read-only
-	// operation. Register panics if this returns false.
-	ReadOnly() bool
 
 	// Run executes the tool with the given JSON-encoded argument object and
 	// returns an Observation or an error. ctx carries a deadline/cancellation

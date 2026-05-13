@@ -29,8 +29,7 @@ func NewDCGMTool(clients map[string]*prom.Client) *DCGMTool {
 	return &DCGMTool{clients: clients, defaultKey: def}
 }
 
-func (t *DCGMTool) Name() string   { return "gpu.dcgm_metrics" }
-func (t *DCGMTool) ReadOnly() bool { return true }
+func (t *DCGMTool) Name() string { return "gpu.dcgm_metrics" }
 func (t *DCGMTool) Description() string {
 	return "Query DCGM GPU metrics from a Prometheus endpoint (DCGM exporter). Returns top-N GPUs by utilization."
 }

@@ -24,8 +24,7 @@ func NewQueryTool(clients map[string]*Client) *QueryTool {
 	return &QueryTool{clients: clients, defaultKey: def}
 }
 
-func (t *QueryTool) Name() string   { return "prom.query" }
-func (t *QueryTool) ReadOnly() bool { return true }
+func (t *QueryTool) Name() string { return "prom.query" }
 func (t *QueryTool) Description() string {
 	return "Execute an instant PromQL query against a Prometheus endpoint."
 }

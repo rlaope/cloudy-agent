@@ -50,9 +50,6 @@ func TestSpyDump_ParsesThreads(t *testing.T) {
 
 	tool := NewSpyDumpTool()
 
-	if !tool.ReadOnly() {
-		t.Fatal("ReadOnly must return true")
-	}
 	if tool.Name() != "py.spy_dump" {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}
@@ -99,9 +96,6 @@ func TestSpyTop_JSONFormat(t *testing.T) {
 
 	tool := NewSpyTopTool()
 
-	if !tool.ReadOnly() {
-		t.Fatal("ReadOnly must return true")
-	}
 	if tool.Name() != "py.spy_top_snapshot" {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}

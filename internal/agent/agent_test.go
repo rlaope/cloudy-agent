@@ -56,7 +56,6 @@ type stubTool struct {
 func (s stubTool) Name() string            { return s.name }
 func (s stubTool) Description() string     { return "stub tool" }
 func (s stubTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
-func (s stubTool) ReadOnly() bool          { return true }
 func (s stubTool) Run(_ context.Context, _ json.RawMessage) (tools.Observation, error) {
 	if s.callCount != nil {
 		*s.callCount++

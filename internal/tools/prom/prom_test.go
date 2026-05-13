@@ -200,22 +200,6 @@ func TestSeries_ParsesSeries(t *testing.T) {
 	}
 }
 
-// TestReadOnly verifies every prom tool returns true for ReadOnly.
-func TestReadOnly(t *testing.T) {
-	clients := map[string]*prom.Client{}
-	tools := []interface{ ReadOnly() bool }{
-		prom.NewQueryTool(clients),
-		prom.NewQueryRangeTool(clients),
-		prom.NewLabelValuesTool(clients),
-		prom.NewSeriesTool(clients),
-	}
-	for _, tool := range tools {
-		if !tool.ReadOnly() {
-			t.Errorf("%T: ReadOnly() returned false", tool)
-		}
-	}
-}
-
 // TestPromQLValidation verifies that bad PromQL is rejected before hitting the wire.
 func TestPromQLValidation(t *testing.T) {
 	// Use a server that should never be reached.

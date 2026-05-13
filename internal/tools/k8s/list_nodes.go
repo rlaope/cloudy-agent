@@ -2,89 +2,44 @@ package k8s
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/tools"
 )
 
-// ListNodesTool implements k8s.list_nodes.
-type ListNodesTool struct{ hub *Hub }
-
-// NewListNodesTool constructs a ListNodesTool backed by the given Hub.
-func NewListNodesTool(h *Hub) *ListNodesTool { return &ListNodesTool{hub: h} }
-
-func (t *ListNodesTool) Name() string   { return "k8s.list_nodes" }
-func (t *ListNodesTool) ReadOnly() bool { return true }
-func (t *ListNodesTool) Description() string {
-	return "List all cluster nodes with name, roles, Kubernetes version, status, age, and addresses."
-}
-func (t *ListNodesTool) Schema() json.RawMessage {
-	return schema(withContextProp(map[string]any{}), nil)
-}
-
-func (t *ListNodesTool) Run(ctx context.Context, args json.RawMessage) (tools.Observation, error) {
-	var a struct {
-		Context string `json:"context"`
-	}
-	if len(args) > 0 {
-		if err := json.Unmarshal(args, &a); err != nil {
-			return tools.Observation{}, fmt.Errorf("k8s.list_nodes: parse args: %w", err)
-		}
-	}
-
-	client, err := t.hub.Get(a.Context)
-	if err != nil {
-		return tools.Observation{}, fmt.Errorf("k8s.list_nodes: %w", err)
-	}
-	ctxName := a.Context
-	if ctxName == "" {
-		ctxName = t.hub.Default()
-	}
-
-	nodeList, err := client.Nodes()
-	if err != nil {
-		return tools.Observation{}, fmt.Errorf("k8s.list_nodes: %w", err)
-	}
-
-	multi := t.hub.MultiContext()
-	headers := []string{"NAME", "ROLES", "VERSION", "STATUS", "AGE", "ADDRESSES"}
-	if multi {
-		headers = append([]string{"CONTEXT"}, headers...)
-	}
-	tbl := &render.Table{Headers: headers}
-	for _, n := range nodeList.Items {
-		roles := nodeRoles(n)
-		status := nodeStatus(n)
-		age := ""
-		if !n.CreationTimestamp.IsZero() {
-			age = formatAge(time.Since(n.CreationTimestamp.Time))
-		}
-		addrs := nodeAddresses(n)
-		row := []string{
-			n.Name,
-			roles,
-			n.Status.NodeInfo.KubeletVersion,
-			status,
-			age,
-			addrs,
-		}
-		if multi {
-			row = append([]string{ctxName}, row...)
-		}
-		tbl.Rows = append(tbl.Rows, row)
-	}
-
-	return tools.Observation{
-		Text:  fmt.Sprintf("%d node(s)", len(nodeList.Items)),
-		Table: tbl,
-		Raw:   nodeList,
-	}, nil
+// NewListNodesTool returns the k8s.list_nodes tool.
+func NewListNodesTool(hub *Hub) tools.Tool {
+	return ListResourceSpec[corev1.Node]{
+		Name:        "k8s.list_nodes",
+		Description: "List all cluster nodes with name, roles, Kubernetes version, status, age, and addresses.",
+		Schema:      schema(withContextProp(map[string]any{}), nil),
+		Headers:     []string{"NAME", "ROLES", "VERSION", "STATUS", "AGE", "ADDRESSES"},
+		Items: func(_ context.Context, client *Client, _ listArgs, _ metav1.ListOptions) ([]corev1.Node, any, error) {
+			list, err := client.Nodes()
+			if err != nil {
+				return nil, nil, err
+			}
+			return list.Items, list, nil
+		},
+		ProjectRow: func(n corev1.Node) []string {
+			age := ""
+			if !n.CreationTimestamp.IsZero() {
+				age = formatAge(time.Since(n.CreationTimestamp.Time))
+			}
+			return []string{
+				n.Name, nodeRoles(n), n.Status.NodeInfo.KubeletVersion,
+				nodeStatus(n), age, nodeAddresses(n),
+			}
+		},
+		Summary: func(items []corev1.Node, _ listArgs) string {
+			return fmt.Sprintf("%d node(s)", len(items))
+		},
+	}.Build(hub)
 }
 
 func nodeRoles(n corev1.Node) string {

@@ -16,8 +16,7 @@ type JcmdThreadTool struct{}
 
 func NewJcmdThreadTool() *JcmdThreadTool { return &JcmdThreadTool{} }
 
-func (t *JcmdThreadTool) Name() string   { return "jvm.jcmd_thread_dump" }
-func (t *JcmdThreadTool) ReadOnly() bool { return true }
+func (t *JcmdThreadTool) Name() string { return "jvm.jcmd_thread_dump" }
 func (t *JcmdThreadTool) Description() string {
 	return "Run jcmd Thread.print on a local JVM process. Reports thread state counts and any deadlocks detected."
 }

@@ -71,8 +71,7 @@ type NvidiaSMITool struct{}
 
 func NewNvidiaSMITool() *NvidiaSMITool { return &NvidiaSMITool{} }
 
-func (t *NvidiaSMITool) Name() string   { return "gpu.nvidia_smi" }
-func (t *NvidiaSMITool) ReadOnly() bool { return true }
+func (t *NvidiaSMITool) Name() string { return "gpu.nvidia_smi" }
 func (t *NvidiaSMITool) Description() string {
 	return "Query GPU status via nvidia-smi: utilization, memory, temperature, and power."
 }

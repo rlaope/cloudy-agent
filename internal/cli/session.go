@@ -1,6 +1,7 @@
-package main
+package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -9,8 +10,14 @@ import (
 	"github.com/rlaope/cloudy/internal/session"
 )
 
-// runSession implements `cloudy session <list|show|replay>`.
-func runSession(args []string, stdout, stderr io.Writer) error {
+func init() { Register(&sessionCmd{}) }
+
+type sessionCmd struct{}
+
+func (sessionCmd) Name() string  { return "session" }
+func (sessionCmd) Short() string { return `list / show / replay session logs` }
+
+func (sessionCmd) Run(_ context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errf("usage: cloudy session <list|show|replay> [id]")
 	}

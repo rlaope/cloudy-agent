@@ -1,6 +1,7 @@
-package main
+package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -10,12 +11,20 @@ import (
 	"github.com/rlaope/cloudy/internal/wiring"
 )
 
-// skillType is a local alias so other files in this package can refer to
-// *skillType without re-importing the skills package.
-type skillType = skills.Skill
+func init() { Register(&skillsCmd{}) }
 
-// runSkills implements `cloudy skills <list|show>`.
-func runSkills(args []string, stdout, stderr io.Writer) error {
+type skillsCmd struct{}
+
+func (skillsCmd) Name() string  { return "skills" }
+func (skillsCmd) Short() string { return `list / show installed skills` }
+
+type skillsOptions struct {
+	base baseFlags
+}
+
+func (o *skillsOptions) bind(fs *flagSet) { o.base.bind(fs.FlagSet) }
+
+func (skillsCmd) Run(_ context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errf("usage: cloudy skills <list|show> [name]")
 	}
@@ -29,8 +38,8 @@ func runSkills(args []string, stdout, stderr io.Writer) error {
 
 	switch sub {
 	case "list":
-		_, _, err := parseFlags("skills list", rest, stderr)
-		if err != nil {
+		var opts skillsOptions
+		if _, err := parseInto(&opts, "skills list", rest, stderr); err != nil {
 			return err
 		}
 		fmt.Fprintf(stdout, "%-22s  %-6s  %s\n", "NAME", "TOOLS", "DESCRIPTION")
@@ -51,8 +60,11 @@ func runSkills(args []string, stdout, stderr io.Writer) error {
 		if !ok {
 			return errf("unknown skill: %s", rest[0])
 		}
-		opts, _, _ := parseFlags("skills show", rest[1:], stderr)
-		theme := render.NewTheme(opts.noColor)
+		var opts skillsOptions
+		if _, err := parseInto(&opts, "skills show", rest[1:], stderr); err != nil {
+			return err
+		}
+		theme := render.NewTheme(opts.base.noColor)
 		md := buildSkillMarkdown(s)
 		out, err := render.RenderMarkdown(md, theme, 80)
 		if err != nil {
@@ -67,7 +79,7 @@ func runSkills(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func buildSkillMarkdown(s *skillType) string {
+func buildSkillMarkdown(s *skills.Skill) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n%s\n\n", s.Name, s.Description)
 	if len(s.Triggers) > 0 {

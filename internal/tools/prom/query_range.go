@@ -20,8 +20,7 @@ func NewQueryRangeTool(clients map[string]*Client) *QueryRangeTool {
 	return &QueryRangeTool{clients: clients, defaultKey: firstKey(clients)}
 }
 
-func (t *QueryRangeTool) Name() string   { return "prom.query_range" }
-func (t *QueryRangeTool) ReadOnly() bool { return true }
+func (t *QueryRangeTool) Name() string { return "prom.query_range" }
 func (t *QueryRangeTool) Description() string {
 	return "Execute a range PromQL query over a time window and return matrix results."
 }

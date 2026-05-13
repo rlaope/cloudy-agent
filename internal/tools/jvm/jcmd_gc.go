@@ -16,8 +16,7 @@ type JcmdGCTool struct{}
 
 func NewJcmdGCTool() *JcmdGCTool { return &JcmdGCTool{} }
 
-func (t *JcmdGCTool) Name() string   { return "jvm.jcmd_gc" }
-func (t *JcmdGCTool) ReadOnly() bool { return true }
+func (t *JcmdGCTool) Name() string { return "jvm.jcmd_gc" }
 func (t *JcmdGCTool) Description() string {
 	return "Run jcmd GC.heap_info and GC.class_histogram on a local JVM process."
 }

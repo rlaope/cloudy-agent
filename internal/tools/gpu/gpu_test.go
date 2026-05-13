@@ -28,9 +28,6 @@ func TestNvidiaSMI_ParsesOutput(t *testing.T) {
 
 	tool := NewNvidiaSMITool()
 
-	if !tool.ReadOnly() {
-		t.Fatal("ReadOnly must return true")
-	}
 	if tool.Name() != "gpu.nvidia_smi" {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}
@@ -159,9 +156,6 @@ func TestDCGM_QueryAndSort(t *testing.T) {
 	}
 	tool := NewDCGMTool(map[string]*prom.Client{"default": c})
 
-	if !tool.ReadOnly() {
-		t.Fatal("ReadOnly must return true")
-	}
 	if tool.Name() != "gpu.dcgm_metrics" {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}
@@ -202,12 +196,5 @@ func TestDCGM_TopCap(t *testing.T) {
 	}
 	if len(obs.Table.Rows) != 1 {
 		t.Fatalf("expected 1 row with top=1, got %d", len(obs.Table.Rows))
-	}
-}
-
-func TestDCGM_ReadOnly(t *testing.T) {
-	tool := NewDCGMTool(map[string]*prom.Client{})
-	if !tool.ReadOnly() {
-		t.Fatal("ReadOnly must return true")
 	}
 }

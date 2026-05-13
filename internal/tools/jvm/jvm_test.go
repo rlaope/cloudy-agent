@@ -82,9 +82,6 @@ func TestJcmdGC_ParsesHistogram(t *testing.T) {
 
 	tool := NewJcmdGCTool()
 
-	if tool.ReadOnly() != true {
-		t.Fatal("ReadOnly must return true")
-	}
 	if tool.Name() != "jvm.jcmd_gc" {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}
@@ -129,9 +126,6 @@ func TestJcmdThread_ParsesStates(t *testing.T) {
 
 	tool := NewJcmdThreadTool()
 
-	if tool.ReadOnly() != true {
-		t.Fatal("ReadOnly must return true")
-	}
 	if tool.Name() != "jvm.jcmd_thread_dump" {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}
@@ -177,9 +171,6 @@ func TestJstatGC_ParsesTable(t *testing.T) {
 
 	tool := NewJstatGCTool()
 
-	if tool.ReadOnly() != true {
-		t.Fatal("ReadOnly must return true")
-	}
 	if tool.Name() != "jvm.jstat_gc" {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}
@@ -239,9 +230,6 @@ func TestAsyncProfile_MissingEnv(t *testing.T) {
 
 	tool := NewAsyncProfileTool()
 
-	if tool.ReadOnly() != true {
-		t.Fatal("ReadOnly must return true")
-	}
 	if tool.Name() != "jvm.async_profile" {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}

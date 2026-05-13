@@ -1,5 +1,57 @@
 # Changelog
 
+## v0.3.0 — 2026-05-13
+
+Architecture deepening pass. No user-facing behaviour change; the public
+CLI surface (`cloudy ask / setup / doctor / skills / session / contexts /
+profile`) and the Permission Profile / RBAC / read-only contracts are
+preserved verbatim. Internal shape changes are the substance of this
+release.
+
+### Changed
+- **Command layer split** — every subcommand moved from `cmd/cloudy/*.go`
+  into `internal/cli`, each owning its own option struct and registering
+  itself via `init()` against a tiny `cli.Command` dispatcher. The 12-field
+  `commonOptions` grab-bag is gone; new subcommands require one file plus
+  one `Register()` call and `cmd/cloudy/main.go` no longer changes.
+- **Tool group self-registration** — every subpackage under
+  `internal/tools/` (`k8s`, `prom`, `jvm`, `py`, `gpu`) now exposes its own
+  `RegisterAll(reg, deps)` helper. `wiring.BuildRegistry` shrinks to
+  dependency construction plus one call per group; dead
+  `EnableJVM/EnablePython/EnableGPU` flags are removed.
+- **Shared generic registry** — new `internal/registry.Map[T]` is the
+  storage substrate behind `llm.providers`, `tools.Registry`, and
+  `skills.Registry`. Domain methods (Resolve / Filter / Suggest / Validate)
+  stay where they were; only storage is unified.
+- **Tool interface deepened** — `ReadOnly()` removed from `tools.Tool` (the
+  HTTP/K8s transport guards already enforce read-only end-to-end; the
+  type-level method was redundant defense). New generics
+  `tools.Spec[Args]` and `k8s.ListResourceSpec[T]` absorb the per-tool
+  boilerplate: every K8s tool migrated to descriptors with Items +
+  ProjectRow callbacks.
+- **Agent hook chain** — duplicate-call detection and any other
+  cross-cutting policy now live behind `agent.Hook`
+  (`BeforeToolCall / AfterToolCall / OnAssistantTurn / OnStop`).
+  `agent.Run` becomes a clean loop; cost guard, masking, audit, and
+  telemetry are addable without touching it. `DupCallHook` ships as the
+  default registered hook.
+- **`render.Sink` seam** — `agent.Agent.Run` now takes a `render.Sink`
+  instead of a concrete `*render.Stream`. The TUI supplies its own
+  `tuiSink` that turns Begin/EndToolCall into structured AgentEvents,
+  retiring the previous interceptStream / interceptWriter hack that wrote
+  formatted bytes only to parse them back out.
+- **`tui.Deps` typed** — Provider / Session / AgentRunner are now properly
+  typed (`llm.Provider`, `*session.Session`, `func(<-chan struct{}, ...)`).
+  The "to avoid import cycles in tests" `interface{}` comment was wrong
+  and has been replaced by direct imports.
+
+### Security
+- All three read-only guards remain intact (HTTP method whitelist, K8s
+  verb whitelist, ClusterRole RBAC). Removing `Tool.ReadOnly()` is
+  defense-in-depth that the transport layer already provided; the kube
+  client cannot construct a non-`get/list/watch` request and the HTTP
+  transport rejects anything outside `GET/HEAD/OPTIONS`.
+
 ## v0.2.0 — 2026-05-13
 
 ### Added

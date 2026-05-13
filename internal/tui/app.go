@@ -7,6 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/rlaope/cloudy/internal/buildinfo"
+	"github.com/rlaope/cloudy/internal/llm"
+	"github.com/rlaope/cloudy/internal/session"
 	"github.com/rlaope/cloudy/internal/skills"
 	"github.com/rlaope/cloudy/internal/tools"
 )
@@ -17,7 +19,7 @@ const ctrlCTimeout = 2 * time.Second
 // Deps holds all external dependencies the TUI needs.
 type Deps struct {
 	// Provider is the LLM backend. May be nil when no config is present.
-	Provider interface{} // llm.Provider — stored as interface{} to avoid import cycles in tests
+	Provider llm.Provider
 	// Model is the fully-qualified model identifier.
 	Model string
 	// Skills is the loaded skill registry.
@@ -25,14 +27,15 @@ type Deps struct {
 	// Tools is the loaded tool registry.
 	Tools *tools.Registry
 	// Session is an open append-only session log (may be nil).
-	Session interface{} // *session.Session
+	Session *session.Session
 	// InitialCtx is the current kubeconfig context (best-effort).
 	InitialCtx string
 	// InitialNS is the initial namespace (best-effort).
 	InitialNS string
 	// AgentRunner is the function called to run the agent on user input.
-	// Injected by run.go so that tests can stub it.
-	AgentRunner func(ctx interface{}, input string, emit func(AgentEvent))
+	// Injected by run.go so that tests can stub it. cancel is closed by the
+	// TUI when the user cancels the in-flight request.
+	AgentRunner func(cancel <-chan struct{}, input string, emit func(AgentEvent))
 }
 
 // AgentEvent is a discriminated union of events emitted by the agent runner.
