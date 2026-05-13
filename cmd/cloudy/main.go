@@ -1,7 +1,8 @@
 // Command cloudy is a read-only multi-cluster SRE monitoring AI CLI agent.
 //
 // Running `cloudy` with no arguments enters the full-screen TUI. Subcommands
-// (`ask`, `setup`, `doctor`, `skills`) cover one-shot and management flows.
+// (ask / setup / doctor / skills / session / contexts / profile) cover one-shot
+// and management flows.
 package main
 
 import (
@@ -14,7 +15,9 @@ import (
 
 	"github.com/rlaope/cloudy/internal/buildinfo"
 	"github.com/rlaope/cloudy/internal/config"
+	"github.com/rlaope/cloudy/internal/session"
 	"github.com/rlaope/cloudy/internal/tui"
+	"github.com/rlaope/cloudy/internal/wiring"
 )
 
 func main() {
@@ -36,9 +39,20 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "--help", "-h", "help":
 		printHelp(stdout)
 		return nil
-	case "ask", "setup", "doctor", "skills", "session", "profile", "contexts":
-		fmt.Fprintf(stderr, "cloudy: subcommand %q not yet implemented (v0.1 in progress)\n", args[0])
-		return nil
+	case "ask":
+		return runAsk(args[1:], stdout, stderr)
+	case "setup":
+		return runSetup(args[1:], stdout, stderr)
+	case "doctor":
+		return runDoctor(args[1:], stdout, stderr)
+	case "skills":
+		return runSkills(args[1:], stdout, stderr)
+	case "session":
+		return runSession(args[1:], stdout, stderr)
+	case "contexts":
+		return runContexts(args[1:], stdout, stderr)
+	case "profile":
+		return runProfile(args[1:], stdout, stderr)
 	default:
 		printHelp(stderr)
 		return fmt.Errorf("unknown command: %s", args[0])
@@ -46,7 +60,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 }
 
 // runTUI enters the full-screen TUI when stdout is a TTY and config is present.
-// When stdout is not a TTY (pipe/redirect) it falls back to a hint message.
+// When stdout is not a TTY (pipe/redirect) it prints a hint instead.
 func runTUI(stdout, stderr io.Writer) error {
 	if !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsCygwinTerminal(os.Stdout.Fd()) {
 		fmt.Fprintln(stdout, "cloudy: not a TTY — run `cloudy ask \"<prompt>\"` for one-shot mode")
@@ -64,24 +78,52 @@ func runTUI(stdout, stderr io.Writer) error {
 		return nil
 	}
 
-	// Best-effort: read kubeconfig current context.
-	ctx, ns := currentKubeContext()
+	provider, modelID, err := wiring.BuildProvider(cfg.DefaultModel)
+	if err != nil {
+		fmt.Fprintf(stderr, "cloudy: %v\n", err)
+		return nil
+	}
 
+	skillReg, err := wiring.BuildSkillRegistry()
+	if err != nil {
+		fmt.Fprintf(stderr, "cloudy: skills: %v\n", err)
+		return nil
+	}
+
+	toolReg, warn := wiring.BuildRegistry(wiring.Options{
+		PromEndpoints: cfg.Prometheus,
+		EnableJVM:     true,
+		EnablePython:  true,
+		EnableGPU:     true,
+	})
+	if warn != nil {
+		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
+	}
+
+	sess, err := session.New("")
+	if err != nil {
+		fmt.Fprintf(stderr, "cloudy: session: %v\n", err)
+		return nil
+	}
+	defer sess.Close()
+
+	ctx, ns := currentKubeContext()
 	deps := tui.Deps{
-		Model:      cfg.DefaultModel,
+		Provider:   provider,
+		Model:      modelID,
+		Skills:     skillReg,
+		Tools:      toolReg,
+		Session:    sess,
 		InitialCtx: ctx,
 		InitialNS:  ns,
-		// Provider, Skills, Tools, Session: wired in tui.Run when non-nil provider available.
 	}
 
 	return tui.Run(context.Background(), deps)
 }
 
-// currentKubeContext reads the current kubeconfig context and namespace
-// from the KUBECONFIG / default kubeconfig, returning empty strings on error.
+// currentKubeContext returns the current kubeconfig context and namespace
+// using KUBECONTEXT / KUBENAMESPACE env vars (best-effort).
 func currentKubeContext() (ctx, ns string) {
-	// Best-effort only; we avoid importing the full k8s client here.
-	// If KUBECONTEXT is set, use it.
 	if v := os.Getenv("KUBECONTEXT"); v != "" {
 		return v, os.Getenv("KUBENAMESPACE")
 	}
@@ -92,10 +134,25 @@ func printHelp(w io.Writer) {
 	fmt.Fprintln(w, `cloudy — read-only multi-cluster SRE monitoring AI CLI agent
 
 usage:
-  cloudy                   enter full-screen TUI
-  cloudy ask "<prompt>"    one-shot natural-language query
-  cloudy setup             discover clusters, write ~/.cloudy/{config,profile}.yaml
-  cloudy doctor            verify setup and reachability
-  cloudy skills list       list installed skills
-  cloudy --version         print version`)
+  cloudy                          enter full-screen TUI
+  cloudy ask "<prompt>"           one-shot natural-language query
+  cloudy setup                    discover clusters, write ~/.cloudy/{config,profile}.yaml
+  cloudy doctor                   verify setup and reachability
+  cloudy skills list              list installed skills
+  cloudy skills show <name>       show a skill definition
+  cloudy session list             list past sessions
+  cloudy session show <id>        print stored session events
+  cloudy session replay <id>      replay a stored session
+  cloudy contexts                 list kubeconfig contexts
+  cloudy profile list             show the discovered cluster profile
+  cloudy --version                print version
+  cloudy --help                   this help
+
+flags (per subcommand):
+  --model <id>     override the default model
+  --skill <name>   activate a skill (filters tool catalogue)
+  --kubeconfig …   path to kubeconfig (default: KUBECONFIG / ~/.kube/config)
+  --context <ctx>  kubeconfig context to use
+  --no-color       disable ANSI colors (also via NO_COLOR env)
+  --json           emit JSON instead of human text (where supported)`)
 }
