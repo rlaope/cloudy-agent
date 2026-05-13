@@ -9,7 +9,7 @@ LDFLAGS := -s -w -X $(PKG)/internal/buildinfo.Version=$(VER)
 all: lint test build
 
 build:
-	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/cloudy
+	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd
 
 test:
 	go test -race -count=1 ./...
