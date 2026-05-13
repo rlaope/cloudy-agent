@@ -1,0 +1,60 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cloudy-readonly
+  labels:
+    app.kubernetes.io/name: cloudy
+    app.kubernetes.io/component: agent
+rules:
+  # Core workload + node visibility.
+  - apiGroups: [""]
+    resources:
+      - pods
+      - services
+      - endpoints
+      - events
+      - nodes
+      - namespaces
+      - configmaps
+      - persistentvolumes
+      - persistentvolumeclaims
+      - replicationcontrollers
+    verbs: ["get", "list", "watch"]
+
+  # Pod logs (read-only). Pod exec is intentionally NOT granted; in-cluster JVM
+  # / Python diagnostic flows rely on a separately-deployed sidecar pattern.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+
+  # Workload controllers.
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+
+  # metrics-server (top pods / top nodes).
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+
+  # Networking surface that aids incident triage.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch"]
+
+  # CRD discovery so the agent can introspect Operators (Prometheus, etc).
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+
+# Secrets are intentionally absent. cloudy never reads Secret data; if a
+# specific deployment requires Secret metadata, add an overlay that grants
+# only `list` on secrets (no `get`) and rely on cloudy's field masking.

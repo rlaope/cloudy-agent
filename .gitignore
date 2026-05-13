@@ -1,0 +1,24 @@
+# Binaries
+/cloudy
+/dist/
+/bin/
+
+# Test / coverage
+*.test
+*.out
+coverage.*
+profile.svg
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Local config (must never be committed)
+~/.cloudy/
+.env
+.envrc
+*.local.yaml
+
+# Go
+vendor/
