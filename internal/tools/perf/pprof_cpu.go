@@ -110,18 +110,12 @@ func decodeCPUProfile(body []byte, topN int) (*render.Table, string, error) {
 		}
 		v := s.Value[valIdx]
 		total += v
-		// Flat: top frame (first Location).
-		if len(s.Location) > 0 && len(s.Location[0].Line) > 0 {
-			top := s.Location[0].Line[0].Function.Name
-			b := byFunc[top]
-			if b == nil {
-				b = &bucket{}
-				byFunc[top] = b
-			}
-			b.flat += v
-		}
-		// Cum: every distinct function in the stack.
+		// One pass: the topmost frame is the first distinct function we see;
+		// it earns both flat and cum. Every other distinct function in the
+		// stack earns cum only. `seen` deduplicates recursion so a function
+		// that appears twice in the same stack only charges cum once.
 		seen := map[string]struct{}{}
+		first := true
 		for _, loc := range s.Location {
 			for _, line := range loc.Line {
 				name := line.Function.Name
@@ -133,6 +127,10 @@ func decodeCPUProfile(body []byte, topN int) (*render.Table, string, error) {
 				if b == nil {
 					b = &bucket{}
 					byFunc[name] = b
+				}
+				if first {
+					b.flat += v
+					first = false
 				}
 				b.cum += v
 			}

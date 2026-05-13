@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rlaope/cloudy/internal/tools/httpapi"
 	"github.com/rlaope/cloudy/internal/transport"
 )
 
@@ -66,9 +67,9 @@ func NewClient(baseURL, basicUser, basicPass, bearer string) (*Client, error) {
 	rt := transport.New(nil) // wraps http.DefaultTransport
 	var wrapped http.RoundTripper = rt
 	if bearer != "" {
-		wrapped = &bearerTripper{inner: rt, token: bearer}
+		wrapped = &httpapi.BearerTripper{Inner: rt, Token: bearer}
 	} else if basicUser != "" {
-		wrapped = &basicTripper{inner: rt, user: basicUser, pass: basicPass}
+		wrapped = &httpapi.BasicTripper{Inner: rt, User: basicUser, Pass: basicPass}
 	}
 
 	return &Client{
@@ -296,28 +297,4 @@ func checkPromQL(query string) error {
 		return fmt.Errorf("prom: unbalanced brackets in PromQL query")
 	}
 	return nil
-}
-
-// bearerTripper injects an Authorization: Bearer header.
-type bearerTripper struct {
-	inner http.RoundTripper
-	token string
-}
-
-func (b *bearerTripper) RoundTrip(r *http.Request) (*http.Response, error) {
-	r2 := r.Clone(r.Context())
-	r2.Header.Set("Authorization", "Bearer "+b.token)
-	return b.inner.RoundTrip(r2)
-}
-
-// basicTripper injects HTTP Basic Auth credentials.
-type basicTripper struct {
-	inner      http.RoundTripper
-	user, pass string
-}
-
-func (b *basicTripper) RoundTrip(r *http.Request) (*http.Response, error) {
-	r2 := r.Clone(r.Context())
-	r2.SetBasicAuth(b.user, b.pass)
-	return b.inner.RoundTrip(r2)
 }

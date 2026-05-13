@@ -1,6 +1,7 @@
 package log
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/rlaope/cloudy/internal/config"
@@ -30,7 +31,7 @@ func BuildClients(eps []config.HTTPEndpoint) (Clients, []string) {
 	var skips []string
 	for _, ep := range eps {
 		if ep.Name == "" || ep.URL == "" {
-			skips = append(skips, "log: entry "+quote(ep.Name)+": missing name or url")
+			skips = append(skips, "log: entry "+strconv.Quote(ep.Name)+": missing name or url")
 			continue
 		}
 		hc, err := httpapi.NewClient(ep.Name, ep.URL, httpapi.Auth{
@@ -48,7 +49,7 @@ func BuildClients(eps []config.HTTPEndpoint) (Clients, []string) {
 		case "elasticsearch", "es", "opensearch":
 			cs.ES[ep.Name] = &ESClient{Client: hc}
 		default:
-			skips = append(skips, "log: "+ep.Name+": unknown kind "+quote(ep.Kind))
+			skips = append(skips, "log: "+ep.Name+": unknown kind "+strconv.Quote(ep.Kind))
 		}
 	}
 	return cs, skips
@@ -82,5 +83,3 @@ func RegisterAll(reg *tools.Registry, c Clients, skipReasons []string) {
 		)
 	}
 }
-
-func quote(s string) string { return "\"" + s + "\"" }

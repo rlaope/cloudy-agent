@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/rlaope/cloudy/internal/render"
@@ -13,19 +12,7 @@ import (
 const pgQueryTimeout = 10 * time.Second
 
 func pickPostgres(m map[string]*PostgresClient, name string) (*PostgresClient, error) {
-	if name == "" {
-		if len(m) == 1 {
-			for _, c := range m {
-				return c, nil
-			}
-		}
-		return nil, fmt.Errorf("db: endpoint name required (configured: %s)", strings.Join(names(m), ", "))
-	}
-	c, ok := m[name]
-	if !ok {
-		return nil, fmt.Errorf("db: unknown postgres endpoint %q (configured: %s)", name, strings.Join(names(m), ", "))
-	}
-	return c, nil
+	return tools.PickEndpoint(m, name, "db", "postgres endpoint")
 }
 
 // runPGQuery executes a fixed query under a deadline-bounded context and

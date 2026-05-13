@@ -19,19 +19,7 @@ type ESClient struct {
 }
 
 func pickES(m map[string]*ESClient, name string) (*ESClient, error) {
-	if name == "" {
-		if len(m) == 1 {
-			for _, c := range m {
-				return c, nil
-			}
-		}
-		return nil, fmt.Errorf("log: elasticsearch endpoint name required (configured: %s)", strings.Join(keys(m), ", "))
-	}
-	c, ok := m[name]
-	if !ok {
-		return nil, fmt.Errorf("log: unknown elasticsearch endpoint %q (configured: %s)", name, strings.Join(keys(m), ", "))
-	}
-	return c, nil
+	return tools.PickEndpoint(m, name, "log", "elasticsearch endpoint")
 }
 
 var esEndpointSchema = map[string]any{
@@ -215,9 +203,4 @@ func newESClusterHealthTool(clients map[string]*ESClient) tools.Tool {
 	}.Build()
 }
 
-func asString(v any) string {
-	if v == nil {
-		return ""
-	}
-	return fmt.Sprintf("%v", v)
-}
+var asString = tools.AsString

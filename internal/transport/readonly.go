@@ -7,8 +7,10 @@
 package transport
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 )
 
@@ -56,4 +58,20 @@ func (r *ReadOnlyRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 // ReadOnlyRoundTripper.
 func Wrap(inner http.RoundTripper) http.RoundTripper {
 	return New(inner)
+}
+
+// DialContext exposes the underlying http.Transport's DialContext so callers
+// that need a raw connection (e.g. a websocket dialer) can plug into the
+// same network stack the read-only RoundTripper uses, without reaching into
+// the unexported field with a type assertion.
+//
+// Falls back to net.Dialer.DialContext if Inner is not an *http.Transport
+// (e.g. a chained custom tripper). That keeps the helper safe regardless of
+// what the caller passed to New.
+func (r *ReadOnlyRoundTripper) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	if t, ok := r.Inner.(*http.Transport); ok && t.DialContext != nil {
+		return t.DialContext(ctx, network, addr)
+	}
+	var d net.Dialer
+	return d.DialContext(ctx, network, addr)
 }

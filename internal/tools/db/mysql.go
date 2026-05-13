@@ -14,19 +14,7 @@ import (
 const mysqlQueryTimeout = 10 * time.Second
 
 func pickMySQL(m map[string]*MySQLClient, name string) (*MySQLClient, error) {
-	if name == "" {
-		if len(m) == 1 {
-			for _, c := range m {
-				return c, nil
-			}
-		}
-		return nil, fmt.Errorf("db: endpoint name required (configured: %s)", strings.Join(names(m), ", "))
-	}
-	c, ok := m[name]
-	if !ok {
-		return nil, fmt.Errorf("db: unknown mysql endpoint %q (configured: %s)", name, strings.Join(names(m), ", "))
-	}
-	return c, nil
+	return tools.PickEndpoint(m, name, "db", "mysql endpoint")
 }
 
 // runMySQLQuery executes sql with args and renders the result as a table.

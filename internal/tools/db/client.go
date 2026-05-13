@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -70,43 +71,64 @@ func BuildClients(ctx context.Context, eps []config.DatabaseEndpoint) (Clients, 
 		MySQL:    map[string]*MySQLClient{},
 		Redis:    map[string]*redis.Client{},
 	}
-	var skips []string
+	var (
+		mu    sync.Mutex
+		skips []string
+		wg    sync.WaitGroup
+	)
 
-	cctx, cancel := context.WithTimeout(ctx, connectTimeout)
-	defer cancel()
+	addSkip := func(s string) { mu.Lock(); skips = append(skips, s); mu.Unlock() }
 
 	for _, ep := range eps {
+		ep := ep
 		if ep.Name == "" || ep.DSN == "" {
-			skips = append(skips, fmt.Sprintf("entry %q: missing name or dsn", ep.Name))
+			addSkip(fmt.Sprintf("entry %q: missing name or dsn", ep.Name))
 			continue
 		}
 		kind := strings.ToLower(ep.Kind)
-		switch kind {
-		case "postgres", "postgresql", "pg":
-			pc, err := dialPostgres(cctx, ep)
-			if err != nil {
-				skips = append(skips, fmt.Sprintf("postgres %q: %v", ep.Name, err))
-				continue
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Each endpoint gets its own connectTimeout budget so a slow
+			// failing endpoint cannot starve the rest. Dials happen in
+			// parallel — startup latency is bounded by the slowest single
+			// endpoint, not the sum.
+			cctx, cancel := context.WithTimeout(ctx, connectTimeout)
+			defer cancel()
+			switch kind {
+			case "postgres", "postgresql", "pg":
+				pc, err := dialPostgres(cctx, ep)
+				if err != nil {
+					addSkip(fmt.Sprintf("postgres %q: %v", ep.Name, err))
+					return
+				}
+				mu.Lock()
+				cs.Postgres[ep.Name] = pc
+				mu.Unlock()
+			case "mysql", "mariadb":
+				mc, err := dialMySQL(cctx, ep)
+				if err != nil {
+					addSkip(fmt.Sprintf("mysql %q: %v", ep.Name, err))
+					return
+				}
+				mu.Lock()
+				cs.MySQL[ep.Name] = mc
+				mu.Unlock()
+			case "redis", "valkey":
+				rc, err := dialRedis(cctx, ep)
+				if err != nil {
+					addSkip(fmt.Sprintf("redis %q: %v", ep.Name, err))
+					return
+				}
+				mu.Lock()
+				cs.Redis[ep.Name] = rc
+				mu.Unlock()
+			default:
+				addSkip(fmt.Sprintf("entry %q: unknown kind %q", ep.Name, ep.Kind))
 			}
-			cs.Postgres[ep.Name] = pc
-		case "mysql", "mariadb":
-			mc, err := dialMySQL(cctx, ep)
-			if err != nil {
-				skips = append(skips, fmt.Sprintf("mysql %q: %v", ep.Name, err))
-				continue
-			}
-			cs.MySQL[ep.Name] = mc
-		case "redis", "valkey":
-			rc, err := dialRedis(cctx, ep)
-			if err != nil {
-				skips = append(skips, fmt.Sprintf("redis %q: %v", ep.Name, err))
-				continue
-			}
-			cs.Redis[ep.Name] = rc
-		default:
-			skips = append(skips, fmt.Sprintf("entry %q: unknown kind %q", ep.Name, ep.Kind))
-		}
+		}()
 	}
+	wg.Wait()
 	return cs, skips
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -134,7 +133,7 @@ func captureCPUProfile(ctx context.Context, wsURL string, durationSecs int) (*cp
 	// shared read-only transport so the upgrade GET is auditable.
 	roTransport := transport.New(nil)
 	dialer := &websocket.Dialer{
-		NetDialContext:   roTransport.Inner.(*http.Transport).DialContext,
+		NetDialContext:   roTransport.DialContext,
 		HandshakeTimeout: 10 * time.Second,
 	}
 	u, err := url.Parse(wsURL)
