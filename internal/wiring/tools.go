@@ -65,6 +65,7 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 	hub, err := buildHub(opts)
 	if err != nil {
 		kubeWarn = &KubeWarning{Err: err}
+		reg.MarkSkipped("k8s", err.Error())
 	} else {
 		k8s.RegisterAll(reg, hub)
 	}
