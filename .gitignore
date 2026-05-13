@@ -22,3 +22,7 @@ profile.svg
 
 # Go
 vendor/
+
+# OMC orchestration state (do not commit)
+.omc/
+.claude/
