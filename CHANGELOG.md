@@ -3,6 +3,23 @@
 ## Unreleased
 
 ### Added
+- **Closes the original polyglot profiler list**: Linux `perf record/report`
+  wrapper, Go pprof CPU binary decode, and V8 Inspector CPU profile
+  capture over the Chrome DevTools Protocol.
+  - `perf.linux_perf_record` — runs `perf record -g -p <pid> -F <hz> -- sleep <dur>` to
+    a tempdir-scoped `perf.data`, then renders call-graph text via
+    `perf report --stdio`. Linux-only; skipped with a clear reason on
+    non-Linux hosts.
+  - `perf.go_pprof_cpu` — captures `/debug/pprof/profile?seconds=N` and
+    decodes the protobuf with `github.com/google/pprof/profile` to a
+    top-N flat/cum % table. No more "go tool pprof needed offline" —
+    the LLM sees a ranked function list directly.
+  - `perf.v8_inspector_cpu_profile` — full CDP exchange
+    (`Profiler.enable` → `start` → sleep → `stop`) via
+    `gorilla/websocket`. Returns the top-N functions by `hitCount`
+    with the V8 profile object available as `Raw`. The websocket
+    dial reuses the read-only transport's `DialContext` for
+    consistency with the rest of the codebase.
 - **`ebpf.*` kernel observability tools** (Linux + CAP_BPF / root only):
   - BCC wrappers: `ebpf.biolatency`, `ebpf.tcptop`, `ebpf.tcprtt`,
     `ebpf.execsnoop`. Each accepts a bounded `duration_seconds`
