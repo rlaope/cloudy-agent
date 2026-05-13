@@ -37,7 +37,7 @@ func runPGQuery(ctx context.Context, pc *PostgresClient, sql string, args ...any
 	if err != nil {
 		return nil, nil, fmt.Errorf("acquire: %w", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	rows, err := conn.Query(ctx, sql, args...)
 	if err != nil {

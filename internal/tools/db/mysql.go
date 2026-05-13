@@ -39,7 +39,7 @@ func runMySQLQuery(ctx context.Context, mc *MySQLClient, query string, args ...a
 	if err != nil {
 		return nil, nil, fmt.Errorf("query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	cols, err := rows.Columns()
 	if err != nil {
