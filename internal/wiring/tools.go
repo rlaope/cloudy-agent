@@ -20,8 +20,10 @@ import (
 	"github.com/rlaope/cloudy/internal/tools/gpu"
 	"github.com/rlaope/cloudy/internal/tools/jvm"
 	"github.com/rlaope/cloudy/internal/tools/k8s"
+	tlog "github.com/rlaope/cloudy/internal/tools/log"
 	"github.com/rlaope/cloudy/internal/tools/prom"
 	"github.com/rlaope/cloudy/internal/tools/py"
+	"github.com/rlaope/cloudy/internal/tools/trace"
 )
 
 // Options controls dependency construction. The set is intentionally small —
@@ -44,6 +46,10 @@ type Options struct {
 	PromEndpoints []config.PrometheusEndpoint
 	// Databases is the list of read-only database endpoints from config.
 	Databases []config.DatabaseEndpoint
+	// Logs is the list of log-search endpoints (loki / elasticsearch).
+	Logs []config.HTTPEndpoint
+	// Tracing is the list of tracing endpoints (tempo / jaeger).
+	Tracing []config.HTTPEndpoint
 }
 
 // KubeWarning is a non-fatal warning returned by BuildRegistry when the
@@ -82,6 +88,12 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 
 	dbClients, dbSkips := db.BuildClients(context.Background(), opts.Databases)
 	db.RegisterAll(reg, dbClients, dbSkips)
+
+	logClients, logSkips := tlog.BuildClients(opts.Logs)
+	tlog.RegisterAll(reg, logClients, logSkips)
+
+	traceClients, traceSkips := trace.BuildClients(opts.Tracing)
+	trace.RegisterAll(reg, traceClients, traceSkips)
 
 	// Single Profile application point: namespace checker on the Hub plus
 	// tool allow/deny filter on the returned registry.

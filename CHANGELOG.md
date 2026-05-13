@@ -3,6 +3,22 @@
 ## Unreleased
 
 ### Added
+- **`log.*` and `trace.*` read-only query tools** for Loki, Elasticsearch,
+  Tempo, and Jaeger. Two new config blocks — `logs:` and `tracing:` —
+  accept named HTTP endpoints with `kind` ∈ {loki, elasticsearch, tempo,
+  jaeger}, URL, and optional Basic / Bearer auth. Every call goes through
+  `internal/tools/httpapi`, a small read-only HTTP client extracted from
+  `prom` so the GET-only transport contract is shared across the four
+  backends without duplication.
+  - Loki: `log.loki_query_range`, `log.loki_labels`,
+    `log.loki_label_values`, `log.loki_series`.
+  - Elasticsearch (URI search only, no request body): `log.es_search`,
+    `log.es_indices`, `log.es_cluster_health`.
+  - Tempo: `trace.tempo_get_trace`, `trace.tempo_search` (TraceQL or tags).
+  - Jaeger: `trace.jaeger_services`, `trace.jaeger_operations`,
+    `trace.jaeger_search_traces`.
+  - Per-endpoint failures roll up into the group skip reason surfaced by
+    `cloudy tools` / `/tools`.
 - **`db.*` read-only diagnostic tools** for Postgres, MySQL/MariaDB, and
   Redis. The `databases:` section of `cloudy.yaml` defines named endpoints
   with `kind` ∈ {postgres, mysql, redis}, a DSN, and an optional

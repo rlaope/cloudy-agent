@@ -37,6 +37,15 @@ type Config struct {
 	// exposes only canonical read queries per backend.
 	Databases []DatabaseEndpoint `yaml:"databases,omitempty"`
 
+	// Logs is the list of log-search backends the agent may query. Each
+	// entry's kind selects the wrapper: loki / elasticsearch. cloudy uses
+	// only GET endpoints — transport-level read-only enforcement applies.
+	Logs []HTTPEndpoint `yaml:"logs,omitempty"`
+
+	// Tracing is the list of distributed-tracing backends. Each entry's kind
+	// selects the wrapper: tempo / jaeger. cloudy uses only GET endpoints.
+	Tracing []HTTPEndpoint `yaml:"tracing,omitempty"`
+
 	// Contexts is the explicit list of kubeconfig contexts to expose to the
 	// agent. Empty (or missing) means "use the kubeconfig current-context".
 	Contexts []string `yaml:"contexts,omitempty"`
@@ -74,6 +83,27 @@ type PrometheusEndpoint struct {
 	BasicPassEnv string `yaml:"basic_pass_env,omitempty"`
 
 	// BearerEnv is the environment variable holding the Bearer token (optional).
+	BearerEnv string `yaml:"bearer_env,omitempty"`
+}
+
+// HTTPEndpoint describes a single read-only HTTP backend (logs / tracing).
+// Kind selects the wrapper tool group; URL is the base of the backend's
+// HTTP API; auth fields are mutually exclusive (bearer wins when both set).
+type HTTPEndpoint struct {
+	// Name is a human-readable label used in UI and as the tool argument key.
+	Name string `yaml:"name"`
+
+	// Kind selects the backend: loki | elasticsearch | tempo | jaeger.
+	Kind string `yaml:"kind"`
+
+	// URL is the base URL of the backend's HTTP API.
+	URL string `yaml:"url"`
+
+	// BasicUser is the HTTP Basic Auth username (optional).
+	BasicUser string `yaml:"basic_user,omitempty"`
+	// BasicPassEnv is the env var holding the Basic Auth password (optional).
+	BasicPassEnv string `yaml:"basic_pass_env,omitempty"`
+	// BearerEnv is the env var holding a Bearer token (optional).
 	BearerEnv string `yaml:"bearer_env,omitempty"`
 }
 

@@ -90,6 +90,8 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Profile:        activeProfile,
 		PromEndpoints:  cfg.Prometheus,
 		Databases:      cfg.Databases,
+		Logs:           cfg.Logs,
+		Tracing:        cfg.Tracing,
 	})
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
