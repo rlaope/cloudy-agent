@@ -1,0 +1,193 @@
+// Package config manages user configuration for cloudy, loaded from
+// ~/.cloudy/config.yaml (or $XDG_CONFIG_HOME/cloudy/config.yaml).
+//
+// Typical usage:
+//
+//	cfg, err := config.Load(config.Path())
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Config is the top-level user configuration structure.
+type Config struct {
+	// DefaultModel is the model identifier used when no skill-level preference
+	// overrides it (e.g. "claude-3-5-sonnet-20241022").
+	DefaultModel string `yaml:"default_model"`
+
+	// Providers holds per-provider API key and base-URL settings keyed by
+	// provider name (e.g. "anthropic", "openai").
+	Providers map[string]ProviderConfig `yaml:"providers"`
+
+	// Prometheus is the list of Prometheus endpoints the agent may query.
+	Prometheus []PrometheusEndpoint `yaml:"prometheus"`
+
+	// Safety contains guardrails that bound what the agent is allowed to do.
+	Safety SafetyConfig `yaml:"safety"`
+
+	// Routing controls the cheap-vs-strong model routing heuristics.
+	Routing RoutingConfig `yaml:"routing"`
+}
+
+// ProviderConfig holds connection settings for a single LLM provider.
+type ProviderConfig struct {
+	// APIKeyEnv is the environment variable whose value is the API key.
+	APIKeyEnv string `yaml:"api_key_env"`
+
+	// BaseURL overrides the provider's default API base URL (optional).
+	BaseURL string `yaml:"base_url,omitempty"`
+}
+
+// PrometheusEndpoint describes a single Prometheus instance the agent can
+// query for metrics.
+type PrometheusEndpoint struct {
+	// Name is a human-readable label used in UI and logs.
+	Name string `yaml:"name"`
+
+	// URL is the base URL of the Prometheus HTTP API.
+	URL string `yaml:"url"`
+
+	// BasicUser is the HTTP Basic Auth username (optional).
+	BasicUser string `yaml:"basic_user,omitempty"`
+
+	// BasicPassEnv is the environment variable holding the Basic Auth password
+	// (optional; preferred over storing the password in plain text).
+	BasicPassEnv string `yaml:"basic_pass_env,omitempty"`
+
+	// BearerEnv is the environment variable holding the Bearer token (optional).
+	BearerEnv string `yaml:"bearer_env,omitempty"`
+}
+
+// SafetyConfig contains guardrails that bound agent behaviour.
+type SafetyConfig struct {
+	// AllowSecrets permits the agent to read Kubernetes Secrets. Defaults to
+	// false to prevent accidental credential exposure.
+	AllowSecrets bool `yaml:"allow_secrets"`
+
+	// MaxLogLines caps the number of log lines fetched in a single tool call.
+	MaxLogLines int `yaml:"max_log_lines"`
+
+	// MaxProfileSeconds caps the duration of any profiling session in seconds.
+	MaxProfileSeconds int `yaml:"max_profile_seconds"`
+
+	// MaxTokensPerSession is the hard limit on tokens consumed in one session.
+	// Zero means unlimited.
+	MaxTokensPerSession int `yaml:"max_tokens_per_session"`
+
+	// MaxUSDPerDay is the maximum spend (USD) allowed across all sessions in a
+	// rolling 24-hour window. Zero means unlimited.
+	MaxUSDPerDay float64 `yaml:"max_usd_per_day"`
+}
+
+// RoutingConfig controls how cloudy chooses between cheap and strong models.
+type RoutingConfig struct {
+	// CheapToolStrongSummary enables the two-step routing strategy where cheap
+	// models execute tool calls and a strong model summarises results.
+	CheapToolStrongSummary bool `yaml:"cheap_tool_strong_summary"`
+
+	// CheapModel is the model identifier used for tool-execution steps.
+	CheapModel string `yaml:"cheap_model"`
+
+	// StrongModel is the model identifier used for reasoning and summarisation.
+	StrongModel string `yaml:"strong_model"`
+}
+
+// Default returns a Config populated with conservative, ready-to-use defaults.
+func Default() Config {
+	return Config{
+		DefaultModel: "claude-3-5-sonnet-20241022",
+		Providers:    map[string]ProviderConfig{},
+		Safety: SafetyConfig{
+			AllowSecrets:      false,
+			MaxLogLines:       5000,
+			MaxProfileSeconds: 60,
+		},
+		Routing: RoutingConfig{
+			CheapModel:  "claude-3-5-haiku-20241022",
+			StrongModel: "claude-3-5-sonnet-20241022",
+		},
+	}
+}
+
+// Load reads the YAML file at path and merges its values over Default. If the
+// file does not exist, Load returns Default() and a nil error, so callers can
+// treat a missing file as "use defaults".
+func Load(path string) (Config, error) {
+	cfg := Default()
+
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return cfg, nil
+	}
+	if err != nil {
+		return cfg, fmt.Errorf("config: read %s: %w", path, err)
+	}
+
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return cfg, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// Save writes cfg to path as YAML using an atomic write (temp file + rename)
+// with 0600 permissions. Parent directories are created if necessary.
+func Save(path string, cfg Config) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("config: mkdir %s: %w", filepath.Dir(path), err)
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("config: marshal: %w", err)
+	}
+
+	// Write to a sibling temp file then rename for atomicity.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".cloudy-config-*.yaml")
+	if err != nil {
+		return fmt.Errorf("config: create temp: %w", err)
+	}
+	tmpName := tmp.Name()
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("config: write temp: %w", err)
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("config: chmod temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("config: close temp: %w", err)
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("config: rename to %s: %w", path, err)
+	}
+	return nil
+}
+
+// Path returns the resolved path to the user's config file. It honours
+// XDG_CONFIG_HOME when set; otherwise it falls back to ~/.cloudy/config.yaml.
+func Path() string {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "cloudy", "config.yaml")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Best-effort fallback: use a relative path so callers don't panic.
+		return filepath.Join(".cloudy", "config.yaml")
+	}
+	return filepath.Join(home, ".cloudy", "config.yaml")
+}
