@@ -30,6 +30,13 @@ type Config struct {
 	// Prometheus is the list of Prometheus endpoints the agent may query.
 	Prometheus []PrometheusEndpoint `yaml:"prometheus"`
 
+	// Databases is the list of read-only database endpoints the agent may
+	// query for diagnostic information (status, locks, slow queries, etc.).
+	// Each entry's kind selects the wrapper tool group: postgres / mysql /
+	// redis. Connection strings should point at a read-only user; cloudy
+	// exposes only canonical read queries per backend.
+	Databases []DatabaseEndpoint `yaml:"databases,omitempty"`
+
 	// Contexts is the explicit list of kubeconfig contexts to expose to the
 	// agent. Empty (or missing) means "use the kubeconfig current-context".
 	Contexts []string `yaml:"contexts,omitempty"`
@@ -68,6 +75,28 @@ type PrometheusEndpoint struct {
 
 	// BearerEnv is the environment variable holding the Bearer token (optional).
 	BearerEnv string `yaml:"bearer_env,omitempty"`
+}
+
+// DatabaseEndpoint describes a single read-only database the agent can
+// inspect. The Kind selects which tool wrapper applies; DSN format is
+// driver-specific (postgres URL, mysql DSN, redis "host:port").
+type DatabaseEndpoint struct {
+	// Name is a human-readable label used in UI and as the tool argument key.
+	Name string `yaml:"name"`
+
+	// Kind selects the backend: "postgres" | "mysql" | "redis".
+	Kind string `yaml:"kind"`
+
+	// DSN is the connection string. Drivers:
+	//   postgres: "postgres://user@host:5432/db?sslmode=disable"
+	//   mysql:    "user@tcp(host:3306)/db"
+	//   redis:    "host:6379" (no scheme), optionally with ?db=N
+	// Use a read-only user. cloudy exposes only canonical read queries.
+	DSN string `yaml:"dsn"`
+
+	// PasswordEnv is the environment variable holding the connection
+	// password, when the DSN does not embed it.
+	PasswordEnv string `yaml:"password_env,omitempty"`
 }
 
 // SafetyConfig contains guardrails that bound agent behaviour.

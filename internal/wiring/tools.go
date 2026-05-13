@@ -9,12 +9,14 @@
 package wiring
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/tools"
+	"github.com/rlaope/cloudy/internal/tools/db"
 	"github.com/rlaope/cloudy/internal/tools/gpu"
 	"github.com/rlaope/cloudy/internal/tools/jvm"
 	"github.com/rlaope/cloudy/internal/tools/k8s"
@@ -40,6 +42,8 @@ type Options struct {
 	Profile *permission.Profile
 	// PromEndpoints is the list of Prometheus endpoints from config.
 	PromEndpoints []config.PrometheusEndpoint
+	// Databases is the list of read-only database endpoints from config.
+	Databases []config.DatabaseEndpoint
 }
 
 // KubeWarning is a non-fatal warning returned by BuildRegistry when the
@@ -75,6 +79,9 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 	gpu.RegisterAll(reg, promClients)
 	jvm.RegisterAll(reg)
 	py.RegisterAll(reg)
+
+	dbClients, dbSkips := db.BuildClients(context.Background(), opts.Databases)
+	db.RegisterAll(reg, dbClients, dbSkips)
 
 	// Single Profile application point: namespace checker on the Hub plus
 	// tool allow/deny filter on the returned registry.

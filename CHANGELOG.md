@@ -3,6 +3,22 @@
 ## Unreleased
 
 ### Added
+- **`db.*` read-only diagnostic tools** for Postgres, MySQL/MariaDB, and
+  Redis. The `databases:` section of `cloudy.yaml` defines named endpoints
+  with `kind` ∈ {postgres, mysql, redis}, a DSN, and an optional
+  `password_env`. cloudy connects with `default_transaction_read_only=on`
+  for Postgres and exposes only canonical read queries — there is no
+  free-form SQL or arbitrary command surface.
+  - Postgres: `db.pg_version`, `db.pg_stat_activity`, `db.pg_stat_database`,
+    `db.pg_stat_replication`, `db.pg_locks`, `db.pg_top_table_size`.
+  - MySQL/MariaDB: `db.mysql_version`, `db.mysql_processlist`,
+    `db.mysql_global_status`, `db.mysql_global_variables`,
+    `db.mysql_engine_innodb_status`, `db.mysql_top_table_size`.
+  - Redis/Valkey: `db.redis_info`, `db.redis_dbsize`, `db.redis_scan`
+    (non-blocking, capped), `db.redis_inspect_key` (TYPE + TTL + MEMORY
+    USAGE), `db.redis_slowlog`, `db.redis_client_list`.
+  - Per-endpoint dial errors are surfaced through the group-`db` skip
+    reason via the harness added in the previous release.
 - `cloudy tools` CLI subcommand and TUI `/tools` slash command — list every
   registered tool group (`k8s`, `jvm`, `py`, `gpu`, `prom`, …) plus *skipped*
   groups with a one-line reason. `tools.Registry.MarkSkipped(group, reason)`
