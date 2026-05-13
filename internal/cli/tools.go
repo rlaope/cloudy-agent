@@ -44,6 +44,7 @@ func (toolsCmd) Run(_ context.Context, args []string, stdout, stderr io.Writer) 
 		Contexts:       cfg.Contexts,
 		Profile:        activeProfile,
 		PromEndpoints:  cfg.Prometheus,
+		Databases:      cfg.Databases,
 	})
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
