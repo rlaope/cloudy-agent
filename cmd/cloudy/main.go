@@ -64,9 +64,6 @@ func bootTUI(stdout, stderr io.Writer) error {
 		Contexts:      cfg.Contexts,
 		Profile:       activeProfile,
 		PromEndpoints: cfg.Prometheus,
-		EnableJVM:     true,
-		EnablePython:  true,
-		EnableGPU:     true,
 	})
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)

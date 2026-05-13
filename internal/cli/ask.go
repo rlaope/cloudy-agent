@@ -89,9 +89,6 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Contexts:       cfg.Contexts,
 		Profile:        activeProfile,
 		PromEndpoints:  cfg.Prometheus,
-		EnableJVM:      true,
-		EnablePython:   true,
-		EnableGPU:      true,
 	})
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
