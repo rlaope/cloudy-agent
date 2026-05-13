@@ -17,6 +17,7 @@ import (
 	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/tools"
 	"github.com/rlaope/cloudy/internal/tools/db"
+	"github.com/rlaope/cloudy/internal/tools/ebpf"
 	"github.com/rlaope/cloudy/internal/tools/gpu"
 	"github.com/rlaope/cloudy/internal/tools/jvm"
 	"github.com/rlaope/cloudy/internal/tools/k8s"
@@ -102,6 +103,8 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 
 	perfClients, perfSkips := perf.BuildClients(opts.Pprof, opts.NodeInspectors)
 	perf.RegisterAll(reg, perfClients, perfSkips)
+
+	ebpf.RegisterAll(reg)
 
 	// Single Profile application point: namespace checker on the Hub plus
 	// tool allow/deny filter on the returned registry.

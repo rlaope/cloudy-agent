@@ -3,6 +3,21 @@
 ## Unreleased
 
 ### Added
+- **`ebpf.*` kernel observability tools** (Linux + CAP_BPF / root only):
+  - BCC wrappers: `ebpf.biolatency`, `ebpf.tcptop`, `ebpf.tcprtt`,
+    `ebpf.execsnoop`. Each accepts a bounded `duration_seconds`
+    (1–60, default 5); the subprocess runs under an additional
+    `duration + 5s` context deadline so a misbehaving binary cannot
+    exceed the requested window.
+  - `ebpf.bpftrace_oneliner` — a single tool that selects from a fixed,
+    code-reviewed catalog of read-only one-liners (`syscall_counts`,
+    `file_opens`, `tcp_connects`, `vfs_read_lat`). The schema declares
+    the catalog keys via `enum` and **never** accepts a free-form
+    `program` argument; adding an entry is a deliberate code change.
+  - Platform gate: non-Linux hosts mark the `ebpf` group skipped with
+    a single reason. Hosts that miss specific binaries (e.g. BCC
+    installed but no bpftrace) register what they can and the rest
+    surface per-tool reasons.
 - **`perf.*` profiler-attach tools** across the polyglot SRE surface:
   - Go: `perf.go_pprof_goroutine` / `_heap` / `_allocs` / `_threadcreate`
     fetch the text-formatted (`?debug=1/2`) variants of
