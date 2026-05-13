@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a non-tool enhancement to cloudy (CLI flag, TUI affordance, config, etc.)
+title: "[feat] "
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can you not do today, or what is awkward? Concrete scenarios beat abstract wishes.
+      placeholder: |
+        When investigating X, I have to do A, B, C manually because cloudy ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: |
+        Rough sketch of how it could work — a flag name, a config field, a TUI shortcut.
+        Implementation details optional. Sketches OK.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds exist today, and why are they not enough?
+  - type: textarea
+    id: read-only-note
+    attributes:
+      label: Read-only impact (if any)
+      description: |
+        cloudy enforces read-only end-to-end. If the proposal touches data fetched from
+        a backend, note whether it stays GET-only / SELECT-only / read-command-only.
+        For new tool groups, file a "Tool group proposal" instead.
