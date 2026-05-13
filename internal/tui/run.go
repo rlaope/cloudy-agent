@@ -84,6 +84,15 @@ func makeAgentRunner(rootCtx context.Context, provider llm.Provider, deps Deps) 
 		// markers. For v1 we instead use a custom stream wrapper.
 		interceptStream := newInterceptStream(emit, theme)
 
+		// Wire usage callback: emit AgentEvent with Usage set.
+		interceptStream.OnUsage = func(u llm.Usage) {
+			emit(AgentEvent{Usage: &agentUsageMsg{
+				Input:  u.InputTokens,
+				Output: u.OutputTokens,
+				USD:    u.CostUSD,
+			}})
+		}
+
 		newMsgs, runErr := ag.Run(runCtx, input, interceptStream)
 		_ = stream // kept for future use
 

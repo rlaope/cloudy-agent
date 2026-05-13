@@ -16,8 +16,8 @@ type JstatGCTool struct{}
 
 func NewJstatGCTool() *JstatGCTool { return &JstatGCTool{} }
 
-func (t *JstatGCTool) Name() string        { return "jvm.jstat_gc" }
-func (t *JstatGCTool) ReadOnly() bool      { return true }
+func (t *JstatGCTool) Name() string   { return "jvm.jstat_gc" }
+func (t *JstatGCTool) ReadOnly() bool { return true }
 func (t *JstatGCTool) Description() string {
 	return "Run jstat -gc on a local JVM process to monitor GC statistics over time."
 }

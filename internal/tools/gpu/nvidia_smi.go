@@ -71,8 +71,8 @@ type NvidiaSMITool struct{}
 
 func NewNvidiaSMITool() *NvidiaSMITool { return &NvidiaSMITool{} }
 
-func (t *NvidiaSMITool) Name() string        { return "gpu.nvidia_smi" }
-func (t *NvidiaSMITool) ReadOnly() bool      { return true }
+func (t *NvidiaSMITool) Name() string   { return "gpu.nvidia_smi" }
+func (t *NvidiaSMITool) ReadOnly() bool { return true }
 func (t *NvidiaSMITool) Description() string {
 	return "Query GPU status via nvidia-smi: utilization, memory, temperature, and power."
 }
@@ -108,13 +108,13 @@ func (t *NvidiaSMITool) Run(ctx context.Context, _ json.RawMessage) (tools.Obser
 
 // gpuRow holds parsed values for one GPU.
 type gpuRow struct {
-	index   string
-	name    string
-	util    float64
-	memUsed float64
+	index    string
+	name     string
+	util     float64
+	memUsed  float64
 	memTotal float64
-	temp    float64
-	power   string
+	temp     float64
+	power    string
 }
 
 func parseNvidiaSMIOutput(output string) (*render.Table, string, error) {
@@ -155,8 +155,8 @@ func parseNvidiaSMIOutput(output string) (*render.Table, string, error) {
 	}
 
 	// Build colorizer: warn/err thresholds.
-	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("3"))  // yellow
-	errStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))  // red
+	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // yellow
+	errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))  // red
 
 	tbl.Colorizer = func(rowIdx, colIdx int, cell string) (lipgloss.Style, bool) {
 		if rowIdx < 0 || rowIdx >= len(rows) {

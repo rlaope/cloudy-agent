@@ -26,6 +26,13 @@ func newFakeClient(objs ...runtime.Object) *k8stool.Client {
 	return k8stool.NewTestClient(fakeCore, fakeMetrics)
 }
 
+// newSingleHub wraps newFakeClient in a single-context Hub for tests that
+// use the v0.1 default-context behaviour.
+func newSingleHub(objs ...runtime.Object) *k8stool.Hub {
+	c := newFakeClient(objs...)
+	return k8stool.NewHubFromClients(map[string]*k8stool.Client{"": c}, "")
+}
+
 func pod(ns, name, phase, node string, labels map[string]string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -42,12 +49,12 @@ func pod(ns, name, phase, node string, labels map[string]string) *corev1.Pod {
 
 // TestListPods_FiltersByLabel verifies label selector filtering.
 func TestListPods_FiltersByLabel(t *testing.T) {
-	c := newFakeClient(
+	h := newSingleHub(
 		pod("default", "nginx-1", "Running", "node-1", map[string]string{"app": "nginx"}),
 		pod("default", "redis-1", "Running", "node-1", map[string]string{"app": "redis"}),
 	)
 
-	tool := k8stool.NewListPodsTool(c)
+	tool := k8stool.NewListPodsTool(h)
 
 	args, _ := json.Marshal(map[string]any{
 		"namespace":      "default",
@@ -70,11 +77,11 @@ func TestListPods_FiltersByLabel(t *testing.T) {
 
 // TestListPods_AllNamespaces verifies that empty namespace returns all pods.
 func TestListPods_AllNamespaces(t *testing.T) {
-	c := newFakeClient(
+	h := newSingleHub(
 		pod("ns-a", "pod-1", "Running", "node-1", nil),
 		pod("ns-b", "pod-2", "Pending", "node-2", nil),
 	)
-	tool := k8stool.NewListPodsTool(c)
+	tool := k8stool.NewListPodsTool(h)
 	args, _ := json.Marshal(map[string]any{"namespace": ""})
 	obs, err := tool.Run(context.Background(), args)
 	if err != nil {
@@ -85,13 +92,13 @@ func TestListPods_AllNamespaces(t *testing.T) {
 	}
 }
 
-// TestLogs_ReturnsStream verifies that log retrieval returns non-error result.
+// TestLogs_NoError verifies that log retrieval returns non-error result.
 // The fake client returns an empty stream; we just verify no error occurs.
 func TestLogs_NoError(t *testing.T) {
-	c := newFakeClient(
+	h := newSingleHub(
 		pod("default", "myapp", "Running", "node-1", nil),
 	)
-	tool := k8stool.NewLogsTool(c)
+	tool := k8stool.NewLogsTool(h)
 	args, _ := json.Marshal(map[string]any{
 		"namespace":  "default",
 		"name":       "myapp",
@@ -132,8 +139,8 @@ func TestEvents_SortedByLastTimestamp(t *testing.T) {
 		},
 	}
 
-	c := newFakeClient(evtOld, evtNew)
-	tool := k8stool.NewEventsTool(c)
+	h := newSingleHub(evtOld, evtNew)
+	tool := k8stool.NewEventsTool(h)
 	args, _ := json.Marshal(map[string]any{"namespace": "default"})
 	obs, err := tool.Run(context.Background(), args)
 	if err != nil {
@@ -156,8 +163,8 @@ func TestListNamespaces(t *testing.T) {
 			Status:     corev1.NamespaceStatus{Phase: corev1.NamespaceActive},
 		}
 	}
-	c := newFakeClient(ns("default"), ns("kube-system"), ns("monitoring"))
-	tool := k8stool.NewListNamespacesTool(c)
+	h := newSingleHub(ns("default"), ns("kube-system"), ns("monitoring"))
+	tool := k8stool.NewListNamespacesTool(h)
 	args, _ := json.Marshal(map[string]any{})
 	obs, err := tool.Run(context.Background(), args)
 	if err != nil {
@@ -185,8 +192,8 @@ func TestListNodes(t *testing.T) {
 			},
 		},
 	}
-	c := newFakeClient(n)
-	tool := k8stool.NewListNodesTool(c)
+	h := newSingleHub(n)
+	tool := k8stool.NewListNodesTool(h)
 	args, _ := json.Marshal(map[string]any{})
 	obs, err := tool.Run(context.Background(), args)
 	if err != nil {
@@ -212,16 +219,16 @@ func TestListNodes(t *testing.T) {
 
 // TestReadOnly verifies every tool returns true for ReadOnly.
 func TestReadOnly(t *testing.T) {
-	c := newFakeClient()
+	h := newSingleHub()
 	tools := []interface{ ReadOnly() bool }{
-		k8stool.NewListPodsTool(c),
-		k8stool.NewDescribePodTool(c),
-		k8stool.NewLogsTool(c),
-		k8stool.NewEventsTool(c),
-		k8stool.NewTopPodsTool(c),
-		k8stool.NewTopNodesTool(c),
-		k8stool.NewListNamespacesTool(c),
-		k8stool.NewListNodesTool(c),
+		k8stool.NewListPodsTool(h),
+		k8stool.NewDescribePodTool(h),
+		k8stool.NewLogsTool(h),
+		k8stool.NewEventsTool(h),
+		k8stool.NewTopPodsTool(h),
+		k8stool.NewTopNodesTool(h),
+		k8stool.NewListNamespacesTool(h),
+		k8stool.NewListNodesTool(h),
 	}
 	for _, tool := range tools {
 		if !tool.ReadOnly() {
@@ -229,3 +236,88 @@ func TestReadOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestHub_SingleContext_BackwardsCompat verifies the v0.1 column set is
+// preserved (no CONTEXT column) when the hub holds exactly one context.
+func TestHub_SingleContext_BackwardsCompat(t *testing.T) {
+	h := newSingleHub(
+		pod("default", "p-1", "Running", "node-1", nil),
+	)
+	tool := k8stool.NewListPodsTool(h)
+	args, _ := json.Marshal(map[string]any{"namespace": "default"})
+	obs, err := tool.Run(context.Background(), args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := obs.Table.Headers[0]; got == "CONTEXT" {
+		t.Errorf("single-context hub must not prepend CONTEXT column, got headers=%v", obs.Table.Headers)
+	}
+}
+
+// TestHub_MultiContext_RoutesByContextArg builds a Hub with two contexts and
+// verifies that args.context selects the matching client.
+func TestHub_MultiContext_RoutesByContextArg(t *testing.T) {
+	clientA := newFakeClient(pod("default", "from-a", "Running", "node-a", nil))
+	clientB := newFakeClient(pod("default", "from-b", "Running", "node-b", nil))
+
+	h := k8stool.NewHubFromClients(map[string]*k8stool.Client{
+		"a": clientA,
+		"b": clientB,
+	}, "a")
+
+	if !h.MultiContext() {
+		t.Fatal("expected MultiContext()=true with two contexts")
+	}
+	if got := h.Default(); got != "a" {
+		t.Errorf("expected default=a, got %q", got)
+	}
+
+	tool := k8stool.NewListPodsTool(h)
+	args, _ := json.Marshal(map[string]any{
+		"namespace": "default",
+		"context":   "b",
+	})
+	obs, err := tool.Run(context.Background(), args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(obs.Table.Rows) != 1 {
+		t.Fatalf("expected 1 pod, got %d", len(obs.Table.Rows))
+	}
+	// First column is CONTEXT, second is NAMESPACE, third is NAME.
+	if obs.Table.Headers[0] != "CONTEXT" {
+		t.Errorf("expected first header CONTEXT, got %q", obs.Table.Headers[0])
+	}
+	if obs.Table.Rows[0][0] != "b" {
+		t.Errorf("expected CONTEXT cell=b, got %q", obs.Table.Rows[0][0])
+	}
+	if obs.Table.Rows[0][2] != "from-b" {
+		t.Errorf("expected pod from-b, got %s", obs.Table.Rows[0][2])
+	}
+}
+
+// TestHub_NamespaceChecker verifies a denied namespace returns the error
+// message in Observation.Text rather than a Go error, so the agent loop
+// continues.
+func TestHub_NamespaceChecker(t *testing.T) {
+	h := newSingleHub(pod("kube-system", "p-1", "Running", "node-1", nil))
+	h.WithNamespaceChecker(func(ns string) error {
+		if ns == "kube-system" {
+			return errStub("namespace denied by profile")
+		}
+		return nil
+	})
+	tool := k8stool.NewListPodsTool(h)
+	args, _ := json.Marshal(map[string]any{"namespace": "kube-system"})
+	obs, err := tool.Run(context.Background(), args)
+	if err != nil {
+		t.Fatalf("checker rejection must not surface as Go error, got %v", err)
+	}
+	if obs.Text != "namespace denied by profile" {
+		t.Errorf("expected denial text in Observation.Text, got %q", obs.Text)
+	}
+}
+
+type errStub string
+
+func (e errStub) Error() string { return string(e) }

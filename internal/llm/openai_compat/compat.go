@@ -115,10 +115,10 @@ type compatRequest struct {
 }
 
 type compatMessage struct {
-	Role       string             `json:"role"`
-	Content    interface{}        `json:"content"`
-	ToolCalls  []compatToolCall   `json:"tool_calls,omitempty"`
-	ToolCallID string             `json:"tool_call_id,omitempty"`
+	Role       string           `json:"role"`
+	Content    interface{}      `json:"content"`
+	ToolCalls  []compatToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 type compatToolCall struct {
@@ -133,7 +133,7 @@ type compatToolCallFunction struct {
 }
 
 type compatToolDef struct {
-	Type     string           `json:"type"`
+	Type     string            `json:"type"`
 	Function compatFunctionDef `json:"function"`
 }
 

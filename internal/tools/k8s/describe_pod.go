@@ -15,27 +15,28 @@ import (
 )
 
 // DescribePodTool implements k8s.describe_pod.
-type DescribePodTool struct{ client *Client }
+type DescribePodTool struct{ hub *Hub }
 
-// NewDescribePodTool constructs a DescribePodTool backed by the given Client.
-func NewDescribePodTool(c *Client) *DescribePodTool { return &DescribePodTool{client: c} }
+// NewDescribePodTool constructs a DescribePodTool backed by the given Hub.
+func NewDescribePodTool(h *Hub) *DescribePodTool { return &DescribePodTool{hub: h} }
 
-func (t *DescribePodTool) Name() string      { return "k8s.describe_pod" }
-func (t *DescribePodTool) ReadOnly() bool    { return true }
+func (t *DescribePodTool) Name() string   { return "k8s.describe_pod" }
+func (t *DescribePodTool) ReadOnly() bool { return true }
 func (t *DescribePodTool) Description() string {
 	return "Return a structured summary of a pod: phase, containers, restart counts, recent events, IP, node."
 }
 func (t *DescribePodTool) Schema() json.RawMessage {
-	return schema(map[string]any{
+	return schema(withContextProp(map[string]any{
 		"namespace": strProp("Namespace of the pod."),
 		"name":      strProp("Name of the pod."),
-	}, []string{"namespace", "name"})
+	}), []string{"namespace", "name"})
 }
 
 func (t *DescribePodTool) Run(ctx context.Context, args json.RawMessage) (tools.Observation, error) {
 	var a struct {
 		Namespace string `json:"namespace"`
 		Name      string `json:"name"`
+		Context   string `json:"context"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return tools.Observation{}, fmt.Errorf("k8s.describe_pod: parse args: %w", err)
@@ -44,7 +45,16 @@ func (t *DescribePodTool) Run(ctx context.Context, args json.RawMessage) (tools.
 		return tools.Observation{}, fmt.Errorf("k8s.describe_pod: name is required")
 	}
 
-	pod, err := t.client.Pod(a.Namespace, a.Name)
+	if err := t.hub.CheckNamespace(a.Namespace); err != nil {
+		return tools.Observation{Text: err.Error()}, nil
+	}
+
+	client, err := t.hub.Get(a.Context)
+	if err != nil {
+		return tools.Observation{}, fmt.Errorf("k8s.describe_pod: %w", err)
+	}
+
+	pod, err := client.Pod(a.Namespace, a.Name)
 	if err != nil {
 		return tools.Observation{}, fmt.Errorf("k8s.describe_pod: %w", err)
 	}
@@ -69,7 +79,7 @@ func (t *DescribePodTool) Run(ctx context.Context, args json.RawMessage) (tools.
 		FieldSelector: fmt.Sprintf("involvedObject.name=%s,involvedObject.namespace=%s,involvedObject.kind=Pod", a.Name, a.Namespace),
 		Limit:         10,
 	}
-	events, _ := t.client.Events(a.Namespace, evtOpts)
+	events, _ := client.Events(a.Namespace, evtOpts)
 
 	var evtLines []string
 	if events != nil {
@@ -79,6 +89,13 @@ func (t *DescribePodTool) Run(ctx context.Context, args json.RawMessage) (tools.
 	}
 
 	var sb strings.Builder
+	if t.hub.MultiContext() {
+		ctxName := a.Context
+		if ctxName == "" {
+			ctxName = t.hub.Default()
+		}
+		fmt.Fprintf(&sb, "Context: %s\n", ctxName)
+	}
 	fmt.Fprintf(&sb, "Pod: %s/%s\n", pod.Namespace, pod.Name)
 	fmt.Fprintf(&sb, "Phase: %s | IP: %s | Node: %s\n", pod.Status.Phase, pod.Status.PodIP, pod.Spec.NodeName)
 	if len(evtLines) > 0 {

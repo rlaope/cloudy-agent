@@ -113,10 +113,10 @@ type msRequest struct {
 }
 
 type msMessage struct {
-	Role       string        `json:"role"`
-	Content    interface{}   `json:"content"`
-	ToolCalls  []msToolCall  `json:"tool_calls,omitempty"`
-	ToolCallID string        `json:"tool_call_id,omitempty"`
+	Role       string       `json:"role"`
+	Content    interface{}  `json:"content"`
+	ToolCalls  []msToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string       `json:"tool_call_id,omitempty"`
 }
 
 type msToolCall struct {

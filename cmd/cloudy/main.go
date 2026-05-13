@@ -91,7 +91,13 @@ func runTUI(stdout, stderr io.Writer) error {
 		return nil
 	}
 
+	// Resolve active Permission Profile up front so wiring can install the
+	// namespace allow/deny middleware and apply tool-name filters in one pass.
+	activeProfile, _ := permission.LoadActive()
+
 	toolReg, warn := wiring.BuildRegistry(wiring.Options{
+		Contexts:      cfg.Contexts,
+		Profile:       activeProfile,
 		PromEndpoints: cfg.Prometheus,
 		EnableJVM:     true,
 		EnablePython:  true,
@@ -100,12 +106,8 @@ func runTUI(stdout, stderr io.Writer) error {
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
 	}
-
-	// Apply the active Permission Profile (if any) — narrows the tool
-	// catalogue the LLM ever sees.
-	if p, err := permission.LoadActive(); err == nil {
-		toolReg = permission.FilterRegistry(toolReg, p)
-		fmt.Fprintf(stderr, "cloudy: profile=%s\n", p.Name)
+	if activeProfile != nil {
+		fmt.Fprintf(stderr, "cloudy: profile=%s\n", activeProfile.Name)
 	}
 
 	sess, err := session.New("")

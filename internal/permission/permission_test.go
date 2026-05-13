@@ -13,10 +13,10 @@ import (
 // stubTool implements tools.Tool for filter tests.
 type stubTool struct{ name string }
 
-func (s stubTool) Name() string                                          { return s.name }
-func (s stubTool) Description() string                                   { return s.name }
-func (s stubTool) Schema() json.RawMessage                               { return json.RawMessage(`{}`) }
-func (s stubTool) ReadOnly() bool                                        { return true }
+func (s stubTool) Name() string            { return s.name }
+func (s stubTool) Description() string     { return s.name }
+func (s stubTool) Schema() json.RawMessage { return json.RawMessage(`{}`) }
+func (s stubTool) ReadOnly() bool          { return true }
 func (s stubTool) Run(ctx context.Context, _ json.RawMessage) (tools.Observation, error) {
 	return tools.Observation{}, nil
 }
@@ -172,6 +172,46 @@ func TestFilterRegistry_BothEmptyReturnsSame(t *testing.T) {
 	reg := newRegistry("k8s.list_pods")
 	if got := FilterRegistry(reg, &Profile{}); got != reg {
 		t.Errorf("empty allow+deny must return registry unchanged")
+	}
+}
+
+func TestMatchNamespace_NilProfile(t *testing.T) {
+	if err := MatchNamespace(nil, "anything"); err != nil {
+		t.Errorf("nil profile must permit any namespace, got %v", err)
+	}
+}
+
+func TestMatchNamespace_EmptyNamespace(t *testing.T) {
+	p := &Profile{Namespaces: Namespaces{Allow: []string{"prod-*"}}}
+	if err := MatchNamespace(p, ""); err != nil {
+		t.Errorf("empty namespace must be permissive, got %v", err)
+	}
+}
+
+func TestMatchNamespace_DenyWins(t *testing.T) {
+	p := &Profile{Namespaces: Namespaces{
+		Allow: []string{"*"},
+		Deny:  []string{"kube-system"},
+	}}
+	if err := MatchNamespace(p, "kube-system"); !errors.Is(err, ErrNamespaceDenied) {
+		t.Errorf("want ErrNamespaceDenied, got %v", err)
+	}
+}
+
+func TestMatchNamespace_AllowGlob(t *testing.T) {
+	p := &Profile{Namespaces: Namespaces{Allow: []string{"prod-*"}}}
+	if err := MatchNamespace(p, "prod-eu"); err != nil {
+		t.Errorf("prod-eu should match allow glob, got %v", err)
+	}
+	if err := MatchNamespace(p, "staging"); !errors.Is(err, ErrNamespaceNotAllowed) {
+		t.Errorf("staging should be rejected, got %v", err)
+	}
+}
+
+func TestMatchNamespace_EmptyAllowAndDeny(t *testing.T) {
+	p := &Profile{}
+	if err := MatchNamespace(p, "anything"); err != nil {
+		t.Errorf("empty allow+deny must permit, got %v", err)
 	}
 }
 

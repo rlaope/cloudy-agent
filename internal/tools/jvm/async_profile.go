@@ -17,8 +17,8 @@ type AsyncProfileTool struct{}
 
 func NewAsyncProfileTool() *AsyncProfileTool { return &AsyncProfileTool{} }
 
-func (t *AsyncProfileTool) Name() string        { return "jvm.async_profile" }
-func (t *AsyncProfileTool) ReadOnly() bool      { return true }
+func (t *AsyncProfileTool) Name() string   { return "jvm.async_profile" }
+func (t *AsyncProfileTool) ReadOnly() bool { return true }
 func (t *AsyncProfileTool) Description() string {
 	return "Profile a local JVM process with async-profiler. Requires CLOUDY_ASYNC_PROFILER env var pointing to profiler.sh."
 }
@@ -91,11 +91,9 @@ func (t *AsyncProfileTool) Run(ctx context.Context, args json.RawMessage) (tools
 		return tools.Observation{}, &MissingEnvError{Var: AsyncProfilerEnvVar}
 	}
 
-	ext := a.Format
+	ext := "txt"
 	if a.Format == "svg" {
 		ext = "svg"
-	} else {
-		ext = "txt"
 	}
 	outFile := fmt.Sprintf("/tmp/cloudy-prof-%d-%d.%s", a.PID, time.Now().UnixNano(), ext)
 

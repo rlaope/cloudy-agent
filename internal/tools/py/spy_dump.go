@@ -15,8 +15,8 @@ type SpyDumpTool struct{}
 
 func NewSpyDumpTool() *SpyDumpTool { return &SpyDumpTool{} }
 
-func (t *SpyDumpTool) Name() string        { return "py.spy_dump" }
-func (t *SpyDumpTool) ReadOnly() bool      { return true }
+func (t *SpyDumpTool) Name() string   { return "py.spy_dump" }
+func (t *SpyDumpTool) ReadOnly() bool { return true }
 func (t *SpyDumpTool) Description() string {
 	return "Run py-spy dump on a local Python process to capture a stack trace of all threads."
 }

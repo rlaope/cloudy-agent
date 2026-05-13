@@ -95,20 +95,20 @@ func (p *provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Chun
 // --- wire types ---
 
 type gemRequest struct {
-	Contents         []gemContent    `json:"contents"`
-	Tools            []gemToolDef    `json:"tools,omitempty"`
-	GenerationConfig *gemGenConfig   `json:"generationConfig,omitempty"`
-	SystemInstruction *gemContent    `json:"systemInstruction,omitempty"`
+	Contents          []gemContent  `json:"contents"`
+	Tools             []gemToolDef  `json:"tools,omitempty"`
+	GenerationConfig  *gemGenConfig `json:"generationConfig,omitempty"`
+	SystemInstruction *gemContent   `json:"systemInstruction,omitempty"`
 }
 
 type gemContent struct {
-	Role  string     `json:"role,omitempty"`
-	Parts []gemPart  `json:"parts"`
+	Role  string    `json:"role,omitempty"`
+	Parts []gemPart `json:"parts"`
 }
 
 type gemPart struct {
-	Text         string          `json:"text,omitempty"`
-	FunctionCall *gemFunctionCall `json:"functionCall,omitempty"`
+	Text             string               `json:"text,omitempty"`
+	FunctionCall     *gemFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *gemFunctionResponse `json:"functionResponse,omitempty"`
 }
 
@@ -133,8 +133,8 @@ type gemFunctionDecl struct {
 }
 
 type gemGenConfig struct {
-	Temperature    float64 `json:"temperature,omitempty"`
-	MaxOutputTokens int    `json:"maxOutputTokens,omitempty"`
+	Temperature     float64 `json:"temperature,omitempty"`
+	MaxOutputTokens int     `json:"maxOutputTokens,omitempty"`
 }
 
 // SSE response types
@@ -213,7 +213,7 @@ func buildRequest(req llm.Request) ([]byte, error) {
 	var genCfg *gemGenConfig
 	if req.Temperature != 0 || req.MaxTokens != 0 {
 		genCfg = &gemGenConfig{
-			Temperature:    req.Temperature,
+			Temperature:     req.Temperature,
 			MaxOutputTokens: req.MaxTokens,
 		}
 	}

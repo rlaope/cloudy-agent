@@ -31,3 +31,24 @@ func intProp(description string) map[string]any {
 func boolProp(description string) map[string]any {
 	return map[string]any{"type": "boolean", "description": description}
 }
+
+// contextProp returns the standard `context` schema property added to every
+// K8s tool so the LLM can override the default kubeconfig context per call.
+func contextProp() map[string]any {
+	return map[string]any{
+		"type":        "string",
+		"description": "kubeconfig context override; empty = default",
+	}
+}
+
+// withContextProp returns a copy of props with the standard `context`
+// property attached. Used by every K8s tool's Schema() to keep the per-call
+// context override consistent across the tool surface.
+func withContextProp(props map[string]any) map[string]any {
+	out := make(map[string]any, len(props)+1)
+	for k, v := range props {
+		out[k] = v
+	}
+	out["context"] = contextProp()
+	return out
+}

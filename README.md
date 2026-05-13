@@ -10,7 +10,13 @@ ClusterRole RBAC).
 
 ## Status
 
-Early development. v0.1.0 in progress. See `.omc/plans/` for the design.
+v0.2 in development. See `.omc/plans/` for the design.
+
+## v0.2 Highlights
+
+- **T2 Bastion Deployment**: Run cloudy on a secure bastion host. Respects `CLOUDY_HOME` for multi-user isolation and `HTTPS_PROXY` for corporate networks. See [docs/BASTION.md](docs/BASTION.md) for deployment guide and systemd unit.
+- **Permission Profiles**: Tool/namespace allow-deny rules plus field-level masking (passwords, tokens, keys). Per-session limits (log lines, profiling duration, token budget, USD spend). See [docs/PERMISSION_PROFILES.md](docs/PERMISSION_PROFILES.md).
+- **Multi-Cluster Context Override**: Pass `contexts:` in config to pin K8s clusters per tool, or use `@prod-eu` prefix in a query to override context for a single turn.
 
 ## Why
 
@@ -31,9 +37,15 @@ make build
 ## Quickstart
 
 ```sh
-cloudy setup        # discover clusters, generate ~/.cloudy/{config,profile}.yaml
-cloudy              # full-screen TUI
+cloudy setup                       # discover clusters, generate ~/.cloudy/{config,profile}.yaml
+cloudy                             # full-screen TUI
 cloudy ask "왜 결제 서비스 응답시간이 느려?"   # one-shot mode
+
+cloudy profile list                # list all available profiles
+cloudy profile use payments-sre    # activate a profile
+cloudy profile new my-profile      # create a new profile interactively
+cloudy profile none                # clear active profile
+cloudy profile cluster             # show RBAC permissions from current context
 ```
 
 ## Safety
@@ -51,6 +63,9 @@ Mutating tools are not registered, so the LLM never sees them.
 Bring your own key. Supported providers: OpenAI (gpt-*), Anthropic (claude-*),
 Google (gemini-*), Moonshot (kimi-*), and any OpenAI-compatible endpoint
 (vLLM, Ollama, OpenRouter). Switch models inside a session with `/model`.
+
+LLM adapters honor `HTTP_PROXY` and `HTTPS_PROXY` environment variables via Go's
+default transport, making cloudy compatible with corporate proxies and bastions.
 
 ## License
 

@@ -60,9 +60,15 @@ func runAsk(args []string, stdout, stderr io.Writer) error {
 		return errf("skills: %w", err)
 	}
 
+	// Resolve active Permission Profile up front so wiring can install the
+	// namespace allow/deny middleware and apply tool-name filters in one pass.
+	activeProfile, _ := permission.LoadActive()
+
 	toolReg, warn := wiring.BuildRegistry(wiring.Options{
 		KubeconfigPath: opts.kubeconfig,
 		ContextName:    opts.context,
+		Contexts:       cfg.Contexts,
+		Profile:        activeProfile,
 		PromEndpoints:  cfg.Prometheus,
 		EnableJVM:      true,
 		EnablePython:   true,
@@ -71,12 +77,8 @@ func runAsk(args []string, stdout, stderr io.Writer) error {
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
 	}
-
-	// Apply the active Permission Profile (if any) before skill filtering,
-	// so skills cannot widen what the profile permits.
-	if p, err := permission.LoadActive(); err == nil {
-		toolReg = permission.FilterRegistry(toolReg, p)
-		fmt.Fprintf(stderr, "cloudy: profile=%s\n", p.Name)
+	if activeProfile != nil {
+		fmt.Fprintf(stderr, "cloudy: profile=%s\n", activeProfile.Name)
 	}
 
 	var activeSkill *skillType

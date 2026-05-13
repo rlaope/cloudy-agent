@@ -14,29 +14,50 @@ import (
 )
 
 // ListNodesTool implements k8s.list_nodes.
-type ListNodesTool struct{ client *Client }
+type ListNodesTool struct{ hub *Hub }
 
-// NewListNodesTool constructs a ListNodesTool backed by the given Client.
-func NewListNodesTool(c *Client) *ListNodesTool { return &ListNodesTool{client: c} }
+// NewListNodesTool constructs a ListNodesTool backed by the given Hub.
+func NewListNodesTool(h *Hub) *ListNodesTool { return &ListNodesTool{hub: h} }
 
-func (t *ListNodesTool) Name() string      { return "k8s.list_nodes" }
-func (t *ListNodesTool) ReadOnly() bool    { return true }
+func (t *ListNodesTool) Name() string   { return "k8s.list_nodes" }
+func (t *ListNodesTool) ReadOnly() bool { return true }
 func (t *ListNodesTool) Description() string {
 	return "List all cluster nodes with name, roles, Kubernetes version, status, age, and addresses."
 }
 func (t *ListNodesTool) Schema() json.RawMessage {
-	return schema(map[string]any{}, nil)
+	return schema(withContextProp(map[string]any{}), nil)
 }
 
 func (t *ListNodesTool) Run(ctx context.Context, args json.RawMessage) (tools.Observation, error) {
-	nodeList, err := t.client.Nodes()
+	var a struct {
+		Context string `json:"context"`
+	}
+	if len(args) > 0 {
+		if err := json.Unmarshal(args, &a); err != nil {
+			return tools.Observation{}, fmt.Errorf("k8s.list_nodes: parse args: %w", err)
+		}
+	}
+
+	client, err := t.hub.Get(a.Context)
+	if err != nil {
+		return tools.Observation{}, fmt.Errorf("k8s.list_nodes: %w", err)
+	}
+	ctxName := a.Context
+	if ctxName == "" {
+		ctxName = t.hub.Default()
+	}
+
+	nodeList, err := client.Nodes()
 	if err != nil {
 		return tools.Observation{}, fmt.Errorf("k8s.list_nodes: %w", err)
 	}
 
-	tbl := &render.Table{
-		Headers: []string{"NAME", "ROLES", "VERSION", "STATUS", "AGE", "ADDRESSES"},
+	multi := t.hub.MultiContext()
+	headers := []string{"NAME", "ROLES", "VERSION", "STATUS", "AGE", "ADDRESSES"}
+	if multi {
+		headers = append([]string{"CONTEXT"}, headers...)
 	}
+	tbl := &render.Table{Headers: headers}
 	for _, n := range nodeList.Items {
 		roles := nodeRoles(n)
 		status := nodeStatus(n)
@@ -45,14 +66,18 @@ func (t *ListNodesTool) Run(ctx context.Context, args json.RawMessage) (tools.Ob
 			age = formatAge(time.Since(n.CreationTimestamp.Time))
 		}
 		addrs := nodeAddresses(n)
-		tbl.Rows = append(tbl.Rows, []string{
+		row := []string{
 			n.Name,
 			roles,
 			n.Status.NodeInfo.KubeletVersion,
 			status,
 			age,
 			addrs,
-		})
+		}
+		if multi {
+			row = append([]string{ctxName}, row...)
+		}
+		tbl.Rows = append(tbl.Rows, row)
 	}
 
 	return tools.Observation{

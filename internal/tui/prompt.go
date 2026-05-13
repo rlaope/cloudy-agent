@@ -16,7 +16,7 @@ type submitMsg string
 type PromptModel struct {
 	ta      textarea.Model
 	history []string
-	histIdx int // -1 means "not navigating history"; 0..len-1 means viewing history[idx]
+	histIdx int    // -1 means "not navigating history"; 0..len-1 means viewing history[idx]
 	draft   string // saves current draft when entering history navigation
 
 	// histSearch state for Ctrl+R

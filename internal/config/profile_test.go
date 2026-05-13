@@ -17,12 +17,12 @@ func TestProfile_SaveAndLoad_RoundTrip(t *testing.T) {
 		GeneratedAt:   time.Now().UTC().Truncate(time.Second),
 		Contexts: []config.ContextProfile{
 			{
-				Name:         "prod",
-				Reachable:    true,
-				K8sVersion:   "v1.28.5",
-				NodeCount:    10,
-				GPUNodeCount: 2,
-				Namespaces:   []string{"default", "kube-system"},
+				Name:          "prod",
+				Reachable:     true,
+				K8sVersion:    "v1.28.5",
+				NodeCount:     10,
+				GPUNodeCount:  2,
+				Namespaces:    []string{"default", "kube-system"},
 				HasPrometheus: true,
 			},
 		},

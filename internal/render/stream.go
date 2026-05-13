@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/rlaope/cloudy/internal/llm"
 )
 
 // Stream is an incremental writer for LLM streaming output.  It writes
@@ -23,11 +25,24 @@ type Stream struct {
 
 	// inTool tracks whether we are inside a BeginToolCall/EndToolCall pair.
 	inTool bool
+
+	// OnUsage, if non-nil, is called whenever usage data arrives in the stream.
+	// It is intentionally a plain func so that callers (e.g. the TUI bridge)
+	// can push tea.Msg values without creating an import cycle.
+	OnUsage func(llm.Usage)
 }
 
 // NewStream creates a Stream that writes to w using the given Theme.
 func NewStream(w io.Writer, theme Theme) *Stream {
 	return &Stream{w: w, theme: theme}
+}
+
+// RecordUsage invokes the OnUsage callback with u if the callback is set.
+// It is safe to call even when OnUsage is nil.
+func (s *Stream) RecordUsage(u llm.Usage) {
+	if s.OnUsage != nil {
+		s.OnUsage(u)
+	}
 }
 
 // WriteToken appends a single token (typically a word or punctuation fragment)

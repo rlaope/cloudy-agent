@@ -32,6 +32,7 @@ var builtinItems = []list.Item{
 	paletteItem{title: "skill", usage: "/skill <name>  — switch active skill"},
 	paletteItem{title: "use", usage: "/use <ctx>     — switch kubeconfig context"},
 	paletteItem{title: "model", usage: "/model <id>   — switch active model"},
+	paletteItem{title: "scope", usage: "/scope ns=<csv>  /scope ctx=<csv>  /scope reset"},
 	paletteItem{title: "replay", usage: "/replay <session> — replay a session file"},
 	paletteItem{title: "clear", usage: "/clear        — clear stream output"},
 	paletteItem{title: "quit", usage: "/quit         — exit cloudy"},
