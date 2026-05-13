@@ -21,6 +21,7 @@ import (
 	"github.com/rlaope/cloudy/internal/tools/jvm"
 	"github.com/rlaope/cloudy/internal/tools/k8s"
 	tlog "github.com/rlaope/cloudy/internal/tools/log"
+	"github.com/rlaope/cloudy/internal/tools/perf"
 	"github.com/rlaope/cloudy/internal/tools/prom"
 	"github.com/rlaope/cloudy/internal/tools/py"
 	"github.com/rlaope/cloudy/internal/tools/trace"
@@ -50,6 +51,10 @@ type Options struct {
 	Logs []config.HTTPEndpoint
 	// Tracing is the list of tracing endpoints (tempo / jaeger).
 	Tracing []config.HTTPEndpoint
+	// Pprof is the list of Go services exposing /debug/pprof/*.
+	Pprof []config.HTTPEndpoint
+	// NodeInspectors is the list of Node V8 Inspector endpoints.
+	NodeInspectors []config.HTTPEndpoint
 }
 
 // KubeWarning is a non-fatal warning returned by BuildRegistry when the
@@ -94,6 +99,9 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 
 	traceClients, traceSkips := trace.BuildClients(opts.Tracing)
 	trace.RegisterAll(reg, traceClients, traceSkips)
+
+	perfClients, perfSkips := perf.BuildClients(opts.Pprof, opts.NodeInspectors)
+	perf.RegisterAll(reg, perfClients, perfSkips)
 
 	// Single Profile application point: namespace checker on the Hub plus
 	// tool allow/deny filter on the returned registry.

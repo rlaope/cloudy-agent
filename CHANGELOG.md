@@ -3,6 +3,22 @@
 ## Unreleased
 
 ### Added
+- **`perf.*` profiler-attach tools** across the polyglot SRE surface:
+  - Go: `perf.go_pprof_goroutine` / `_heap` / `_allocs` / `_threadcreate`
+    fetch the text-formatted (`?debug=1/2`) variants of
+    `/debug/pprof/<kind>` from services configured under the new
+    `pprof:` block of `cloudy.yaml`. The binary CPU profile is
+    intentionally deferred until a follow-up release adds the
+    `google/pprof` parser.
+  - Ruby: `perf.rbspy_dump` shells out to `rbspy dump --pid N --time S`
+    with a fixed argv vector (no user-controlled string concatenation).
+    Always registered; binary lookup happens at call time.
+  - Node.js: `perf.v8_inspector_targets` enumerates V8 Inspector
+    debug targets via `GET /json/list` against endpoints configured
+    under `node_inspectors:`. Deeper CPU/heap capture over CDP is
+    deferred.
+- `internal/tools/httpapi` now backs `perf.*` too, alongside `log.*` and
+  `trace.*` from the wave above.
 - **`log.*` and `trace.*` read-only query tools** for Loki, Elasticsearch,
   Tempo, and Jaeger. Two new config blocks — `logs:` and `tracing:` —
   accept named HTTP endpoints with `kind` ∈ {loki, elasticsearch, tempo,

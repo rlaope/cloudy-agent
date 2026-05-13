@@ -46,6 +46,17 @@ type Config struct {
 	// selects the wrapper: tempo / jaeger. cloudy uses only GET endpoints.
 	Tracing []HTTPEndpoint `yaml:"tracing,omitempty"`
 
+	// Pprof is the list of Go services exposing the standard /debug/pprof/*
+	// HTTP endpoints. Each entry's URL is the base, e.g. http://api:6060.
+	// cloudy uses only the text-formatted variants (?debug=1/2).
+	Pprof []HTTPEndpoint `yaml:"pprof,omitempty"`
+
+	// NodeInspectors is the list of Node.js processes running with the
+	// V8 Inspector enabled (--inspect=...). cloudy queries the /json
+	// discovery endpoint to enumerate debuggable targets; deeper
+	// CPU/heap capture is deferred to a future release.
+	NodeInspectors []HTTPEndpoint `yaml:"node_inspectors,omitempty"`
+
 	// Contexts is the explicit list of kubeconfig contexts to expose to the
 	// agent. Empty (or missing) means "use the kubeconfig current-context".
 	Contexts []string `yaml:"contexts,omitempty"`
