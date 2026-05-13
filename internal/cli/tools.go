@@ -47,6 +47,8 @@ func (toolsCmd) Run(_ context.Context, args []string, stdout, stderr io.Writer) 
 		Databases:      cfg.Databases,
 		Logs:           cfg.Logs,
 		Tracing:        cfg.Tracing,
+		Pprof:          cfg.Pprof,
+		NodeInspectors: cfg.NodeInspectors,
 	})
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
