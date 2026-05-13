@@ -14,23 +14,23 @@ import (
 )
 
 // ListPodsTool implements k8s.list_pods.
-type ListPodsTool struct{ client *Client }
+type ListPodsTool struct{ hub *Hub }
 
-// NewListPodsTool constructs a ListPodsTool backed by the given Client.
-func NewListPodsTool(c *Client) *ListPodsTool { return &ListPodsTool{client: c} }
+// NewListPodsTool constructs a ListPodsTool backed by the given Hub.
+func NewListPodsTool(h *Hub) *ListPodsTool { return &ListPodsTool{hub: h} }
 
-func (t *ListPodsTool) Name() string      { return "k8s.list_pods" }
-func (t *ListPodsTool) ReadOnly() bool    { return true }
+func (t *ListPodsTool) Name() string   { return "k8s.list_pods" }
+func (t *ListPodsTool) ReadOnly() bool { return true }
 func (t *ListPodsTool) Description() string {
 	return "List Kubernetes pods in a namespace with optional label/field selectors."
 }
 func (t *ListPodsTool) Schema() json.RawMessage {
-	return schema(map[string]any{
+	return schema(withContextProp(map[string]any{
 		"namespace":      strProp("Namespace to list pods in. Empty string means all namespaces."),
 		"label_selector": strProp("Label selector, e.g. app=nginx."),
 		"field_selector": strProp("Field selector, e.g. status.phase=Running."),
 		"limit":          intProp("Maximum number of pods to return (0 = server default)."),
-	}, nil)
+	}), nil)
 }
 
 func (t *ListPodsTool) Run(ctx context.Context, args json.RawMessage) (tools.Observation, error) {
@@ -39,9 +39,23 @@ func (t *ListPodsTool) Run(ctx context.Context, args json.RawMessage) (tools.Obs
 		LabelSelector string `json:"label_selector"`
 		FieldSelector string `json:"field_selector"`
 		Limit         int64  `json:"limit"`
+		Context       string `json:"context"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return tools.Observation{}, fmt.Errorf("k8s.list_pods: parse args: %w", err)
+	}
+
+	if err := t.hub.CheckNamespace(a.Namespace); err != nil {
+		return tools.Observation{Text: err.Error()}, nil
+	}
+
+	client, err := t.hub.Get(a.Context)
+	if err != nil {
+		return tools.Observation{}, fmt.Errorf("k8s.list_pods: %w", err)
+	}
+	ctxName := a.Context
+	if ctxName == "" {
+		ctxName = t.hub.Default()
 	}
 
 	opts := metav1.ListOptions{
@@ -52,15 +66,19 @@ func (t *ListPodsTool) Run(ctx context.Context, args json.RawMessage) (tools.Obs
 		opts.Limit = a.Limit
 	}
 
-	pods, err := t.client.Pods(a.Namespace, opts)
+	pods, err := client.Pods(a.Namespace, opts)
 	if err != nil {
 		return tools.Observation{}, fmt.Errorf("k8s.list_pods: %w", err)
 	}
 
-	tbl := &render.Table{
-		Headers: []string{"NAMESPACE", "NAME", "PHASE", "READY", "RESTARTS", "AGE", "NODE"},
-		Aligns:  []render.Align{render.AlignLeft, render.AlignLeft, render.AlignLeft, render.AlignRight, render.AlignRight, render.AlignRight, render.AlignLeft},
+	multi := t.hub.MultiContext()
+	headers := []string{"NAMESPACE", "NAME", "PHASE", "READY", "RESTARTS", "AGE", "NODE"}
+	aligns := []render.Align{render.AlignLeft, render.AlignLeft, render.AlignLeft, render.AlignRight, render.AlignRight, render.AlignRight, render.AlignLeft}
+	if multi {
+		headers = append([]string{"CONTEXT"}, headers...)
+		aligns = append([]render.Align{render.AlignLeft}, aligns...)
 	}
+	tbl := &render.Table{Headers: headers, Aligns: aligns}
 	for _, p := range pods.Items {
 		ready := 0
 		total := len(p.Spec.Containers)
@@ -75,7 +93,7 @@ func (t *ListPodsTool) Run(ctx context.Context, args json.RawMessage) (tools.Obs
 		if !p.CreationTimestamp.IsZero() {
 			age = formatAge(time.Since(p.CreationTimestamp.Time))
 		}
-		tbl.Rows = append(tbl.Rows, []string{
+		row := []string{
 			p.Namespace,
 			p.Name,
 			string(p.Status.Phase),
@@ -83,7 +101,11 @@ func (t *ListPodsTool) Run(ctx context.Context, args json.RawMessage) (tools.Obs
 			strconv.Itoa(int(restarts)),
 			age,
 			p.Spec.NodeName,
-		})
+		}
+		if multi {
+			row = append([]string{ctxName}, row...)
+		}
+		tbl.Rows = append(tbl.Rows, row)
 	}
 
 	text := fmt.Sprintf("%d pod(s) in namespace %q", len(pods.Items), a.Namespace)

@@ -24,10 +24,11 @@ import (
 type Profile struct {
 	Name        string     `yaml:"name"`
 	Description string     `yaml:"description,omitempty"`
-	Contexts    []string   `yaml:"contexts,omitempty"`   // empty = any context allowed
+	Contexts    []string   `yaml:"contexts,omitempty"` // empty = any context allowed
 	Namespaces  Namespaces `yaml:"namespaces,omitempty"`
 	Tools       Tools      `yaml:"tools,omitempty"`
 	Limits      Limits     `yaml:"limits,omitempty"`
+	Masking     Masking    `yaml:"masking,omitempty"`
 }
 
 // Namespaces is the per-namespace allow/deny pair. Both lists are glob
@@ -42,6 +43,21 @@ type Namespaces struct {
 type Tools struct {
 	Allow []string `yaml:"allow,omitempty"`
 	Deny  []string `yaml:"deny,omitempty"`
+}
+
+// Masking controls field-level redaction applied to tool observations,
+// JSON documents, and free-form text that the agent produces or receives.
+// Patterns are applied case-insensitively for KeyRegex key matching.
+type Masking struct {
+	// KeyRegex masks any value whose key (case-insensitive substring or
+	// regex) matches one of these patterns. Applied to JSON-like maps,
+	// YAML manifests, and tool observations rendered as text.
+	// Example: ["password","token","api_?key","secret"]
+	KeyRegex []string `yaml:"key_regex,omitempty"`
+	// ValueRegex masks any value whose stringified form matches one of
+	// these regexes. Useful for catching JWTs, AWS access keys, etc.
+	// Example: ["eyJ[A-Za-z0-9_=-]{20,}\\.", "AKIA[0-9A-Z]{16}"]
+	ValueRegex []string `yaml:"value_regex,omitempty"`
 }
 
 // Limits caps potentially-expensive operations. Zero means "use the global

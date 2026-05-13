@@ -37,16 +37,23 @@ type Deps struct {
 
 // AgentEvent is a discriminated union of events emitted by the agent runner.
 type AgentEvent struct {
-	Token    string // non-empty → text delta
+	Token     string // non-empty → text delta
 	ToolBegin *toolBeginEvt
 	ToolEnd   *toolEndEvt
 	Done      bool
 	Err       error
 	Cost      float64
+	// Usage is non-nil when the agent emits token-usage data.
+	Usage *agentUsageMsg
+	// ScopeAddendum is prepended to the system prompt when non-empty.
+	ScopeAddendum string
 }
 
 type toolBeginEvt struct{ name, args string }
-type toolEndEvt struct{ observation string; err error }
+type toolEndEvt struct {
+	observation string
+	err         error
+}
 
 // agentDoneMsg is sent when the agent finishes a run.
 type agentDoneMsg struct{ err error }
@@ -54,8 +61,22 @@ type agentDoneMsg struct{ err error }
 // agentEventMsg delivers a streaming event from the agent goroutine.
 type agentEventMsg AgentEvent
 
+// agentUsageMsg carries cumulative token usage from a streaming LLM response.
+type agentUsageMsg struct {
+	Input  int
+	Output int
+	USD    float64
+}
+
 // cancelMsg signals that the in-flight agent run should be cancelled.
 type cancelMsg struct{}
+
+// usageAccum accumulates token usage across turns.
+type usageAccum struct {
+	Input  int
+	Output int
+	USD    float64
+}
 
 // Model is the root bubbletea model for the cloudy TUI.
 type Model struct {
@@ -67,6 +88,11 @@ type Model struct {
 	deps        Deps
 	keys        keyMap
 	activeSkill string
+
+	// scope holds the current session scope set via /scope.
+	scope Scope
+	// usage accumulates token usage across agent runs.
+	usage usageAccum
 
 	// Ctrl+C double-tap state.
 	lastCtrlC  time.Time
@@ -195,7 +221,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case submitMsg:
-		return m, m.runAgent(string(msg))
+		val := string(msg)
+		if strings.HasPrefix(val, "/scope ") {
+			return m, m.handleScopeCmd(strings.TrimPrefix(val, "/scope "))
+		}
+		return m, m.runAgent(val)
 
 	case paletteActionMsg:
 		return m, m.handlePaletteAction(msg)
@@ -216,6 +246,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, sCmd
 		}
 		return m, nil
+
+	case agentUsageMsg:
+		m.usage.Input += msg.Input
+		m.usage.Output += msg.Output
+		m.usage.USD += msg.USD
+		var hCmd tea.Cmd
+		m.header, hCmd = m.header.Update(headerStateMsg{cost: msg.USD})
+		return m, hCmd
 
 	case headerStateMsg:
 		var hCmd tea.Cmd
@@ -264,6 +302,11 @@ func (m *Model) runAgent(input string) tea.Cmd {
 		return func() tea.Msg {
 			return agentDoneMsg{err: nil}
 		}
+	}
+
+	// Prepend scope addendum so the agent honors the session scope.
+	if addendum := m.scope.SystemPromptAddendum(); addendum != "" {
+		input = addendum + "\n\n" + input
 	}
 
 	// Create a cancellable context using a simple channel-based approach.
@@ -333,6 +376,14 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 	if evt.Cost > 0 {
 		var hCmd tea.Cmd
 		m.header, hCmd = m.header.Update(headerStateMsg{cost: evt.Cost})
+		cmds = append(cmds, hCmd)
+	}
+	if evt.Usage != nil {
+		m.usage.Input += evt.Usage.Input
+		m.usage.Output += evt.Usage.Output
+		m.usage.USD += evt.Usage.USD
+		var hCmd tea.Cmd
+		m.header, hCmd = m.header.Update(headerStateMsg{cost: evt.Usage.USD})
 		cmds = append(cmds, hCmd)
 	}
 
@@ -424,6 +475,11 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		m.prompt.SetValue("")
 		return hCmd
 
+	case "scope":
+		// Insert prefix into prompt so user fills in the argument.
+		m.prompt.SetValue("/scope ")
+		return nil
+
 	case "replay":
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamTokenMsg("replay not yet implemented\n"))
@@ -433,6 +489,44 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 
 	m.prompt.SetValue("")
 	return nil
+}
+
+// handleScopeCmd parses and applies a /scope argument, emitting confirmation.
+func (m *Model) handleScopeCmd(arg string) tea.Cmd {
+	sc, err := parseScope(arg)
+	if err != nil {
+		var sCmd tea.Cmd
+		m.stream, sCmd = m.stream.Update(streamTokenMsg("[scope error: " + err.Error() + "]\n"))
+		m.prompt.SetValue("")
+		return sCmd
+	}
+
+	m.scope = sc
+
+	var scopeStr string
+	if sc.Empty() {
+		scopeStr = "-" // sentinel to clear in headerStateMsg
+	} else {
+		scopeStr = sc.String()
+	}
+
+	var cmds []tea.Cmd
+	var hCmd tea.Cmd
+	m.header, hCmd = m.header.Update(headerStateMsg{scope: scopeStr})
+	cmds = append(cmds, hCmd)
+
+	var feedback string
+	if sc.Empty() {
+		feedback = "[scope reset]\n"
+	} else {
+		feedback = "[scope set: " + sc.String() + "]\n"
+	}
+	var sCmd tea.Cmd
+	m.stream, sCmd = m.stream.Update(streamTokenMsg(feedback))
+	cmds = append(cmds, sCmd)
+
+	m.prompt.SetValue("")
+	return tea.Batch(cmds...)
 }
 
 func helpText() string {
@@ -453,6 +547,9 @@ commands (type / to open palette):
   /skill <name>       switch active skill
   /use <ctx>          switch kubeconfig context
   /model <id>         switch model
+  /scope ns=<csv>     narrow session to namespaces (comma-separated)
+  /scope ctx=<csv>    narrow session to contexts (comma-separated)
+  /scope reset        drop session scope
   /replay <session>   replay session
   /clear              clear output
   /quit               exit

@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/rlaope/cloudy/internal/config"
+	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/tools"
 	"github.com/rlaope/cloudy/internal/tools/gpu"
 	"github.com/rlaope/cloudy/internal/tools/jvm"
@@ -21,7 +22,15 @@ type Options struct {
 	// KubeconfigPath is the path to a kubeconfig file. Empty = default discovery.
 	KubeconfigPath string
 	// ContextName is the kubeconfig context to use. Empty = current context.
+	// Ignored when Contexts is non-empty (multi-context mode).
 	ContextName string
+	// Contexts is the explicit list of kubeconfig contexts the Hub should
+	// expose. Empty = single-context mode using the kubeconfig current-context.
+	Contexts []string
+	// Profile, when non-nil, narrows the registry: the namespace checker is
+	// installed on the Hub and permission.FilterRegistry is applied before
+	// the registry is returned.
+	Profile *permission.Profile
 	// PromEndpoints is the list of Prometheus endpoints from config.
 	PromEndpoints []config.PrometheusEndpoint
 	// EnableJVM registers jvm.* tools (default: true; always registered).
@@ -48,24 +57,38 @@ func (w *KubeWarning) Error() string {
 // K8s tool construction failures return the registry with a *KubeWarning
 // rather than a hard error, so the CLI remains usable for help/version/skills
 // even when no kubeconfig is present.
+//
+// When opts.Profile is non-nil, the namespace allow/deny check is wired into
+// the K8s Hub and permission.FilterRegistry narrows the final tool set.
 func BuildRegistry(opts Options) (*tools.Registry, error) {
 	reg := tools.New()
 	var kubeWarn error
 
 	// --- Kubernetes tools ---
-	kClient, err := k8s.NewClient(opts.KubeconfigPath, opts.ContextName)
+	// Multi-context mode short-circuits ContextName; the Hub manages clients.
+	contexts := opts.Contexts
+	if len(contexts) == 0 && opts.ContextName != "" {
+		contexts = []string{opts.ContextName}
+	}
+	hub, err := k8s.NewHub(opts.KubeconfigPath, contexts)
 	if err != nil {
 		kubeWarn = &KubeWarning{Err: err}
 	} else {
+		if opts.Profile != nil {
+			profile := opts.Profile
+			hub.WithNamespaceChecker(func(ns string) error {
+				return permission.MatchNamespace(profile, ns)
+			})
+		}
 		reg.MustRegister(
-			k8s.NewListPodsTool(kClient),
-			k8s.NewListNodesTool(kClient),
-			k8s.NewListNamespacesTool(kClient),
-			k8s.NewDescribePodTool(kClient),
-			k8s.NewEventsTool(kClient),
-			k8s.NewLogsTool(kClient),
-			k8s.NewTopPodsTool(kClient),
-			k8s.NewTopNodesTool(kClient),
+			k8s.NewListPodsTool(hub),
+			k8s.NewListNodesTool(hub),
+			k8s.NewListNamespacesTool(hub),
+			k8s.NewDescribePodTool(hub),
+			k8s.NewEventsTool(hub),
+			k8s.NewLogsTool(hub),
+			k8s.NewTopPodsTool(hub),
+			k8s.NewTopNodesTool(hub),
 		)
 	}
 
@@ -103,6 +126,13 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 	// --- GPU nvidia-smi (local exec; always registered) ---
 	if opts.EnableGPU {
 		reg.MustRegister(gpu.NewNvidiaSMITool())
+	}
+
+	// Apply Permission Profile tool-name allow/deny last so wiring owns the
+	// full narrowing pipeline; callers no longer need to call FilterRegistry
+	// themselves.
+	if opts.Profile != nil {
+		reg = permission.FilterRegistry(reg, opts.Profile)
 	}
 
 	return reg, kubeWarn

@@ -142,6 +142,10 @@ func (a *Agent) Run(ctx context.Context, userInput string, stream *render.Stream
 				}
 			}
 
+			if chunk.Usage != nil && stream != nil {
+				stream.RecordUsage(*chunk.Usage)
+			}
+
 			if chunk.ToolCall != nil {
 				tc := chunk.ToolCall
 				// Providers may stream tool call deltas incrementally.

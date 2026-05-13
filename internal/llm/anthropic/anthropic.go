@@ -31,8 +31,8 @@ import (
 var llmTransport http.RoundTripper = http.DefaultTransport
 
 const (
-	baseURL        = "https://api.anthropic.com"
-	anthropicVer   = "2023-06-01"
+	baseURL      = "https://api.anthropic.com"
+	anthropicVer = "2023-06-01"
 )
 
 // provider implements llm.Provider for Anthropic.
@@ -114,13 +114,13 @@ type antMessage struct {
 }
 
 type antContentBlock struct {
-	Type       string          `json:"type"`
-	Text       string          `json:"text,omitempty"`
-	ID         string          `json:"id,omitempty"`
-	Name       string          `json:"name,omitempty"`
-	Input      json.RawMessage `json:"input,omitempty"`
-	ToolUseID  string          `json:"tool_use_id,omitempty"`
-	Content    string          `json:"content,omitempty"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   string          `json:"content,omitempty"`
 }
 
 type antTool struct {
@@ -131,17 +131,17 @@ type antTool struct {
 
 // SSE event types
 type antEvent struct {
-	Type  string          `json:"type"`
-	Index int             `json:"index"`
-	Delta *antDelta       `json:"delta"`
-	Usage *antUsage       `json:"usage"`
+	Type  string    `json:"type"`
+	Index int       `json:"index"`
+	Delta *antDelta `json:"delta"`
+	Usage *antUsage `json:"usage"`
 }
 
 type antDelta struct {
-	Type        string          `json:"type"`
-	Text        string          `json:"text"`
-	PartialJSON string          `json:"partial_json"`
-	StopReason  string          `json:"stop_reason"`
+	Type        string `json:"type"`
+	Text        string `json:"text"`
+	PartialJSON string `json:"partial_json"`
+	StopReason  string `json:"stop_reason"`
 }
 
 type antUsage struct {
@@ -151,9 +151,9 @@ type antUsage struct {
 
 // contentBlockStart carries the initial block definition.
 type antContentBlockStart struct {
-	Type         string          `json:"type"`
-	Index        int             `json:"index"`
-	ContentBlock *antInitBlock   `json:"content_block"`
+	Type         string        `json:"type"`
+	Index        int           `json:"index"`
+	ContentBlock *antInitBlock `json:"content_block"`
 }
 
 type antInitBlock struct {
@@ -231,7 +231,7 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 	scanner := bufio.NewScanner(r)
 	// track tool_use blocks by index
 	toolBlocks := map[int]*llm.ToolCall{}
-	var argsBuf  = map[int][]byte{}
+	var argsBuf = map[int][]byte{}
 
 	var eventType string
 	for scanner.Scan() {
@@ -284,7 +284,9 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 			}
 
 		case "content_block_stop":
-			var ev struct{ Index int `json:"index"` }
+			var ev struct {
+				Index int `json:"index"`
+			}
 			if err := json.Unmarshal([]byte(data), &ev); err != nil {
 				continue
 			}

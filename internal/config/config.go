@@ -30,6 +30,10 @@ type Config struct {
 	// Prometheus is the list of Prometheus endpoints the agent may query.
 	Prometheus []PrometheusEndpoint `yaml:"prometheus"`
 
+	// Contexts is the explicit list of kubeconfig contexts to expose to the
+	// agent. Empty (or missing) means "use the kubeconfig current-context".
+	Contexts []string `yaml:"contexts,omitempty"`
+
 	// Safety contains guardrails that bound what the agent is allowed to do.
 	Safety SafetyConfig `yaml:"safety"`
 
@@ -179,10 +183,10 @@ func Save(path string, cfg Config) error {
 }
 
 // Path returns the resolved path to the user's config file. Resolution order:
-// 1. $CLOUDY_HOME/config.yaml — explicit cloudy home, used by bastion
-//    deployments to give each shell user their own state directory.
-// 2. $XDG_CONFIG_HOME/cloudy/config.yaml — XDG-conformant location.
-// 3. ~/.cloudy/config.yaml — default.
+//  1. $CLOUDY_HOME/config.yaml — explicit cloudy home, used by bastion
+//     deployments to give each shell user their own state directory.
+//  2. $XDG_CONFIG_HOME/cloudy/config.yaml — XDG-conformant location.
+//  3. ~/.cloudy/config.yaml — default.
 func Path() string {
 	if ch := os.Getenv("CLOUDY_HOME"); ch != "" {
 		return filepath.Join(ch, "config.yaml")

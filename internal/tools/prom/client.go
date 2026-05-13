@@ -41,7 +41,7 @@ type Sample struct {
 
 // Series is a labelled time series from a range query.
 type Series struct {
-	Labels  map[string]string
+	Labels map[string]string
 	// Values is the sequence of (timestamp, value) pairs.
 	Values [][2]float64
 }
@@ -312,7 +312,7 @@ func (b *bearerTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // basicTripper injects HTTP Basic Auth credentials.
 type basicTripper struct {
-	inner        http.RoundTripper
+	inner      http.RoundTripper
 	user, pass string
 }
 

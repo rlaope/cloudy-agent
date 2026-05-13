@@ -277,3 +277,187 @@ func TestModel_VersionAction_WritesToStream(t *testing.T) {
 		t.Error("version action should write version to stream")
 	}
 }
+
+// --- /scope tests ---
+
+func TestModel_ScopeCmd_SetsScope(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	// Simulate submitting "/scope ns=payments".
+	cmd := m.handleScopeCmd("ns=payments")
+	if cmd != nil {
+		cmd()
+	}
+
+	sc := m.currentScope()
+	if len(sc.Namespaces) != 1 || sc.Namespaces[0] != "payments" {
+		t.Errorf("scope.Namespaces = %v, want [payments]", sc.Namespaces)
+	}
+	if !strings.Contains(m.stream.content.String(), "payments") {
+		t.Error("scope confirmation should mention the namespace in stream output")
+	}
+}
+
+func TestModel_ScopeCmd_Reset_ClearsScope(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	// Set a scope first.
+	m.handleScopeCmd("ns=payments")
+	// Reset it.
+	cmd := m.handleScopeCmd("reset")
+	if cmd != nil {
+		cmd()
+	}
+
+	sc := m.currentScope()
+	if !sc.Empty() {
+		t.Errorf("scope should be empty after reset, got %+v", sc)
+	}
+	if !strings.Contains(m.stream.content.String(), "reset") {
+		t.Error("stream should contain reset confirmation")
+	}
+}
+
+func TestModel_ScopeCmd_MultipleNamespaces(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	cmd := m.handleScopeCmd("ns=payments,checkout")
+	if cmd != nil {
+		cmd()
+	}
+
+	sc := m.currentScope()
+	if len(sc.Namespaces) != 2 {
+		t.Errorf("expected 2 namespaces, got %v", sc.Namespaces)
+	}
+}
+
+func TestModel_ScopeCmd_ContextKey(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	cmd := m.handleScopeCmd("ctx=prod-eu")
+	if cmd != nil {
+		cmd()
+	}
+
+	sc := m.currentScope()
+	if len(sc.Contexts) != 1 || sc.Contexts[0] != "prod-eu" {
+		t.Errorf("scope.Contexts = %v, want [prod-eu]", sc.Contexts)
+	}
+}
+
+func TestModel_ScopeCmd_InvalidArg_EmitsError(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	cmd := m.handleScopeCmd("badkey=foo")
+	if cmd != nil {
+		cmd()
+	}
+
+	if !strings.Contains(m.stream.content.String(), "scope error") {
+		t.Error("invalid scope key should emit error to stream")
+	}
+	// Scope should not change.
+	if !m.currentScope().Empty() {
+		t.Error("scope should remain empty after parse error")
+	}
+}
+
+func TestModel_PaletteIncludes_Scope(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	found := false
+	for _, item := range builtinItems {
+		pi, ok := item.(paletteItem)
+		if ok && pi.title == "scope" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("palette builtinItems should include a 'scope' item")
+	}
+}
+
+func TestModel_PaletteScope_InsertsPrefix(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	cmd := m.handlePaletteAction(paletteActionMsg{cmd: "scope"})
+	if cmd != nil {
+		cmd()
+	}
+
+	if m.prompt.Value() != "/scope " {
+		t.Errorf("palette scope action should set prompt to '/scope ', got %q", m.prompt.Value())
+	}
+}
+
+// --- agentUsageMsg / cost meter tests ---
+
+func TestModel_AgentUsageMsg_AccumulatesUsage(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	// Send first usage message.
+	next, cmd := m.Update(agentUsageMsg{Input: 100, Output: 50, USD: 0.006})
+	m = next.(Model)
+	if cmd != nil {
+		cmd()
+	}
+
+	if m.usage.Input != 100 {
+		t.Errorf("usage.Input = %d, want 100", m.usage.Input)
+	}
+	if m.usage.Output != 50 {
+		t.Errorf("usage.Output = %d, want 50", m.usage.Output)
+	}
+	if m.usage.USD != 0.006 {
+		t.Errorf("usage.USD = %f, want 0.006", m.usage.USD)
+	}
+
+	// Send a second usage message — should accumulate.
+	next, cmd = m.Update(agentUsageMsg{Input: 200, Output: 100, USD: 0.006})
+	m = next.(Model)
+	if cmd != nil {
+		cmd()
+	}
+
+	if m.usage.Input != 300 {
+		t.Errorf("usage.Input = %d, want 300 (accumulated)", m.usage.Input)
+	}
+	if m.usage.USD != 0.012 {
+		t.Errorf("usage.USD = %f, want 0.012 (accumulated)", m.usage.USD)
+	}
+}
+
+func TestModel_AgentUsageMsg_UpdatesHeader(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	next, cmd := m.Update(agentUsageMsg{Input: 1000, Output: 500, USD: 0.012})
+	m = next.(Model)
+	if cmd != nil {
+		cmd()
+	}
+
+	view := m.header.View()
+	if !strings.Contains(view, "0.012") {
+		t.Errorf("header view should contain cost '0.012', got: %q", view)
+	}
+}

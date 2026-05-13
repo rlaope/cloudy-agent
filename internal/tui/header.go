@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // headerStateMsg is sent to update header fields dynamically.
@@ -15,6 +15,7 @@ type headerStateMsg struct {
 	model string
 	skill string
 	cost  float64
+	scope string // non-empty replaces the scope segment; "-" clears it
 }
 
 // HeaderModel renders the single-line status bar at the top of the TUI.
@@ -23,6 +24,7 @@ type HeaderModel struct {
 	ns    string
 	model string
 	skill string
+	scope string // compact scope segment, e.g. "ns:payments  ctx:prod-eu"
 	cost  float64
 	width int
 
@@ -76,6 +78,11 @@ func (h HeaderModel) Update(msg tea.Msg) (HeaderModel, tea.Cmd) {
 		if m.skill != "" {
 			h.skill = m.skill
 		}
+		if m.scope == "-" {
+			h.scope = ""
+		} else if m.scope != "" {
+			h.scope = m.scope
+		}
 		h.cost += m.cost
 	case tea.WindowSizeMsg:
 		h.width = m.Width
@@ -88,6 +95,9 @@ func (h HeaderModel) View() string {
 		"ctx=%-12s  ns=%-12s  model=%-28s  skill=%-14s  $%.4f",
 		h.ctx, h.ns, h.model, h.skill, h.cost,
 	)
+	if h.scope != "" {
+		content += "  scope=" + h.scope
+	}
 	if h.noColor {
 		return content
 	}

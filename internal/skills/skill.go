@@ -52,11 +52,11 @@ type Skill struct {
 
 // frontmatter is the internal YAML structure decoded from the --- block.
 type frontmatter struct {
-	Name        string   `yaml:"name"`
-	Description string   `yaml:"description"`
-	Triggers    []string `yaml:"triggers"`
+	Name         string   `yaml:"name"`
+	Description  string   `yaml:"description"`
+	Triggers     []string `yaml:"triggers"`
 	AllowedTools []string `yaml:"allowed_tools"`
-	Defaults    struct {
+	Defaults     struct {
 		ModelPreference []string `yaml:"model_preference"`
 	} `yaml:"defaults"`
 	Examples []string `yaml:"examples"`
