@@ -11,6 +11,7 @@ import (
 
 	"github.com/rlaope/cloudy/internal/agent"
 	"github.com/rlaope/cloudy/internal/config"
+	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/session"
 	"github.com/rlaope/cloudy/internal/wiring"
@@ -69,6 +70,13 @@ func runAsk(args []string, stdout, stderr io.Writer) error {
 	})
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
+	}
+
+	// Apply the active Permission Profile (if any) before skill filtering,
+	// so skills cannot widen what the profile permits.
+	if p, err := permission.LoadActive(); err == nil {
+		toolReg = permission.FilterRegistry(toolReg, p)
+		fmt.Fprintf(stderr, "cloudy: profile=%s\n", p.Name)
 	}
 
 	var activeSkill *skillType

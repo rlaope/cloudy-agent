@@ -1,44 +1,161 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
 	"github.com/rlaope/cloudy/internal/config"
+	"github.com/rlaope/cloudy/internal/permission"
 )
 
-// runProfile implements `cloudy profile <list|show>`. v0.1 only supports
-// the read paths; `use` and `new` are deferred to the Permission Profiles
-// milestone.
+// runProfile implements `cloudy profile <list|show|use|new|none|cluster>`.
+//
+//	list           — list installed permission profiles (~/.cloudy/profiles/)
+//	show <name>    — print one permission profile (yaml-ish)
+//	use <name>     — set the active profile (overridable by $CLOUDY_PROFILE)
+//	none           — clear the active profile
+//	new <name>     — write a starter permission profile
+//	cluster        — show the discovered cluster profile (the v0.1 behaviour)
 func runProfile(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errf("usage: cloudy profile <list|show>")
+		return errf("usage: cloudy profile <list|show|use|new|none|cluster>")
 	}
 	_ = stderr
+
 	switch args[0] {
 	case "list":
-		p, err := config.LoadProfile(config.ProfilePath())
-		if err != nil {
-			return errf("profile: %w", err)
-		}
-		if !p.IsValid() {
-			fmt.Fprintln(stdout, "no profile yet — run `cloudy setup`.")
-			return nil
-		}
-		fmt.Fprintf(stdout, "schema=%d  generated=%s  contexts=%d  recommended_skills=%d\n",
-			p.SchemaVersion, p.GeneratedAt.Format("2006-01-02 15:04:05"),
-			len(p.Contexts), len(p.RecommendedSkills))
-		for _, c := range p.Contexts {
-			fmt.Fprintf(stdout, "  - %s  reachable=%v  nodes=%d  gpu=%d  jvm_pods=%d  py_pods=%d\n",
-				c.Name, c.Reachable, c.NodeCount, c.GPUNodeCount, c.JVMPodCount, c.PythonPodCount)
-		}
-		return nil
+		return profileList(stdout)
 	case "show":
-		// Same as list for v0.1.
-		return runProfile([]string{"list"}, stdout, stderr)
-	case "use", "new":
-		return errf("`cloudy profile %s` is not implemented in v0.1 (Permission Profiles arrive in v0.2)", args[0])
+		if len(args) < 2 {
+			return errf("usage: cloudy profile show <name>")
+		}
+		return profileShow(stdout, args[1])
+	case "use":
+		if len(args) < 2 {
+			return errf("usage: cloudy profile use <name>")
+		}
+		if err := permission.SetActive(args[1]); err != nil {
+			return errf("profile use: %w", err)
+		}
+		fmt.Fprintf(stdout, "active profile set to %s\n", args[1])
+		return nil
+	case "none":
+		if err := permission.ClearActive(); err != nil {
+			return errf("profile none: %w", err)
+		}
+		fmt.Fprintln(stdout, "active profile cleared")
+		return nil
+	case "new":
+		if len(args) < 2 {
+			return errf("usage: cloudy profile new <name>")
+		}
+		return profileNew(stdout, args[1])
+	case "cluster":
+		return profileCluster(stdout)
 	default:
 		return errf("unknown profile subcommand: %s", args[0])
 	}
+}
+
+func profileList(stdout io.Writer) error {
+	names, err := permission.List()
+	if err != nil {
+		return errf("profile list: %w", err)
+	}
+	active, _ := permission.Active()
+	if len(names) == 0 {
+		fmt.Fprintln(stdout, "no permission profiles yet — `cloudy profile new <name>` to create one")
+		return nil
+	}
+	fmt.Fprintf(stdout, "%-3s  %-22s  %s\n", "*", "NAME", "DESCRIPTION")
+	for _, n := range names {
+		mark := " "
+		if n == active {
+			mark = "*"
+		}
+		desc := ""
+		if p, err := permission.Load(n); err == nil {
+			desc = p.Description
+		}
+		fmt.Fprintf(stdout, "%-3s  %-22s  %s\n", mark, n, desc)
+	}
+	return nil
+}
+
+func profileShow(stdout io.Writer, name string) error {
+	p, err := permission.Load(name)
+	if err != nil {
+		return errf("profile show: %w", err)
+	}
+	fmt.Fprintf(stdout, "name: %s\n", p.Name)
+	if p.Description != "" {
+		fmt.Fprintf(stdout, "description: %s\n", p.Description)
+	}
+	if len(p.Contexts) > 0 {
+		fmt.Fprintf(stdout, "contexts: %v\n", p.Contexts)
+	}
+	if len(p.Tools.Allow)+len(p.Tools.Deny) > 0 {
+		fmt.Fprintf(stdout, "tools.allow: %v\n", p.Tools.Allow)
+		fmt.Fprintf(stdout, "tools.deny:  %v\n", p.Tools.Deny)
+	}
+	if len(p.Namespaces.Allow)+len(p.Namespaces.Deny) > 0 {
+		fmt.Fprintf(stdout, "namespaces.allow: %v\n", p.Namespaces.Allow)
+		fmt.Fprintf(stdout, "namespaces.deny:  %v\n", p.Namespaces.Deny)
+	}
+	if p.Limits.MaxLogLines+p.Limits.MaxProfileSeconds+p.Limits.MaxTokensPerSession > 0 ||
+		p.Limits.MaxUSDPerDay > 0 {
+		fmt.Fprintf(stdout, "limits.max_log_lines: %d\n", p.Limits.MaxLogLines)
+		fmt.Fprintf(stdout, "limits.max_profile_seconds: %d\n", p.Limits.MaxProfileSeconds)
+		fmt.Fprintf(stdout, "limits.max_tokens_per_session: %d\n", p.Limits.MaxTokensPerSession)
+		fmt.Fprintf(stdout, "limits.max_usd_per_day: %.2f\n", p.Limits.MaxUSDPerDay)
+	}
+	return nil
+}
+
+func profileNew(stdout io.Writer, name string) error {
+	if _, err := permission.Load(name); err == nil {
+		return errf("profile new: %s already exists", name)
+	} else if !errors.Is(err, permission.ErrNotFound) {
+		return errf("profile new: %w", err)
+	}
+	p := &permission.Profile{
+		Name:        name,
+		Description: "starter profile — narrow as needed",
+		Tools: permission.Tools{
+			Allow: []string{"k8s.*", "prom.*"},
+			Deny:  []string{"jvm.async_profile"},
+		},
+		Limits: permission.Limits{
+			MaxLogLines:         2000,
+			MaxTokensPerSession: 200000,
+		},
+	}
+	if err := permission.Save(p); err != nil {
+		return errf("profile new: %w", err)
+	}
+	fmt.Fprintf(stdout, "created %s\n", permission.Path(name))
+	fmt.Fprintf(stdout, "activate with: cloudy profile use %s\n", name)
+	return nil
+}
+
+// profileCluster preserves the v0.1 `cloudy profile list` behaviour under a
+// dedicated subcommand so `list` can mean "permission profiles" everywhere.
+func profileCluster(stdout io.Writer) error {
+	p, err := config.LoadProfile(config.ProfilePath())
+	if err != nil {
+		return errf("cluster profile: %w", err)
+	}
+	if !p.IsValid() {
+		fmt.Fprintln(stdout, "no cluster profile yet — run `cloudy setup`.")
+		return nil
+	}
+	fmt.Fprintf(stdout, "schema=%d  generated=%s  contexts=%d  recommended_skills=%d\n",
+		p.SchemaVersion, p.GeneratedAt.Format("2006-01-02 15:04:05"),
+		len(p.Contexts), len(p.RecommendedSkills))
+	for _, c := range p.Contexts {
+		fmt.Fprintf(stdout, "  - %s  reachable=%v  nodes=%d  gpu=%d  jvm_pods=%d  py_pods=%d\n",
+			c.Name, c.Reachable, c.NodeCount, c.GPUNodeCount, c.JVMPodCount, c.PythonPodCount)
+	}
+	return nil
 }

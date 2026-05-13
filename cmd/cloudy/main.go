@@ -15,6 +15,7 @@ import (
 
 	"github.com/rlaope/cloudy/internal/buildinfo"
 	"github.com/rlaope/cloudy/internal/config"
+	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/session"
 	"github.com/rlaope/cloudy/internal/tui"
 	"github.com/rlaope/cloudy/internal/wiring"
@@ -98,6 +99,13 @@ func runTUI(stdout, stderr io.Writer) error {
 	})
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
+	}
+
+	// Apply the active Permission Profile (if any) — narrows the tool
+	// catalogue the LLM ever sees.
+	if p, err := permission.LoadActive(); err == nil {
+		toolReg = permission.FilterRegistry(toolReg, p)
+		fmt.Fprintf(stderr, "cloudy: profile=%s\n", p.Name)
 	}
 
 	sess, err := session.New("")
