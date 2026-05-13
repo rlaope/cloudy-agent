@@ -1,0 +1,55 @@
+name: Bug report
+description: cloudy did the wrong thing or crashed
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: One or two sentences. What did you expect, what actually happened?
+      placeholder: |
+        I ran `cloudy ask "..."` and expected X, got Y.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: |
+        Exact command(s) and the smallest possible cloudy.yaml that reproduces. Redact
+        secrets (the password_env / bearer_env values, the BasicUser if it identifies you).
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: tools-output
+    attributes:
+      label: Output of `cloudy tools`
+      description: |
+        Helps us see which backends were wired in at the time. Run `cloudy tools`
+        (or `cloudy tools --json`) and paste here.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: cloudy version
+      description: Run `cloudy --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other (describe in "What happened")
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Stack traces, full agent transcripts, related issues.

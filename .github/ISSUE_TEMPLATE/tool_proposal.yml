@@ -1,0 +1,71 @@
+name: Tool group proposal
+description: Propose a new read-only tool or tool group (Postgres, Kafka, etcd, ...)
+title: "[tool] "
+labels: ["tool-proposal"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        cloudy is a read-only multi-cluster SRE monitoring agent. New tools must
+        fit that contract: GET-only HTTP, SELECT/SHOW/EXPLAIN-only SQL, read-only
+        backend commands, or a fixed pre-vetted catalog of one-liners. See
+        [CONTRIBUTING.md](../../CONTRIBUTING.md) for the "add a new tool group"
+        walkthrough before filing.
+  - type: input
+    id: group-name
+    attributes:
+      label: Group name
+      description: Lowercase, dot-prefix-friendly. Examples — kafka, etcd, vault, k8s-events.
+      placeholder: kafka
+    validations:
+      required: true
+  - type: textarea
+    id: tools
+    attributes:
+      label: Tools in this group
+      description: |
+        Bulleted list of proposed tool names with a one-line purpose each.
+        Use the convention `<group>.<verb_noun>` — e.g. `kafka.topics_describe`.
+      placeholder: |
+        - kafka.topics_describe — list topics with partition + replica counts
+        - kafka.consumer_groups_describe — lag per group / topic / partition
+        - kafka.log_dirs_describe — per-broker log dir sizes
+    validations:
+      required: true
+  - type: textarea
+    id: read-only-evidence
+    attributes:
+      label: How is each tool read-only?
+      description: |
+        For each tool, what guarantees it can't mutate state? "The backend's CLI/API call
+        is read-only by spec" is fine if you cite which call. For DBs, what queries does
+        it run? For HTTP, what endpoint and method?
+      placeholder: |
+        kafka.topics_describe → `kafka-topics --bootstrap-server ... --describe` (read-only).
+        kafka.consumer_groups_describe → AdminClient `DescribeConsumerGroups` (read-only).
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Config additions (if any)
+      description: |
+        What needs to go into `cloudy.yaml`? Use the same shape as existing endpoint
+        blocks (`name`, `url` or DSN, optional auth env). Avoid free-form scripts.
+      render: yaml
+  - type: textarea
+    id: deps
+    attributes:
+      label: New Go dependencies
+      description: |
+        Module path(s) and minimum version. cloudy keeps the `go` directive at the
+        latest stable Go that golangci-lint v1.64 supports (currently 1.24).
+  - type: textarea
+    id: skip-reason-design
+    attributes:
+      label: When unavailable, what does `/tools` say?
+      description: |
+        Every group must explain why it was skipped when its probe fails (binary not on
+        PATH, endpoint unreachable, OS/capability not met). One sentence is enough.
+      placeholder: |
+        "kafka: no bootstrap servers configured" / "kafka: AdminClient connect: ..."
