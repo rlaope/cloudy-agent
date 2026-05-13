@@ -1,6 +1,7 @@
-package main
+package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,15 +10,14 @@ import (
 	"github.com/rlaope/cloudy/internal/permission"
 )
 
-// runProfile implements `cloudy profile <list|show|use|new|none|cluster>`.
-//
-//	list           — list installed permission profiles (~/.cloudy/profiles/)
-//	show <name>    — print one permission profile (yaml-ish)
-//	use <name>     — set the active profile (overridable by $CLOUDY_PROFILE)
-//	none           — clear the active profile
-//	new <name>     — write a starter permission profile
-//	cluster        — show the discovered cluster profile (the v0.1 behaviour)
-func runProfile(args []string, stdout, stderr io.Writer) error {
+func init() { Register(&profileCmd{}) }
+
+type profileCmd struct{}
+
+func (profileCmd) Name() string  { return "profile" }
+func (profileCmd) Short() string { return `manage permission profiles` }
+
+func (profileCmd) Run(_ context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errf("usage: cloudy profile <list|show|use|new|none|cluster>")
 	}
@@ -139,8 +139,6 @@ func profileNew(stdout io.Writer, name string) error {
 	return nil
 }
 
-// profileCluster preserves the v0.1 `cloudy profile list` behaviour under a
-// dedicated subcommand so `list` can mean "permission profiles" everywhere.
 func profileCluster(stdout io.Writer) error {
 	p, err := config.LoadProfile(config.ProfilePath())
 	if err != nil {

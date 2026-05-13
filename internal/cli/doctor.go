@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"context"
@@ -12,16 +12,25 @@ import (
 	"github.com/rlaope/cloudy/internal/setup"
 )
 
-// runDoctor implements `cloudy doctor [--json]`. It runs the structured
-// readiness checks from internal/setup, plus environment checks relevant
-// to T2 (Bastion) deployments — the resolved cloudy home and any HTTP
-// proxy configuration.
-func runDoctor(args []string, stdout, stderr io.Writer) error {
-	opts, _, err := parseFlags("doctor", args, stderr)
-	if err != nil {
+func init() { Register(&doctorCmd{}) }
+
+type doctorCmd struct{}
+
+func (doctorCmd) Name() string  { return "doctor" }
+func (doctorCmd) Short() string { return `verify setup and reachability` }
+
+type doctorOptions struct {
+	base baseFlags
+}
+
+func (o *doctorOptions) bind(fs *flagSet) { o.base.bind(fs.FlagSet) }
+
+func (doctorCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	var opts doctorOptions
+	if _, err := parseInto(&opts, "doctor", args, stderr); err != nil {
 		return err
 	}
-	checks, err := setup.Doctor(context.Background(), setup.Options{
+	checks, err := setup.Doctor(ctx, setup.Options{
 		ConfigPath:  config.Path(),
 		ProfilePath: config.ProfilePath(),
 	})
@@ -30,7 +39,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 	}
 	checks = append(checks, environmentChecks()...)
 
-	if opts.asJSON {
+	if opts.base.asJSON {
 		return json.NewEncoder(stdout).Encode(checks)
 	}
 	allOK := true
@@ -48,10 +57,6 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-// environmentChecks reports CLOUDY_HOME / HTTP proxy state. These are
-// always informational (OK=true) — they exist so bastion / restricted
-// network operators can confirm cloudy will egress through the right
-// proxy and that per-user state lives where they expect.
 func environmentChecks() []setup.Check {
 	homeDetail := "default (~/.cloudy)"
 	if v := os.Getenv("CLOUDY_HOME"); v != "" {

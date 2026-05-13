@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"context"
@@ -14,14 +14,35 @@ import (
 	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/session"
+	"github.com/rlaope/cloudy/internal/skills"
 	"github.com/rlaope/cloudy/internal/wiring"
 )
 
-// runAsk implements `cloudy ask "<prompt>"` (and `cloudy -p "<prompt>"` and
-// stdin pipe). It is a one-shot non-TUI flow: load config, resolve provider,
-// build skill + tool registries, run the ReAct loop, write to stdout.
-func runAsk(args []string, stdout, stderr io.Writer) error {
-	opts, rest, err := parseFlags("ask", args, stderr)
+func init() { Register(&askCmd{}) }
+
+type askCmd struct{}
+
+func (askCmd) Name() string  { return "ask" }
+func (askCmd) Short() string { return `one-shot natural-language query` }
+
+type askOptions struct {
+	base   baseFlags
+	model  string
+	skill  string
+	prompt string
+}
+
+func (o *askOptions) bind(fs *flagSet) {
+	o.base.bind(fs.FlagSet)
+	fs.StringVar(&o.model, "model", "", "model id (e.g. claude-haiku-4-5-20251001, gpt-4o)")
+	fs.StringVar(&o.skill, "skill", "", "skill to activate (e.g. jvm-gc)")
+	fs.StringVar(&o.prompt, "prompt", "", "prompt for one-shot mode (alias for positional)")
+	fs.StringVar(&o.prompt, "p", "", "shorthand for --prompt")
+}
+
+func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	var opts askOptions
+	rest, err := parseInto(&opts, "ask", args, stderr)
 	if err != nil {
 		return err
 	}
@@ -35,7 +56,7 @@ func runAsk(args []string, stdout, stderr io.Writer) error {
 		prompt = strings.TrimSpace(string(b))
 	}
 	if prompt == "" {
-		return errf("ask requires a prompt: cloudy ask \"<prompt>\"  or  echo … | cloudy ask")
+		return errf(`ask requires a prompt: cloudy ask "<prompt>"  or  echo … | cloudy ask`)
 	}
 
 	cfg, err := config.Load(config.Path())
@@ -60,13 +81,11 @@ func runAsk(args []string, stdout, stderr io.Writer) error {
 		return errf("skills: %w", err)
 	}
 
-	// Resolve active Permission Profile up front so wiring can install the
-	// namespace allow/deny middleware and apply tool-name filters in one pass.
 	activeProfile, _ := permission.LoadActive()
 
 	toolReg, warn := wiring.BuildRegistry(wiring.Options{
-		KubeconfigPath: opts.kubeconfig,
-		ContextName:    opts.context,
+		KubeconfigPath: opts.base.kubeconfig,
+		ContextName:    opts.base.context,
 		Contexts:       cfg.Contexts,
 		Profile:        activeProfile,
 		PromEndpoints:  cfg.Prometheus,
@@ -81,7 +100,7 @@ func runAsk(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "cloudy: profile=%s\n", activeProfile.Name)
 	}
 
-	var activeSkill *skillType
+	var activeSkill *skills.Skill
 	if opts.skill != "" {
 		s, ok := skillReg.Get(opts.skill)
 		if !ok {
@@ -95,9 +114,9 @@ func runAsk(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return errf("session: %w", err)
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
-	theme := render.NewTheme(opts.noColor)
+	theme := render.NewTheme(opts.base.noColor)
 	stream := render.NewStream(stdout, theme)
 
 	ag, err := agent.New(agent.Options{
@@ -110,7 +129,6 @@ func runAsk(args []string, stdout, stderr io.Writer) error {
 		return errf("agent: %w", err)
 	}
 
-	ctx := context.Background()
 	if _, err := ag.Run(ctx, prompt, stream); err != nil {
 		return errf("run: %w", err)
 	}
