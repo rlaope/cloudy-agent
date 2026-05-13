@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/rlaope/cloudy/internal/llm"
 	"github.com/rlaope/cloudy/internal/registry"
@@ -13,14 +15,24 @@ import (
 //
 // Read-only enforcement is delegated to the transport layer — see the
 // package doc on Tool. The zero value is not usable; construct one via New.
+//
+// A Registry also remembers which tool groups were *skipped* at wire time
+// (e.g. "k8s" when no kubeconfig was found) via MarkSkipped, so the /tools
+// inventory surface can show why a group is missing instead of silently
+// dropping it. Group names are the prefix segment before the first dot in
+// a tool name; "k8s.list_pods" belongs to group "k8s".
 type Registry struct {
 	items *registry.Map[Tool]
+
+	skippedMu sync.RWMutex
+	skipped   map[string]string // group → reason
 }
 
 // New returns an empty, ready-to-use Registry.
 func New() *Registry {
 	return &Registry{
-		items: registry.New[Tool](func(t Tool) string { return t.Name() }),
+		items:   registry.New[Tool](func(t Tool) string { return t.Name() }),
+		skipped: map[string]string{},
 	}
 }
 
@@ -45,6 +57,9 @@ func (r *Registry) List() []Tool { return r.items.All() }
 // matches at least one pattern in allow. Patterns support a trailing
 // wildcard '*', e.g. "k8s.*" matches "k8s.list_pods" but not "prom.query".
 // An exact match (no wildcard) is also supported.
+//
+// Skipped-group reasons are carried over from the source, so a skill-narrowed
+// registry still reports "k8s skipped: no kubeconfig" through Inventory.
 func (r *Registry) Filter(allow []string) *Registry {
 	sub := New()
 	for _, t := range r.List() {
@@ -52,7 +67,76 @@ func (r *Registry) Filter(allow []string) *Registry {
 			sub.items.MustRegister(t)
 		}
 	}
+	r.skippedMu.RLock()
+	for g, reason := range r.skipped {
+		sub.skipped[g] = reason
+	}
+	r.skippedMu.RUnlock()
 	return sub
+}
+
+// MarkSkipped records that the tool group named group could not be wired in
+// (no binary, unreachable endpoint, missing capability). The reason surfaces
+// through Inventory; calling MarkSkipped after Register is a no-op for that
+// group, since the group is no longer skipped.
+func (r *Registry) MarkSkipped(group, reason string) {
+	if group == "" {
+		return
+	}
+	r.skippedMu.Lock()
+	defer r.skippedMu.Unlock()
+	r.skipped[group] = reason
+}
+
+// Skipped returns a copy of the skipped-group reason map.
+func (r *Registry) Skipped() map[string]string {
+	r.skippedMu.RLock()
+	defer r.skippedMu.RUnlock()
+	out := make(map[string]string, len(r.skipped))
+	for k, v := range r.skipped {
+		out[k] = v
+	}
+	return out
+}
+
+// Inventory returns the full per-group registration report — registered
+// groups (with their tool names) plus skipped groups (with reasons). Groups
+// are sorted by name; tool names within a group are sorted alphabetically.
+// A group whose tools were all registered overrides any earlier MarkSkipped
+// entry for that group name.
+func (r *Registry) Inventory() Inventory {
+	byGroup := map[string][]string{}
+	for _, t := range r.List() {
+		g := groupOf(t.Name())
+		byGroup[g] = append(byGroup[g], t.Name())
+	}
+
+	groups := make([]GroupReport, 0, len(byGroup)+len(r.skipped))
+	for g, names := range byGroup {
+		sort.Strings(names)
+		groups = append(groups, GroupReport{Name: g, Tools: names})
+	}
+
+	r.skippedMu.RLock()
+	for g, reason := range r.skipped {
+		if _, registered := byGroup[g]; registered {
+			continue
+		}
+		groups = append(groups, GroupReport{Name: g, Skipped: true, Reason: reason})
+	}
+	r.skippedMu.RUnlock()
+
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
+	return Inventory{Groups: groups}
+}
+
+// groupOf returns the prefix segment before the first dot in a tool name.
+// "k8s.list_pods" → "k8s"; "standalone" → "standalone".
+func groupOf(name string) string {
+	if i := strings.IndexByte(name, '.'); i > 0 {
+		return name[:i]
+	}
+	return name
 }
 
 // ToolsFor converts the registry contents to llm.Tool descriptors suitable

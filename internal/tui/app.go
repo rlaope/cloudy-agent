@@ -483,6 +483,12 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		m.prompt.SetValue("/scope ")
 		return nil
 
+	case "tools":
+		var sCmd tea.Cmd
+		m.stream, sCmd = m.stream.Update(streamTokenMsg(renderInventory(m.deps.Tools)))
+		m.prompt.SetValue("")
+		return sCmd
+
 	case "replay":
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamTokenMsg("replay not yet implemented\n"))

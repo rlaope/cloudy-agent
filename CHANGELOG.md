@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `cloudy tools` CLI subcommand and TUI `/tools` slash command — list every
+  registered tool group (`k8s`, `jvm`, `py`, `gpu`, `prom`, …) plus *skipped*
+  groups with a one-line reason. `tools.Registry.MarkSkipped(group, reason)`
+  records why a group was unavailable at wire time so the inventory surface
+  can show "skipped: no kubeconfig" instead of dropping the group silently.
+- Group-aware inventory via `tools.Registry.Inventory()` — groups are
+  derived from the tool-name prefix before the first dot (`k8s.list_pods` →
+  group `k8s`). Filter now preserves skipped reasons across skill-narrowed
+  copies of the registry.
+
+### Changed
+- `internal/tools/prom`: empty client map now marks group `prom` skipped
+  with reason `no prometheus endpoints configured`.
+- `internal/wiring/tools.go`: kube-client construction failure marks group
+  `k8s` skipped with the underlying error string, in addition to returning
+  the existing `*KubeWarning`.
+
 ## v0.3.0 — 2026-05-13
 
 Architecture deepening pass. No user-facing behaviour change; the public
