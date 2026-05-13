@@ -22,8 +22,7 @@ func NewLabelValuesTool(clients map[string]*Client) *LabelValuesTool {
 	return &LabelValuesTool{clients: clients, defaultKey: firstKey(clients)}
 }
 
-func (t *LabelValuesTool) Name() string   { return "prom.label_values" }
-func (t *LabelValuesTool) ReadOnly() bool { return true }
+func (t *LabelValuesTool) Name() string { return "prom.label_values" }
 func (t *LabelValuesTool) Description() string {
 	return "List all values for a Prometheus label, optionally filtered by series selectors."
 }

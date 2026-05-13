@@ -23,8 +23,7 @@ func NewSeriesTool(clients map[string]*Client) *SeriesTool {
 	return &SeriesTool{clients: clients, defaultKey: firstKey(clients)}
 }
 
-func (t *SeriesTool) Name() string   { return "prom.series" }
-func (t *SeriesTool) ReadOnly() bool { return true }
+func (t *SeriesTool) Name() string { return "prom.series" }
 func (t *SeriesTool) Description() string {
 	return "Return metadata for Prometheus series matching the given selectors."
 }

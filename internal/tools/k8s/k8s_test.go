@@ -217,26 +217,6 @@ func TestListNodes(t *testing.T) {
 	}
 }
 
-// TestReadOnly verifies every tool returns true for ReadOnly.
-func TestReadOnly(t *testing.T) {
-	h := newSingleHub()
-	tools := []interface{ ReadOnly() bool }{
-		k8stool.NewListPodsTool(h),
-		k8stool.NewDescribePodTool(h),
-		k8stool.NewLogsTool(h),
-		k8stool.NewEventsTool(h),
-		k8stool.NewTopPodsTool(h),
-		k8stool.NewTopNodesTool(h),
-		k8stool.NewListNamespacesTool(h),
-		k8stool.NewListNodesTool(h),
-	}
-	for _, tool := range tools {
-		if !tool.ReadOnly() {
-			t.Errorf("%T: ReadOnly() returned false", tool)
-		}
-	}
-}
-
 // TestHub_SingleContext_BackwardsCompat verifies the v0.1 column set is
 // preserved (no CONTEXT column) when the hub holds exactly one context.
 func TestHub_SingleContext_BackwardsCompat(t *testing.T) {

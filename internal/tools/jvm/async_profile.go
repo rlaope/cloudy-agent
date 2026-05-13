@@ -17,8 +17,7 @@ type AsyncProfileTool struct{}
 
 func NewAsyncProfileTool() *AsyncProfileTool { return &AsyncProfileTool{} }
 
-func (t *AsyncProfileTool) Name() string   { return "jvm.async_profile" }
-func (t *AsyncProfileTool) ReadOnly() bool { return true }
+func (t *AsyncProfileTool) Name() string { return "jvm.async_profile" }
 func (t *AsyncProfileTool) Description() string {
 	return "Profile a local JVM process with async-profiler. Requires CLOUDY_ASYNC_PROFILER env var pointing to profiler.sh."
 }

@@ -16,8 +16,7 @@ type SpyTopTool struct{}
 
 func NewSpyTopTool() *SpyTopTool { return &SpyTopTool{} }
 
-func (t *SpyTopTool) Name() string   { return "py.spy_top_snapshot" }
-func (t *SpyTopTool) ReadOnly() bool { return true }
+func (t *SpyTopTool) Name() string { return "py.spy_top_snapshot" }
 func (t *SpyTopTool) Description() string {
 	return "Run py-spy top snapshot on a local Python process. Returns a table of top functions by CPU time."
 }

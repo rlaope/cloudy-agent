@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/rlaope/cloudy/internal/llm"
@@ -9,15 +8,11 @@ import (
 )
 
 // Registry holds a set of read-only Tools indexed by name. It wraps the
-// shared generic registry.Map with two domain rules of its own:
+// shared generic registry.Map and adds the domain methods the agent and
+// skill-filtering pipeline expect (Filter, ToolsFor).
 //
-//   - Register panics on tools whose ReadOnly() returns false. This is the
-//     last line of defense before the HTTP/K8s transport guards (which would
-//     also block any mutating call).
-//   - Filter / ToolsFor expose the tool set in shapes the agent and skill
-//     filtering pipeline expect.
-//
-// The zero value is not usable; construct one via New.
+// Read-only enforcement is delegated to the transport layer — see the
+// package doc on Tool. The zero value is not usable; construct one via New.
 type Registry struct {
 	items *registry.Map[Tool]
 }
@@ -29,15 +24,8 @@ func New() *Registry {
 	}
 }
 
-// Register adds t to the registry. It panics if:
-//   - t.ReadOnly() returns false (safety guard — no mutating tools allowed).
-//   - a tool with the same name is already registered.
-func (r *Registry) Register(t Tool) {
-	if !t.ReadOnly() {
-		panic(fmt.Sprintf("tools: tool %q must be read-only (ReadOnly() returned false)", t.Name()))
-	}
-	r.items.MustRegister(t)
-}
+// Register adds t to the registry. It panics on duplicate names.
+func (r *Registry) Register(t Tool) { r.items.MustRegister(t) }
 
 // MustRegister registers each tool in ts, panicking on any violation.
 func (r *Registry) MustRegister(ts ...Tool) {
