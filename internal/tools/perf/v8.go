@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/tools"
@@ -18,19 +17,7 @@ type NodeInspectorClient struct {
 }
 
 func pickNode(m map[string]*NodeInspectorClient, name string) (*NodeInspectorClient, error) {
-	if name == "" {
-		if len(m) == 1 {
-			for _, c := range m {
-				return c, nil
-			}
-		}
-		return nil, fmt.Errorf("perf: node inspector endpoint name required (configured: %s)", strings.Join(keys(m), ", "))
-	}
-	c, ok := m[name]
-	if !ok {
-		return nil, fmt.Errorf("perf: unknown node inspector endpoint %q (configured: %s)", name, strings.Join(keys(m), ", "))
-	}
-	return c, nil
+	return tools.PickEndpoint(m, name, "perf", "node inspector endpoint")
 }
 
 var nodeEndpointSchema = map[string]any{
@@ -86,9 +73,4 @@ func newNodeInspectorTargetsTool(clients map[string]*NodeInspectorClient) tools.
 	}.Build()
 }
 
-func asString(v any) string {
-	if v == nil {
-		return ""
-	}
-	return fmt.Sprintf("%v", v)
-}
+var asString = tools.AsString

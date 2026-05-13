@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/rlaope/cloudy/internal/tools"
@@ -22,27 +21,7 @@ type TempoClient struct {
 }
 
 func pickTempo(m map[string]*TempoClient, name string) (*TempoClient, error) {
-	if name == "" {
-		if len(m) == 1 {
-			for _, c := range m {
-				return c, nil
-			}
-		}
-		return nil, fmt.Errorf("trace: tempo endpoint name required (configured: %s)", strings.Join(keys(m), ", "))
-	}
-	c, ok := m[name]
-	if !ok {
-		return nil, fmt.Errorf("trace: unknown tempo endpoint %q (configured: %s)", name, strings.Join(keys(m), ", "))
-	}
-	return c, nil
-}
-
-func keys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
+	return tools.PickEndpoint(m, name, "trace", "tempo endpoint")
 }
 
 var tempoEndpointSchema = map[string]any{
@@ -152,10 +131,4 @@ func newTempoSearchTool(clients map[string]*TempoClient) tools.Tool {
 	}.Build()
 }
 
-func mustJSON(v any) json.RawMessage {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic(fmt.Sprintf("trace: marshal schema: %v", err))
-	}
-	return b
-}
+var mustJSON = tools.MustJSON

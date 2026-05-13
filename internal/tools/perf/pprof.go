@@ -11,11 +11,9 @@ package perf
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
-	"strings"
 
 	"github.com/rlaope/cloudy/internal/tools"
 	"github.com/rlaope/cloudy/internal/tools/httpapi"
@@ -27,27 +25,7 @@ type PprofClient struct {
 }
 
 func pickPprof(m map[string]*PprofClient, name string) (*PprofClient, error) {
-	if name == "" {
-		if len(m) == 1 {
-			for _, c := range m {
-				return c, nil
-			}
-		}
-		return nil, fmt.Errorf("perf: pprof endpoint name required (configured: %s)", strings.Join(keys(m), ", "))
-	}
-	c, ok := m[name]
-	if !ok {
-		return nil, fmt.Errorf("perf: unknown pprof endpoint %q (configured: %s)", name, strings.Join(keys(m), ", "))
-	}
-	return c, nil
-}
-
-func keys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
+	return tools.PickEndpoint(m, name, "perf", "pprof endpoint")
 }
 
 var pprofEndpointSchema = map[string]any{
@@ -114,10 +92,4 @@ func newPprofThreadcreateTool(clients map[string]*PprofClient) tools.Tool {
 		"OS-thread creation profile in text form from /debug/pprof/threadcreate?debug=1.", 1)
 }
 
-func mustJSON(v any) json.RawMessage {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic(fmt.Sprintf("perf: marshal schema: %v", err))
-	}
-	return b
-}
+var mustJSON = tools.MustJSON

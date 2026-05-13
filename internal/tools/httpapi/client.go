@@ -51,21 +51,7 @@ func NewClient(name, baseURL string, auth Auth) (*Client, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 
 	rt := transport.New(nil)
-	var wrapped http.RoundTripper = rt
-
-	switch {
-	case auth.BearerEnv != "":
-		token := os.Getenv(auth.BearerEnv)
-		if token != "" {
-			wrapped = &bearerTripper{inner: rt, token: token}
-		}
-	case auth.BasicUser != "":
-		pass := ""
-		if auth.BasicPassEnv != "" {
-			pass = os.Getenv(auth.BasicPassEnv)
-		}
-		wrapped = &basicTripper{inner: rt, user: auth.BasicUser, pass: pass}
-	}
+	wrapped := WrapAuth(rt, auth)
 
 	return &Client{
 		Name:    name,
@@ -111,26 +97,46 @@ func (c *Client) Ping(ctx context.Context, path string) error {
 	return err
 }
 
-// bearerTripper injects an Authorization: Bearer header.
-type bearerTripper struct {
-	inner http.RoundTripper
-	token string
+// BearerTripper injects an Authorization: Bearer header.
+type BearerTripper struct {
+	Inner http.RoundTripper
+	Token string
 }
 
-func (b *bearerTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+func (b *BearerTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 	r2 := r.Clone(r.Context())
-	r2.Header.Set("Authorization", "Bearer "+b.token)
-	return b.inner.RoundTrip(r2)
+	r2.Header.Set("Authorization", "Bearer "+b.Token)
+	return b.Inner.RoundTrip(r2)
 }
 
-// basicTripper injects HTTP Basic Auth credentials.
-type basicTripper struct {
-	inner      http.RoundTripper
-	user, pass string
+// BasicTripper injects HTTP Basic Auth credentials.
+type BasicTripper struct {
+	Inner http.RoundTripper
+	User  string
+	Pass  string
 }
 
-func (b *basicTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+func (b *BasicTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 	r2 := r.Clone(r.Context())
-	r2.SetBasicAuth(b.user, b.pass)
-	return b.inner.RoundTrip(r2)
+	r2.SetBasicAuth(b.User, b.Pass)
+	return b.Inner.RoundTrip(r2)
+}
+
+// WrapAuth wraps inner with the auth tripper selected by env-resolved
+// credentials in auth. Returns inner unchanged when no auth is configured
+// or when the configured env var is empty.
+func WrapAuth(inner http.RoundTripper, auth Auth) http.RoundTripper {
+	switch {
+	case auth.BearerEnv != "":
+		if token := os.Getenv(auth.BearerEnv); token != "" {
+			return &BearerTripper{Inner: inner, Token: token}
+		}
+	case auth.BasicUser != "":
+		pass := ""
+		if auth.BasicPassEnv != "" {
+			pass = os.Getenv(auth.BasicPassEnv)
+		}
+		return &BasicTripper{Inner: inner, User: auth.BasicUser, Pass: pass}
+	}
+	return inner
 }

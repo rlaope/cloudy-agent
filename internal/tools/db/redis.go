@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -18,30 +17,10 @@ import (
 // is a fallback floor.
 const redisCallTimeout = 5 * time.Second
 
-// pickRedis returns the client for the named endpoint, or an error if not
-// configured.
+// pickRedis is the redis-flavour alias around tools.PickEndpoint — kept as a
+// named wrapper so the call sites in this file read with their domain noun.
 func pickRedis(m map[string]*redis.Client, name string) (*redis.Client, error) {
-	if name == "" {
-		if len(m) == 1 {
-			for _, c := range m {
-				return c, nil
-			}
-		}
-		return nil, fmt.Errorf("db: endpoint name required (configured: %s)", strings.Join(names(m), ", "))
-	}
-	c, ok := m[name]
-	if !ok {
-		return nil, fmt.Errorf("db: unknown redis endpoint %q (configured: %s)", name, strings.Join(names(m), ", "))
-	}
-	return c, nil
-}
-
-func names[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
+	return tools.PickEndpoint(m, name, "db", "redis endpoint")
 }
 
 // redisEndpointSchema is the shared "name" property included in every tool.
@@ -354,10 +333,4 @@ func newRedisClientListTool(clients map[string]*redis.Client) tools.Tool {
 	}.Build()
 }
 
-func mustJSON(v any) json.RawMessage {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic(fmt.Sprintf("db: marshal schema: %v", err))
-	}
-	return b
-}
+var mustJSON = tools.MustJSON

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,27 +25,7 @@ type LokiClient struct {
 
 // pickLoki selects an endpoint by name (or the sole endpoint when unambiguous).
 func pickLoki(m map[string]*LokiClient, name string) (*LokiClient, error) {
-	if name == "" {
-		if len(m) == 1 {
-			for _, c := range m {
-				return c, nil
-			}
-		}
-		return nil, fmt.Errorf("log: loki endpoint name required (configured: %s)", strings.Join(keys(m), ", "))
-	}
-	c, ok := m[name]
-	if !ok {
-		return nil, fmt.Errorf("log: unknown loki endpoint %q (configured: %s)", name, strings.Join(keys(m), ", "))
-	}
-	return c, nil
-}
-
-func keys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
+	return tools.PickEndpoint(m, name, "log", "loki endpoint")
 }
 
 var lokiEndpointSchema = map[string]any{
@@ -152,13 +133,22 @@ func parseLokiStreams(body []byte) ([]string, any, error) {
 	return lines, env, nil
 }
 
+// formatLabels renders a label set as {k1="v1",k2="v2",…}. Keys are sorted
+// so identical streams always render the same way — without sort, Go's
+// randomised map iteration produces non-stable output that defeats grep/diff
+// over agent transcripts.
 func formatLabels(m map[string]string) string {
 	if len(m) == 0 {
 		return "{}"
 	}
-	parts := make([]string, 0, len(m))
-	for k, v := range m {
-		parts = append(parts, fmt.Sprintf("%s=%q", k, v))
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = fmt.Sprintf("%s=%q", k, m[k])
 	}
 	return "{" + strings.Join(parts, ",") + "}"
 }
@@ -313,10 +303,4 @@ func newLokiSeriesTool(clients map[string]*LokiClient) tools.Tool {
 	}.Build()
 }
 
-func mustJSON(v any) json.RawMessage {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic(fmt.Sprintf("log: marshal schema: %v", err))
-	}
-	return b
-}
+var mustJSON = tools.MustJSON

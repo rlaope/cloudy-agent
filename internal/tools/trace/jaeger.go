@@ -20,19 +20,7 @@ type JaegerClient struct {
 }
 
 func pickJaeger(m map[string]*JaegerClient, name string) (*JaegerClient, error) {
-	if name == "" {
-		if len(m) == 1 {
-			for _, c := range m {
-				return c, nil
-			}
-		}
-		return nil, fmt.Errorf("trace: jaeger endpoint name required (configured: %s)", strings.Join(keys(m), ", "))
-	}
-	c, ok := m[name]
-	if !ok {
-		return nil, fmt.Errorf("trace: unknown jaeger endpoint %q (configured: %s)", name, strings.Join(keys(m), ", "))
-	}
-	return c, nil
+	return tools.PickEndpoint(m, name, "trace", "jaeger endpoint")
 }
 
 var jaegerEndpointSchema = map[string]any{

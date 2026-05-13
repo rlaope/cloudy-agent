@@ -1,6 +1,7 @@
 package perf
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/rlaope/cloudy/internal/config"
@@ -14,6 +15,13 @@ type Clients struct {
 	NodeInspectors map[string]*NodeInspectorClient
 }
 
+// Empty reports whether no HTTP backend has any client wired. Mirrors the
+// shape on db.Clients / log.Clients / trace.Clients so callers can ask the
+// same question across groups; note the perf group also has the always-on
+// rbspy tool, so an Empty() == true Clients does NOT imply an empty
+// `perf.*` namespace in the registry.
+func (c Clients) Empty() bool { return len(c.Pprof) == 0 && len(c.NodeInspectors) == 0 }
+
 // BuildClients constructs perf-backend HTTP clients. The local-exec rbspy
 // tool needs no client and is always registered when its package is
 // imported — its probe happens at call time (binary lookup).
@@ -26,7 +34,7 @@ func BuildClients(pprofEps, nodeEps []config.HTTPEndpoint) (Clients, []string) {
 
 	for _, ep := range pprofEps {
 		if ep.Name == "" || ep.URL == "" {
-			skips = append(skips, "perf: pprof entry "+quote(ep.Name)+": missing name or url")
+			skips = append(skips, "perf: pprof entry "+strconv.Quote(ep.Name)+": missing name or url")
 			continue
 		}
 		hc, err := httpapi.NewClient(ep.Name, ep.URL, httpapi.Auth{
@@ -43,7 +51,7 @@ func BuildClients(pprofEps, nodeEps []config.HTTPEndpoint) (Clients, []string) {
 
 	for _, ep := range nodeEps {
 		if ep.Name == "" || ep.URL == "" {
-			skips = append(skips, "perf: node entry "+quote(ep.Name)+": missing name or url")
+			skips = append(skips, "perf: node entry "+strconv.Quote(ep.Name)+": missing name or url")
 			continue
 		}
 		hc, err := httpapi.NewClient(ep.Name, ep.URL, httpapi.Auth{
@@ -111,5 +119,3 @@ func composeReason(def string, reasons []string, hint string) string {
 	}
 	return def + ": " + strings.Join(filtered, "; ")
 }
-
-func quote(s string) string { return "\"" + s + "\"" }

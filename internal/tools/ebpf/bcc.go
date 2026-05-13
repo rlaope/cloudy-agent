@@ -2,7 +2,6 @@ package ebpf
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -135,10 +134,4 @@ func newExecsnoopTool(bin string) tools.Tool {
 	}.Build()
 }
 
-func mustJSON(v any) json.RawMessage {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic(fmt.Sprintf("ebpf: marshal schema: %v", err))
-	}
-	return b
-}
+var mustJSON = tools.MustJSON
