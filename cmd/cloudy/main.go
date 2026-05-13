@@ -5,11 +5,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 
+	"github.com/mattn/go-isatty"
+
 	"github.com/rlaope/cloudy/internal/buildinfo"
+	"github.com/rlaope/cloudy/internal/config"
+	"github.com/rlaope/cloudy/internal/tui"
 )
 
 func main() {
@@ -21,10 +26,7 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		// TUI entry. Implemented in internal/tui (next milestone).
-		fmt.Fprintln(stdout, "cloudy: TUI entry not yet implemented (v0.1 in progress)")
-		fmt.Fprintln(stdout, "use 'cloudy --help' for available subcommands")
-		return nil
+		return runTUI(stdout, stderr)
 	}
 
 	switch args[0] {
@@ -41,6 +43,49 @@ func run(args []string, stdout, stderr io.Writer) error {
 		printHelp(stderr)
 		return fmt.Errorf("unknown command: %s", args[0])
 	}
+}
+
+// runTUI enters the full-screen TUI when stdout is a TTY and config is present.
+// When stdout is not a TTY (pipe/redirect) it falls back to a hint message.
+func runTUI(stdout, stderr io.Writer) error {
+	if !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsCygwinTerminal(os.Stdout.Fd()) {
+		fmt.Fprintln(stdout, "cloudy: not a TTY — run `cloudy ask \"<prompt>\"` for one-shot mode")
+		return nil
+	}
+
+	cfg, err := config.Load(config.Path())
+	if err != nil {
+		fmt.Fprintf(stderr, "cloudy: config error: %v\n", err)
+		return nil
+	}
+
+	if cfg.DefaultModel == "" {
+		fmt.Fprintln(stderr, "cloudy: no model configured — run `cloudy setup` to get started")
+		return nil
+	}
+
+	// Best-effort: read kubeconfig current context.
+	ctx, ns := currentKubeContext()
+
+	deps := tui.Deps{
+		Model:      cfg.DefaultModel,
+		InitialCtx: ctx,
+		InitialNS:  ns,
+		// Provider, Skills, Tools, Session: wired in tui.Run when non-nil provider available.
+	}
+
+	return tui.Run(context.Background(), deps)
+}
+
+// currentKubeContext reads the current kubeconfig context and namespace
+// from the KUBECONFIG / default kubeconfig, returning empty strings on error.
+func currentKubeContext() (ctx, ns string) {
+	// Best-effort only; we avoid importing the full k8s client here.
+	// If KUBECONTEXT is set, use it.
+	if v := os.Getenv("KUBECONTEXT"); v != "" {
+		return v, os.Getenv("KUBENAMESPACE")
+	}
+	return "", ""
 }
 
 func printHelp(w io.Writer) {
