@@ -14,7 +14,7 @@ import (
 
 func TestBuildClients_NoEndpoints(t *testing.T) {
 	t.Parallel()
-	cs, skips := db.BuildClients(context.Background(), nil)
+	cs, skips := db.BuildClients(context.Background(), nil, nil)
 	if !cs.Empty() {
 		t.Errorf("expected empty clients, got %+v", cs)
 	}
@@ -25,7 +25,7 @@ func TestBuildClients_NoEndpoints(t *testing.T) {
 
 func TestBuildClients_UnknownKindRecordsSkip(t *testing.T) {
 	t.Parallel()
-	cs, skips := db.BuildClients(context.Background(), []config.DatabaseEndpoint{
+	cs, skips := db.BuildClients(context.Background(), nil, []config.DatabaseEndpoint{
 		{Name: "weird", Kind: "supabase", DSN: "anything"},
 	})
 	if !cs.Empty() {
@@ -38,7 +38,7 @@ func TestBuildClients_UnknownKindRecordsSkip(t *testing.T) {
 
 func TestBuildClients_MissingFieldsRecordsSkip(t *testing.T) {
 	t.Parallel()
-	_, skips := db.BuildClients(context.Background(), []config.DatabaseEndpoint{
+	_, skips := db.BuildClients(context.Background(), nil, []config.DatabaseEndpoint{
 		{Name: "", Kind: "postgres", DSN: "postgres://localhost"},
 	})
 	if len(skips) == 0 || !strings.Contains(skips[0], "missing name or dsn") {
@@ -48,7 +48,7 @@ func TestBuildClients_MissingFieldsRecordsSkip(t *testing.T) {
 
 func TestBuildClients_BadPostgresDSNRecordsSkip(t *testing.T) {
 	t.Parallel()
-	_, skips := db.BuildClients(context.Background(), []config.DatabaseEndpoint{
+	_, skips := db.BuildClients(context.Background(), nil, []config.DatabaseEndpoint{
 		{Name: "bad-pg", Kind: "postgres", DSN: "::::not-a-uri::::"},
 	})
 	if len(skips) == 0 || !strings.Contains(skips[0], "bad-pg") {

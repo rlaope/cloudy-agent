@@ -27,6 +27,16 @@ rules:
     resources: ["pods/log"]
     verbs: ["get"]
 
+  # ServiceProxy for apiserver-proxy routing via Service.status.loadBalancer.
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    verbs: ["get"]
+
+  # Pod port-forward for SPDY tunnel to backend databases (TCP routing).
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create"]
+
   # Workload controllers.
   - apiGroups: ["apps"]
     resources:

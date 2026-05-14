@@ -8,13 +8,17 @@ kubectl apply -k manifests/rbac/base
 
 ## Verb whitelist
 
-The `cloudy-readonly` ClusterRole grants exactly three verbs:
+The `cloudy-readonly` ClusterRole grants read-only access across cluster resources:
 
 - `get`
 - `list`
 - `watch`
 
-`pods/log` additionally allows `get` so cloudy can stream container logs.
+Special resource permissions:
+- `pods/log`: `get` — stream container logs.
+- `services/proxy`: `get` — required for ServiceProxy.URL routing in apiserver-proxy.
+- `pods/portforward`: `create` — required for SPDY in-process port-forward to backend databases.
+
 `pods/exec` is intentionally **not** included; in-cluster JVM / Python
 diagnostic tools (jcmd, py-spy, async-profiler) require a separately
 deployed sidecar.

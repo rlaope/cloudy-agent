@@ -11,7 +11,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/rlaope/cloudy/internal/config"
+	"github.com/rlaope/cloudy/internal/tools/k8s"
+	"github.com/rlaope/cloudy/internal/transport"
 )
 
 // Clients holds connected handles keyed by the endpoint Name from
@@ -29,6 +33,20 @@ type Clients struct {
 	Postgres map[string]*PostgresClient
 	MySQL    map[string]*MySQLClient
 	Redis    map[string]*redis.Client
+	// redisForwarders holds port-forward tunnels for k8s-backed Redis clients.
+	// redis.Client has no extension point for a forwarder, so we track them
+	// here keyed by the same endpoint name. Close via CloseForwarders.
+	redisForwarders map[string]*transport.Forwarder
+}
+
+// CloseForwarders closes all port-forward tunnels owned by this Clients set.
+// Call this when the registry is being replaced or the process is shutting
+// down. PostgresClient.Close and MySQLClient.Close handle their own tunnels;
+// this covers Redis.
+func (c *Clients) CloseForwarders() {
+	for _, fwd := range c.redisForwarders {
+		_ = fwd.Close()
+	}
 }
 
 // PostgresClient is a thin wrapper around pgx that hands out short-lived
@@ -36,6 +54,9 @@ type Clients struct {
 // surface small and avoid long-lived idle connections to production DBs.
 type PostgresClient struct {
 	cfg *pgx.ConnConfig
+	// fwd is non-nil when the connection is tunnelled through a k8s port-forward.
+	// Close() shuts it down; nil fwd means the connection is direct.
+	fwd *transport.Forwarder
 }
 
 // Acquire opens a single connection. Callers MUST defer Close on the
@@ -44,32 +65,61 @@ func (c *PostgresClient) Acquire(ctx context.Context) (*pgx.Conn, error) {
 	return pgx.ConnectConfig(ctx, c.cfg)
 }
 
+// Close releases the underlying port-forward tunnel (if any). Safe to call
+// on a direct (non-k8s) client — it is a no-op in that case.
+func (c *PostgresClient) Close() error {
+	if c.fwd != nil {
+		return c.fwd.Close()
+	}
+	return nil
+}
+
 // MySQLClient holds a database/sql handle. database/sql pools connections
 // internally; we set conservative limits to avoid hammering a prod replica.
 type MySQLClient struct {
 	db *sql.DB
+	// fwd is non-nil when the connection is tunnelled through a k8s port-forward.
+	fwd *transport.Forwarder
 }
 
 // DB returns the underlying *sql.DB. Use QueryContext / QueryRowContext with
 // ctx-bounded deadlines.
 func (c *MySQLClient) DB() *sql.DB { return c.db }
 
+// Close closes the underlying *sql.DB and releases the port-forward tunnel
+// (if any). Safe to call on a direct client.
+func (c *MySQLClient) Close() error {
+	var dbErr error
+	if c.db != nil {
+		dbErr = c.db.Close()
+	}
+	if c.fwd != nil {
+		if err := c.fwd.Close(); err != nil && dbErr == nil {
+			return err
+		}
+	}
+	return dbErr
+}
+
 // connectTimeout caps initial-connect / ping time for probes. Per-tool query
 // timeouts are configured via context at call sites.
 const connectTimeout = 3 * time.Second
 
-// BuildClients constructs the per-backend client maps from cfg. An entry
-// whose connection cannot be established is dropped with its error recorded
-// in skipReasons; the caller (wiring) propagates these to the Registry's
-// skipped-group surface.
+// BuildClients constructs the per-backend client maps from eps.
 //
-// Endpoints fall into three groups by Kind; an empty Kind or unknown Kind
-// is treated as "unknown" and skipped with a clear reason.
-func BuildClients(ctx context.Context, eps []config.DatabaseEndpoint) (Clients, []string) {
+// hub is required only for k8s:// DSNs. When hub is nil and a k8s:// DSN is
+// encountered, a skip reason is recorded and that endpoint is omitted; all
+// direct (postgres://, mysql://, redis://…) DSNs are unaffected.
+//
+// An entry whose connection cannot be established is dropped with its error
+// recorded in skipReasons; the caller (wiring) propagates these to the
+// Registry's skipped-group surface.
+func BuildClients(ctx context.Context, hub *k8s.Hub, eps []config.DatabaseEndpoint) (Clients, []string) {
 	cs := Clients{
-		Postgres: map[string]*PostgresClient{},
-		MySQL:    map[string]*MySQLClient{},
-		Redis:    map[string]*redis.Client{},
+		Postgres:        map[string]*PostgresClient{},
+		MySQL:           map[string]*MySQLClient{},
+		Redis:           map[string]*redis.Client{},
+		redisForwarders: map[string]*transport.Forwarder{},
 	}
 	var (
 		mu    sync.Mutex
@@ -85,6 +135,26 @@ func BuildClients(ctx context.Context, eps []config.DatabaseEndpoint) (Clients, 
 			addSkip(fmt.Sprintf("entry %q: missing name or dsn", ep.Name))
 			continue
 		}
+
+		// k8s:// DSNs require a live port-forward before the driver can dial.
+		if strings.HasPrefix(ep.DSN, "k8s://") {
+			if hub == nil {
+				addSkip(fmt.Sprintf("db: %s: k8s DSN requires a Kubernetes hub", ep.Name))
+				continue
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				cctx, cancel := context.WithTimeout(ctx, connectTimeout)
+				defer cancel()
+				if err := buildK8sClient(cctx, hub, ep, &cs, &mu); err != nil {
+					addSkip(fmt.Sprintf("db: %s (k8s): %v", ep.Name, err))
+				}
+			}()
+			continue
+		}
+
+		// Direct dial path — unchanged from original behaviour.
 		kind := strings.ToLower(ep.Kind)
 		wg.Add(1)
 		go func() {
@@ -135,6 +205,174 @@ func BuildClients(ctx context.Context, eps []config.DatabaseEndpoint) (Clients, 
 // Empty reports whether no backend has any client wired.
 func (c Clients) Empty() bool {
 	return len(c.Postgres) == 0 && len(c.MySQL) == 0 && len(c.Redis) == 0
+}
+
+// parseK8sDSN parses a k8s:// DSN into its components.
+//
+// Expected forms:
+//
+//	k8s://<ctx>/<namespace>/<service>:<port>
+//	k8s:///<namespace>/<service>:<port>   — empty ctx means "default context"
+//
+// v0 deliberate compromise: user/db are defaulted per-driver
+// (postgres→"postgres"/"postgres", mysql→"root"/"mysql"). A future
+// "k8s+postgres://user@ctx/ns/svc:port/dbname" extended scheme can lift these.
+func parseK8sDSN(dsn string) (ctxName, namespace, svcName string, port int, ok bool) {
+	u, err := url.Parse(dsn)
+	if err != nil || u.Scheme != "k8s" {
+		return
+	}
+	ctxName = u.Host // "" is valid — means "default context"
+
+	// u.Path is "/<ns>/<svc>:<port>"
+	path := strings.TrimPrefix(u.Path, "/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 {
+		return
+	}
+	namespace = parts[0]
+	svcPort := parts[1]
+
+	// Split "svcName:port"
+	lastColon := strings.LastIndex(svcPort, ":")
+	if lastColon < 0 {
+		return
+	}
+	svcName = svcPort[:lastColon]
+	portStr := svcPort[lastColon+1:]
+	if namespace == "" || svcName == "" || portStr == "" {
+		return
+	}
+	p, err := strconv.Atoi(portStr)
+	if err != nil || p <= 0 || p > 65535 {
+		return
+	}
+	port = p
+	ok = true
+	return
+}
+
+// buildK8sClient resolves a k8s:// endpoint into a SPDY port-forward then
+// dials the appropriate driver against 127.0.0.1:<local-port>, storing the
+// result (with the Forwarder attached) in cs under mu.
+func buildK8sClient(ctx context.Context, hub *k8s.Hub, ep config.DatabaseEndpoint, cs *Clients, mu *sync.Mutex) error {
+	ctxName, namespace, svcName, port, ok := parseK8sDSN(ep.DSN)
+	if !ok {
+		return fmt.Errorf("malformed k8s:// DSN %q", ep.DSN)
+	}
+
+	kClient, err := hub.Get(ctxName)
+	if err != nil {
+		return fmt.Errorf("get k8s client for context %q: %w", ctxName, err)
+	}
+
+	restCfg := kClient.RESTConfig()
+	if restCfg == nil {
+		return fmt.Errorf("k8s client for context %q has no REST config", ctxName)
+	}
+
+	podName, err := transport.SelectPod(ctx, kClient.Core(), namespace, svcName)
+	if err != nil {
+		return fmt.Errorf("select pod for %s/%s: %w", namespace, svcName, err)
+	}
+
+	fwd, err := transport.OpenPortForward(ctx, restCfg, namespace, podName, port, nil)
+	if err != nil {
+		return fmt.Errorf("open port-forward to %s/%s:%d: %w", namespace, podName, port, err)
+	}
+
+	localAddr := fwd.Local()
+	kind := strings.ToLower(ep.Kind)
+
+	switch kind {
+	case "postgres", "postgresql", "pg":
+		rewrittenEP := config.DatabaseEndpoint{
+			Name: ep.Name,
+			Kind: ep.Kind,
+			DSN:  composePostgresDSN(localAddr, ep.PasswordEnv),
+			// PasswordEnv baked into DSN by composePostgresDSN; leave empty
+			// so dialPostgres does not attempt a second os.Getenv substitution.
+		}
+		pc, err := dialPostgres(ctx, rewrittenEP)
+		if err != nil {
+			_ = fwd.Close()
+			return fmt.Errorf("dial postgres via port-forward: %w", err)
+		}
+		pc.fwd = fwd
+		mu.Lock()
+		cs.Postgres[ep.Name] = pc
+		mu.Unlock()
+
+	case "mysql", "mariadb":
+		rewrittenEP := config.DatabaseEndpoint{
+			Name: ep.Name,
+			Kind: ep.Kind,
+			DSN:  composeMySQLDSN(localAddr, ep.PasswordEnv),
+		}
+		mc, err := dialMySQL(ctx, rewrittenEP)
+		if err != nil {
+			_ = fwd.Close()
+			return fmt.Errorf("dial mysql via port-forward: %w", err)
+		}
+		mc.fwd = fwd
+		mu.Lock()
+		cs.MySQL[ep.Name] = mc
+		mu.Unlock()
+
+	case "redis", "valkey":
+		rewrittenEP := config.DatabaseEndpoint{
+			Name:        ep.Name,
+			Kind:        ep.Kind,
+			DSN:         localAddr,
+			PasswordEnv: ep.PasswordEnv,
+		}
+		rc, err := dialRedis(ctx, rewrittenEP)
+		if err != nil {
+			_ = fwd.Close()
+			return fmt.Errorf("dial redis via port-forward: %w", err)
+		}
+		mu.Lock()
+		cs.Redis[ep.Name] = rc
+		cs.redisForwarders[ep.Name] = fwd
+		mu.Unlock()
+
+	default:
+		_ = fwd.Close()
+		return fmt.Errorf("unknown kind %q for k8s:// endpoint", ep.Kind)
+	}
+
+	return nil
+}
+
+// composePostgresDSN builds a postgres:// DSN pointing at localAddr.
+//
+// v0 defaults: user="postgres", db="postgres", sslmode=disable.
+// Password is read from passwordEnv and URL-encoded into the DSN so the
+// caller can pass an empty PasswordEnv to dialPostgres (no double-lookup).
+func composePostgresDSN(localAddr, passwordEnv string) string {
+	pw := ""
+	if passwordEnv != "" {
+		pw = os.Getenv(passwordEnv)
+	}
+	if pw != "" {
+		return fmt.Sprintf("postgres://postgres:%s@%s/postgres?sslmode=disable",
+			url.QueryEscape(pw), localAddr)
+	}
+	return fmt.Sprintf("postgres://postgres@%s/postgres?sslmode=disable", localAddr)
+}
+
+// composeMySQLDSN builds a Go-MySQL DSN pointing at localAddr.
+//
+// v0 defaults: user="root", db="mysql".
+func composeMySQLDSN(localAddr, passwordEnv string) string {
+	pw := ""
+	if passwordEnv != "" {
+		pw = os.Getenv(passwordEnv)
+	}
+	if pw != "" {
+		return fmt.Sprintf("root:%s@tcp(%s)/mysql", pw, localAddr)
+	}
+	return fmt.Sprintf("root@tcp(%s)/mysql", localAddr)
 }
 
 func dialPostgres(ctx context.Context, ep config.DatabaseEndpoint) (*PostgresClient, error) {
