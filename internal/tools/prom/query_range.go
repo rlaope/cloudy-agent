@@ -9,6 +9,11 @@ import (
 	"github.com/rlaope/cloudy/internal/tools"
 )
 
+// maxRangePoints caps (end-start)/step. Prometheus's own server hard-limits
+// matrix series cardinality at 11000 points; rejecting earlier surfaces a
+// clear cloudy error instead of an opaque 422 from Prometheus.
+const maxRangePoints = 11000
+
 // QueryRangeTool implements prom.query_range.
 type QueryRangeTool struct {
 	clients    map[string]*Client
@@ -69,6 +74,13 @@ func (t *QueryRangeTool) Run(ctx context.Context, args json.RawMessage) (tools.O
 	}
 	if step <= 0 {
 		return tools.Observation{}, fmt.Errorf("prom.query_range: step must be positive")
+	}
+	if !end.After(start) {
+		return tools.Observation{}, fmt.Errorf("prom.query_range: end (%s) must be after start (%s)", a.End, a.Start)
+	}
+	points := int(end.Sub(start) / step)
+	if points > maxRangePoints {
+		return tools.Observation{}, fmt.Errorf("prom.query_range: %d points exceeds cap of %d — increase step or shrink window", points, maxRangePoints)
 	}
 
 	res, err := c.QueryRange(ctx, a.Query, start, end, step)

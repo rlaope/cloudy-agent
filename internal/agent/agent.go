@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rlaope/cloudy/internal/llm"
 	"github.com/rlaope/cloudy/internal/render"
@@ -27,12 +28,21 @@ const (
 
 	basePreamble = "You are cloudy, a read-only multi-cluster SRE monitoring agent. " +
 		"Use the registered tools; never invent tools or arguments. " +
-		"Cite specific resource names in your final answer."
+		"Cite specific resource names in your final answer. " +
+		"If a tool call fails with an approval-denied or read-only-violation error, " +
+		"do not retry the same tool — pick a lower-risk alternative " +
+		"(e.g. list/get/show/inspect/query) and proceed."
 )
 
 // ErrMaxSteps is returned when the agent exhausts its step budget without
 // reaching a final (tool-call-free) response.
 var ErrMaxSteps = errors.New("agent: maximum steps reached without final response")
+
+// ErrConversationTimeout is returned when the agent's wall-clock budget for
+// a single Run is exceeded. Distinct from caller-side ctx cancellation so the
+// TUI / CLI can surface it with a meaningful explanation instead of the
+// generic "context deadline exceeded".
+var ErrConversationTimeout = errors.New("agent: conversation wall-clock deadline exceeded")
 
 // Options configures an Agent.
 type Options struct {
@@ -57,10 +67,38 @@ type Options struct {
 	// MaxToolTokens caps the character length of any single tool observation
 	// fed back to the LLM. Zero is replaced by the default (8000).
 	MaxToolTokens int
+	// MaxTokensPerSession is the cumulative input+output token cap enforced
+	// by a default CostGuardHook. Zero disables the check.
+	MaxTokensPerSession int
+	// MaxUSDPerDay is the rolling-day USD cap enforced by the default
+	// CostGuardHook. Zero disables the check.
+	MaxUSDPerDay float64
+	// MaxConversationSeconds caps the total wall-clock time a single Run may
+	// consume. Distinct from MaxSteps because each step can take tens of
+	// seconds (e.g. async_profile waits 60s). Zero disables the check.
+	MaxConversationSeconds int
+	// MaxLogLinesPerCall is the per-tool-call cap on the "limit" argument of
+	// log.* tools, enforced by the default LimitGuardHook. Zero disables it.
+	MaxLogLinesPerCall int
+	// MaxProfileSecondsPerCall is the per-tool-call cap on duration_seconds
+	// for profiling tools (jvm.async_profile, perf.*, ebpf.*, py.spy_*).
+	// Zero disables it.
+	MaxProfileSecondsPerCall int
+	// MaxLogResponseBytes is the byte ceiling at which a log.* tool result
+	// is rewritten as a head/tail + exception-context summary before being
+	// fed to the LLM. Zero disables the summary step — the model still sees
+	// the full text up to MaxToolTokens.
+	MaxLogResponseBytes int
+	// Approver, when non-nil, is consulted by an ApprovalHook before every
+	// dispatch of a RiskHigh tool. nil leaves the door open: appropriate for
+	// internal tests, never for production entry points. cmd/main.go injects
+	// a TUI-backed approver; cli/ask.go injects DenyApprover.
+	Approver Approver
 	// History is the prior conversation context prepended to each run.
 	History []llm.Message
-	// Hooks is the cross-cutting policy chain. When nil, a fresh
-	// DupCallHook is registered. Pass an explicit empty slice to opt out.
+	// Hooks is the cross-cutting policy chain. When nil, defaults include
+	// DupCallHook plus (when MaxTokensPerSession or MaxUSDPerDay is set) a
+	// CostGuardHook. Pass an explicit empty slice to opt out entirely.
 	Hooks []Hook
 }
 
@@ -103,6 +141,25 @@ func New(opts Options) (*Agent, error) {
 	hooks := opts.Hooks
 	if hooks == nil {
 		hooks = []Hook{NewDupCallHook()}
+		if opts.MaxTokensPerSession > 0 || opts.MaxUSDPerDay > 0 {
+			hooks = append(hooks, NewCostGuardHook(opts.MaxTokensPerSession, opts.MaxUSDPerDay))
+		}
+		if opts.MaxLogLinesPerCall > 0 || opts.MaxProfileSecondsPerCall > 0 {
+			hooks = append(hooks, NewLimitGuardHook(opts.MaxLogLinesPerCall, opts.MaxProfileSecondsPerCall))
+		}
+		if opts.MaxLogResponseBytes > 0 {
+			hooks = append(hooks, NewLogSummaryHook(opts.MaxLogResponseBytes))
+		}
+		if opts.Approver != nil {
+			var regGetter func() *tools.Registry
+			if opts.RegistryFn != nil {
+				regGetter = opts.RegistryFn
+			} else {
+				reg := opts.Registry
+				regGetter = func() *tools.Registry { return reg }
+			}
+			hooks = append(hooks, NewApprovalHook(regGetter, opts.Approver))
+		}
 	}
 
 	return &Agent{opts: opts, staticReg: staticReg, hooks: hooks}, nil
@@ -129,10 +186,23 @@ func (a *Agent) resolveRegistry() *tools.Registry {
 // Run executes the ReAct loop for userInput, streaming tokens and tool-call
 // blocks to sink. It returns the updated conversation history (including
 // the new user turn and all assistant/tool turns) or a typed error.
+//
+// When Options.MaxConversationSeconds is set, the incoming ctx is wrapped
+// with a deadline. Hitting the deadline surfaces as ErrConversationTimeout
+// (not the bare context.DeadlineExceeded) so callers can distinguish it from
+// upstream cancellation.
 func (a *Agent) Run(ctx context.Context, userInput string, sink render.Sink) ([]llm.Message, error) {
 	reg := a.resolveRegistry()
 	if reg == nil {
 		return nil, fmt.Errorf("agent: no registry available")
+	}
+
+	var deadline time.Time
+	if a.opts.MaxConversationSeconds > 0 {
+		deadline = time.Now().Add(time.Duration(a.opts.MaxConversationSeconds) * time.Second)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
 	}
 
 	sysPrompt := a.buildSystemPrompt(reg)
@@ -148,8 +218,19 @@ func (a *Agent) Run(ctx context.Context, userInput string, sink render.Sink) ([]
 	defer func() { a.fireOnStop(ctx, finalErr) }()
 
 	for step := 0; step < a.opts.MaxSteps; step++ {
+		// Translate the wrapped-context deadline into a typed error so the
+		// TUI can show "wall-clock limit reached" instead of a generic
+		// context-cancelled message. Caller cancellations propagate as-is.
+		if !deadline.IsZero() && time.Now().After(deadline) {
+			finalErr = ErrConversationTimeout
+			return msgs, ErrConversationTimeout
+		}
 		assistant, err := a.streamAssistantTurn(ctx, msgs, llmTools, sink)
 		if err != nil {
+			if !deadline.IsZero() && errors.Is(err, context.DeadlineExceeded) {
+				finalErr = ErrConversationTimeout
+				return msgs, ErrConversationTimeout
+			}
 			finalErr = err
 			return msgs, err
 		}
@@ -206,8 +287,13 @@ func (a *Agent) streamAssistantTurn(ctx context.Context, msgs []llm.Message, llm
 				sink.WriteToken(chunk.DeltaText)
 			}
 		}
-		if chunk.Usage != nil && sink != nil {
-			sink.RecordUsage(*chunk.Usage)
+		if chunk.Usage != nil {
+			if sink != nil {
+				sink.RecordUsage(*chunk.Usage)
+			}
+			if err := a.fireOnUsage(ctx, *chunk.Usage); err != nil {
+				return llm.Message{}, err
+			}
 		}
 		if chunk.ToolCall != nil {
 			tc := chunk.ToolCall
@@ -303,11 +389,25 @@ func (a *Agent) formatObservation(obs tools.Observation, err error) string {
 	if err != nil {
 		return fmt.Sprintf("error: %v", err)
 	}
-	text := obs.Text
-	if len(text) > a.opts.MaxToolTokens {
-		text = text[:a.opts.MaxToolTokens] + " …(truncated)"
+	return truncateMiddle(obs.Text, a.opts.MaxToolTokens)
+}
+
+// truncateMiddle preserves both the head and tail of s when its length exceeds
+// max, replacing the middle with a marker. The split favors the tail (2/3)
+// because SRE diagnostics (stack traces, error lines, slowest rows) typically
+// land at the bottom of the buffer — a single trailing cut loses them.
+func truncateMiddle(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
 	}
-	return text
+	marker := fmt.Sprintf("\n…[truncated %d chars]…\n", len(s)-max)
+	if max <= len(marker) {
+		return s[:max]
+	}
+	keep := max - len(marker)
+	head := keep / 3
+	tail := keep - head
+	return s[:head] + marker + s[len(s)-tail:]
 }
 
 // buildSystemPrompt assembles base preamble + skill prompt + tool catalogue
@@ -339,4 +439,15 @@ func (a *Agent) fireOnStop(ctx context.Context, finalErr error) {
 	for _, h := range a.hooks {
 		h.OnStop(ctx, finalErr)
 	}
+}
+
+// fireOnUsage broadcasts usage to every hook. The first non-nil error wins
+// and aborts the loop — used by CostGuardHook to enforce budget caps.
+func (a *Agent) fireOnUsage(ctx context.Context, u llm.Usage) error {
+	for _, h := range a.hooks {
+		if err := h.OnUsage(ctx, u); err != nil {
+			return err
+		}
+	}
+	return nil
 }

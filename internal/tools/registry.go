@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -8,6 +10,52 @@ import (
 	"github.com/rlaope/cloudy/internal/llm"
 	"github.com/rlaope/cloudy/internal/registry"
 )
+
+// ErrMutatorTool is the panic value raised by Register when a tool's name
+// contains a forbidden mutator token. Use errors.Is on the recovered value.
+var ErrMutatorTool = errors.New("tools: mutator tool rejected by read-only registry")
+
+// mutatorTokens are verbs whose presence in a tool's dotted/underscored name
+// signals a write operation. cloudy is read-only at the contract level, so
+// adding a tool whose name contains any of these is rejected at registration
+// rather than waiting until the LLM tries to call it.
+//
+// Detection is token-aware (split on '.' and '_') so legitimate names like
+// "mysql_top_table_size" are not flagged for containing "set" as a substring.
+var mutatorTokens = map[string]struct{}{
+	"create":  {},
+	"update":  {},
+	"delete":  {},
+	"patch":   {},
+	"apply":   {},
+	"replace": {},
+	"drop":    {},
+	"alter":   {},
+	"insert":  {},
+	"kill":    {},
+	"restart": {},
+	"scale":   {},
+	"rollout": {},
+	"exec":    {},
+	"write":   {},
+	"post":    {},
+	"put":     {},
+}
+
+// assertReadOnlyName panics with ErrMutatorTool if name contains a forbidden
+// mutator verb at a token boundary. It is the gate every Registry.Register
+// call passes through.
+func assertReadOnlyName(name string) {
+	parts := strings.FieldsFunc(strings.ToLower(name), func(r rune) bool {
+		return r == '.' || r == '_'
+	})
+	for _, p := range parts {
+		if _, bad := mutatorTokens[p]; bad {
+			panic(fmt.Errorf("%w: %q contains forbidden token %q — rename to a read-only verb (list/get/show/describe/inspect/query/top)",
+				ErrMutatorTool, name, p))
+		}
+	}
+}
 
 // Registry holds a set of read-only Tools indexed by name. It wraps the
 // shared generic registry.Map and adds the domain methods the agent and
@@ -36,8 +84,12 @@ func New() *Registry {
 	}
 }
 
-// Register adds t to the registry. It panics on duplicate names.
-func (r *Registry) Register(t Tool) { r.items.MustRegister(t) }
+// Register adds t to the registry. It panics on duplicate names and on tool
+// names that contain a mutator verb (see mutatorTokens).
+func (r *Registry) Register(t Tool) {
+	assertReadOnlyName(t.Name())
+	r.items.MustRegister(t)
+}
 
 // MustRegister registers each tool in ts, panicking on any violation.
 func (r *Registry) MustRegister(ts ...Tool) {

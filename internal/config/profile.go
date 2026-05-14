@@ -73,6 +73,33 @@ type ContextProfile struct {
 
 	// PrometheusURLs holds the discovered Prometheus base URLs for this context.
 	PrometheusURLs []string `yaml:"prometheus_urls,omitempty"`
+
+	// Permissions is the result of probing SelfSubjectAccessReview against
+	// every (group, resource, verb) cloudy needs to operate. Empty when the
+	// API server was unreachable. The /setup wizard surfaces these so users
+	// see actual RBAC capability, not just connectivity.
+	Permissions []PermissionCheck `yaml:"permissions,omitempty"`
+}
+
+// PermissionCheck is the outcome of a single SelfSubjectAccessReview probe.
+type PermissionCheck struct {
+	// Group is the API group ("" = core, e.g. "apps", "metrics.k8s.io").
+	Group string `yaml:"group,omitempty"`
+
+	// Resource is the resource name in the kube API (pods, nodes, …).
+	Resource string `yaml:"resource"`
+
+	// Subresource is the optional sub-resource (e.g. "log" for pods/log).
+	Subresource string `yaml:"subresource,omitempty"`
+
+	// Verb is one of get / list / watch.
+	Verb string `yaml:"verb"`
+
+	// Allowed reports whether the API server granted the verb.
+	Allowed bool `yaml:"allowed"`
+
+	// Reason carries the server-provided denial reason when Allowed is false.
+	Reason string `yaml:"reason,omitempty"`
 }
 
 // LoadProfile reads a Profile from path. If the file does not exist it returns

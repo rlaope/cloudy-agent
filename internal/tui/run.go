@@ -45,6 +45,21 @@ func makeAgentRunner(rootCtx context.Context, provider llm.Provider, deps Deps) 
 			}()
 		}
 
+		approver := func(ctx context.Context, call llm.ToolCall) (bool, error) {
+			reply := make(chan bool, 1)
+			emit(AgentEvent{Approval: &ApprovalRequest{
+				Tool:  call.Name,
+				Args:  string(call.Arguments),
+				Reply: reply,
+			}})
+			select {
+			case ok := <-reply:
+				return ok, nil
+			case <-ctx.Done():
+				return false, ctx.Err()
+			}
+		}
+
 		ag, err := agent.New(agent.Options{
 			Provider: provider,
 			Model:    deps.Model,
@@ -54,7 +69,14 @@ func makeAgentRunner(rootCtx context.Context, provider llm.Provider, deps Deps) 
 				}
 				return deps.Tools
 			},
-			History: history,
+			History:                  history,
+			MaxTokensPerSession:      deps.MaxTokensPerSession,
+			MaxUSDPerDay:             deps.MaxUSDPerDay,
+			MaxConversationSeconds:   deps.MaxConversationSeconds,
+			MaxLogLinesPerCall:       deps.MaxLogLinesPerCall,
+			MaxProfileSecondsPerCall: deps.MaxProfileSecondsPerCall,
+			MaxLogResponseBytes:      deps.MaxLogResponseBytes,
+			Approver:                 approver,
 		})
 		if err != nil {
 			emit(AgentEvent{Err: err, Done: true})

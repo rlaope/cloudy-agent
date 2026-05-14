@@ -122,10 +122,17 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	stream := render.NewStream(stdout, theme)
 
 	ag, err := agent.New(agent.Options{
-		Provider: provider,
-		Model:    modelID,
-		Registry: toolReg,
-		Skill:    activeSkill,
+		Provider:                 provider,
+		Model:                    modelID,
+		Registry:                 toolReg,
+		Skill:                    activeSkill,
+		MaxTokensPerSession:      cfg.Safety.MaxTokensPerSession,
+		MaxUSDPerDay:             cfg.Safety.MaxUSDPerDay,
+		MaxConversationSeconds:   cfg.Safety.MaxConversationSeconds,
+		MaxLogLinesPerCall:       permission.EffectiveLogLines(activeProfile, cfg.Safety.MaxLogLines),
+		MaxProfileSecondsPerCall: permission.EffectiveProfileSeconds(activeProfile, cfg.Safety.MaxProfileSeconds),
+		MaxLogResponseBytes:      cfg.Safety.MaxLogResponseBytes,
+		Approver:                 agent.DenyApprover(),
 	})
 	if err != nil {
 		return errf("agent: %w", err)

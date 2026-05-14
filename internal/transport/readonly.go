@@ -48,9 +48,25 @@ func (r *ReadOnlyRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 		return nil, errors.New("transport: nil request")
 	}
 	if _, ok := AllowedMethods[req.Method]; !ok {
-		return nil, fmt.Errorf("%w: method %s on %s", ErrReadOnlyViolation, req.Method, req.URL)
+		return nil, fmt.Errorf("%w: method %s on %s — %s",
+			ErrReadOnlyViolation, req.Method, req.URL, readOnlyAlternative(req.Method))
 	}
 	return r.Inner.RoundTrip(req)
+}
+
+// readOnlyAlternative returns a one-line hint pointing the caller (and the
+// LLM, when this error surfaces through a tool result) at a non-mutating verb
+// that can satisfy the same intent. The text is intentionally generic — the
+// transport layer does not know which backend was being targeted.
+func readOnlyAlternative(method string) string {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+		return "cloudy is read-only by design; use a GET-based inspect/list/get tool instead of writing"
+	case http.MethodDelete:
+		return "cloudy cannot delete resources; use a list/get tool to inspect what you would have removed"
+	default:
+		return "cloudy permits only GET/HEAD/OPTIONS; switch to a read-only verb"
+	}
 }
 
 // Wrap returns a function suitable for use with k8s.io/client-go's

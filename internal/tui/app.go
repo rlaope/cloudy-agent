@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -47,6 +48,22 @@ type Deps struct {
 	// FirstRun is true when no config file exists yet, causing the TUI to
 	// display the full welcome banner and prompt the user to run /setup.
 	FirstRun bool
+	// MaxTokensPerSession is the session-level token cap passed through to
+	// the agent's CostGuardHook. Zero disables the check.
+	MaxTokensPerSession int
+	// MaxUSDPerDay is the rolling-day USD cap passed through to the agent's
+	// CostGuardHook. Zero disables the check.
+	MaxUSDPerDay float64
+	// MaxConversationSeconds caps the wall-clock duration of a single agent
+	// Run. Surfaced as ErrConversationTimeout when hit.
+	MaxConversationSeconds int
+	// MaxLogLinesPerCall caps the "limit" argument on log.* tool calls.
+	MaxLogLinesPerCall int
+	// MaxProfileSecondsPerCall caps duration_seconds on profiling tool calls.
+	MaxProfileSecondsPerCall int
+	// MaxLogResponseBytes is the byte ceiling at which a log.* observation
+	// is rewritten as a head/tail + exception-context summary.
+	MaxLogResponseBytes int
 	// AgentRunner is the function called to run the agent on user input.
 	// Injected by run.go so that tests can stub it. cancel is closed by the
 	// TUI when the user cancels the in-flight request.
@@ -65,6 +82,19 @@ type AgentEvent struct {
 	Usage *agentUsageMsg
 	// ScopeAddendum is prepended to the system prompt when non-empty.
 	ScopeAddendum string
+	// Approval is non-nil when the agent has paused on a RiskHigh tool and
+	// is awaiting an explicit y/n decision from the operator. The TUI sends
+	// the decision back via Reply; the agent goroutine blocks until then.
+	Approval *ApprovalRequest
+}
+
+// ApprovalRequest is the payload of an AgentEvent that asks the operator to
+// authorise a single high-risk tool call. The agent goroutine is blocked on
+// Reply until the TUI receives a y/n keypress and sends the answer.
+type ApprovalRequest struct {
+	Tool  string
+	Args  string
+	Reply chan<- bool
 }
 
 type toolBeginEvt struct{ name, args string }
@@ -111,6 +141,11 @@ type Model struct {
 	scope Scope
 	// usage accumulates token usage across agent runs.
 	usage usageAccum
+
+	// pendingApproval is set when the agent has emitted an ApprovalRequest
+	// and the TUI is waiting on a y/n keystroke. Other keys are ignored
+	// while this is set so an operator cannot drift past the decision.
+	pendingApproval *ApprovalRequest
 
 	// Ctrl+C double-tap state.
 	lastCtrlC  time.Time
@@ -193,6 +228,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.palette, cmd = m.palette.Update(msg)
 			return m, cmd
+		}
+
+		// Approval gate has priority over normal key handling: while a
+		// RiskHigh tool is awaiting a decision, only y/n/Esc/Ctrl+C are
+		// honoured. Other keys are swallowed so an operator cannot
+		// accidentally page past the prompt.
+		if m.pendingApproval != nil {
+			switch msg.String() {
+			case "y", "Y":
+				m.pendingApproval.Reply <- true
+				m.pendingApproval = nil
+				return m, nil
+			case "n", "N", "esc":
+				m.pendingApproval.Reply <- false
+				m.pendingApproval = nil
+				return m, nil
+			case "ctrl+c":
+				// Fall through to the existing Ctrl+C handler — cancel
+				// propagates through ctx.Done(), the agent goroutine
+				// releases on its own, and we drop the pending request.
+				m.pendingApproval = nil
+			default:
+				return m, nil
+			}
 		}
 
 		switch msg.String() {
@@ -345,6 +404,15 @@ func (m Model) View() string {
 		view = header + "\n" + m.palette.View() + "\n" + prompt
 	}
 
+	// Approval banner sits directly above the prompt so the operator sees
+	// it without scrolling. Composed at View time (not Update time) so the
+	// agent goroutine never has to touch the stream's Builder.
+	if m.pendingApproval != nil {
+		banner := fmt.Sprintf("\n⚠ approval required: %s(%s) — RiskHigh\n  press [y] to approve, [n] or Esc to deny",
+			m.pendingApproval.Tool, m.pendingApproval.Args)
+		view = view + banner
+	}
+
 	return view
 }
 
@@ -438,6 +506,9 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 		var hCmd tea.Cmd
 		m.header, hCmd = m.header.Update(headerStateMsg{cost: evt.Usage.USD})
 		cmds = append(cmds, hCmd)
+	}
+	if evt.Approval != nil {
+		m.pendingApproval = evt.Approval
 	}
 
 	// Continue reading from the channel.

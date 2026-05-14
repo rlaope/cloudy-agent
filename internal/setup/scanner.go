@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,6 +21,29 @@ import (
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/transport"
 )
+
+// canonicalPermissionProbes is the fixed set of (group, resource, subresource,
+// verb) tuples cloudy actually exercises. Surfaced through ContextProfile so
+// /setup tells users up front whether the active credential can do the work
+// the agent will try, rather than failing mid-conversation.
+var canonicalPermissionProbes = []struct {
+	group       string
+	resource    string
+	subresource string
+	verb        string
+}{
+	{"", "pods", "", "list"},
+	{"", "pods", "", "get"},
+	{"", "pods", "log", "get"},
+	{"", "nodes", "", "list"},
+	{"", "services", "", "list"},
+	{"", "events", "", "list"},
+	{"", "namespaces", "", "list"},
+	{"apps", "deployments", "", "list"},
+	{"apps", "daemonsets", "", "list"},
+	{"metrics.k8s.io", "pods", "", "list"},
+	{"metrics.k8s.io", "nodes", "", "list"},
+}
 
 // ContextResult is a type alias for config.ContextProfile, used by the scanner
 // to report the result of probing a single kubeconfig context.
@@ -67,6 +91,10 @@ func ScanContext(ctx context.Context, kubeconfigPath, contextName string) (Conte
 		return result, nil
 	}
 	result.K8sVersion = version
+
+	// SelfSubjectAccessReview against the canonical verb/resource pairs
+	// cloudy uses, so /setup surfaces real RBAC capability per context.
+	result.Permissions = probePermissions(ctx, core)
 
 	// Nodes.
 	nodes, err := core.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
@@ -173,6 +201,45 @@ func isGPUNode(n corev1.Node) bool {
 		}
 	}
 	return false
+}
+
+// probePermissions runs a SelfSubjectAccessReview for every probe in
+// canonicalPermissionProbes and returns the results. An individual SSAR
+// failure surfaces as Allowed=false with the error message in Reason — that
+// is the same way a real RBAC denial reads to a user, so the wizard can
+// render both uniformly.
+func probePermissions(ctx context.Context, core kubernetes.Interface) []config.PermissionCheck {
+	out := make([]config.PermissionCheck, 0, len(canonicalPermissionProbes))
+	for _, p := range canonicalPermissionProbes {
+		ssar := &authorizationv1.SelfSubjectAccessReview{
+			Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Group:       p.group,
+					Resource:    p.resource,
+					Subresource: p.subresource,
+					Verb:        p.verb,
+				},
+			},
+		}
+		check := config.PermissionCheck{
+			Group:       p.group,
+			Resource:    p.resource,
+			Subresource: p.subresource,
+			Verb:        p.verb,
+		}
+		resp, err := core.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, ssar, metav1.CreateOptions{})
+		if err != nil {
+			check.Reason = err.Error()
+			out = append(out, check)
+			continue
+		}
+		check.Allowed = resp.Status.Allowed
+		if !check.Allowed {
+			check.Reason = resp.Status.Reason
+		}
+		out = append(out, check)
+	}
+	return out
 }
 
 // isJVMPod returns true when any container in the pod looks like a JVM process.
