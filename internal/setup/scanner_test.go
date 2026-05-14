@@ -4,12 +4,14 @@ import (
 	"context"
 	"testing"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // fakeScanner wraps the internal detection helpers for unit testing without a
@@ -162,6 +164,70 @@ func TestDetectComponents_DCGM(t *testing.T) {
 
 	if !result.HasDCGMExporter {
 		t.Error("expected HasDCGMExporter=true")
+	}
+}
+
+// TestProbePermissions_RecordsAllowedVerbs verifies every canonical probe
+// is issued and its allowed/denied state reflects the API server response.
+func TestProbePermissions_RecordsAllowedVerbs(t *testing.T) {
+	core := fake.NewSimpleClientset()
+	// Only allow "list pods" and "get pods/log"; everything else denied.
+	core.PrependReactor("create", "selfsubjectaccessreviews",
+		func(action k8stesting.Action) (bool, runtime.Object, error) {
+			ssar := action.(k8stesting.CreateAction).GetObject().(*authorizationv1.SelfSubjectAccessReview)
+			attrs := ssar.Spec.ResourceAttributes
+			allowed := false
+			reason := ""
+			switch {
+			case attrs.Resource == "pods" && attrs.Subresource == "" && attrs.Verb == "list":
+				allowed = true
+			case attrs.Resource == "pods" && attrs.Subresource == "log" && attrs.Verb == "get":
+				allowed = true
+			default:
+				reason = "rbac.authorization.k8s.io: forbidden"
+			}
+			ssar.Status = authorizationv1.SubjectAccessReviewStatus{
+				Allowed: allowed,
+				Reason:  reason,
+			}
+			return true, ssar, nil
+		},
+	)
+
+	got := probePermissions(context.Background(), core)
+	if len(got) != len(canonicalPermissionProbes) {
+		t.Fatalf("got %d checks, want %d", len(got), len(canonicalPermissionProbes))
+	}
+
+	var listPodsSeen, getPodLogSeen, nodesAllowed bool
+	for _, c := range got {
+		switch {
+		case c.Resource == "pods" && c.Subresource == "" && c.Verb == "list":
+			listPodsSeen = true
+			if !c.Allowed {
+				t.Errorf("expected list pods allowed, got denied: %+v", c)
+			}
+		case c.Resource == "pods" && c.Subresource == "log" && c.Verb == "get":
+			getPodLogSeen = true
+			if !c.Allowed {
+				t.Errorf("expected get pods/log allowed: %+v", c)
+			}
+		case c.Resource == "nodes" && c.Verb == "list":
+			if c.Allowed {
+				nodesAllowed = true
+			} else if c.Reason == "" {
+				t.Errorf("denial without reason: %+v", c)
+			}
+		}
+	}
+	if !listPodsSeen {
+		t.Error("list pods probe missing from results")
+	}
+	if !getPodLogSeen {
+		t.Error("get pods/log probe missing from results")
+	}
+	if nodesAllowed {
+		t.Error("list nodes should be denied in this fixture")
 	}
 }
 

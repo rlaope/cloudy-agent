@@ -159,6 +159,16 @@ type SafetyConfig struct {
 	// MaxUSDPerDay is the maximum spend (USD) allowed across all sessions in a
 	// rolling 24-hour window. Zero means unlimited.
 	MaxUSDPerDay float64 `yaml:"max_usd_per_day"`
+
+	// MaxConversationSeconds caps the wall-clock time a single agent Run may
+	// consume. Distinct from per-tool deadlines; a slow LLM step plus a slow
+	// tool step can otherwise add up to many minutes. Zero means unlimited.
+	MaxConversationSeconds int `yaml:"max_conversation_seconds"`
+
+	// MaxLogResponseBytes is the byte ceiling beyond which a log.* tool
+	// result is rewritten as a head/tail + exception-context summary before
+	// the LLM sees it. Zero disables the summary step.
+	MaxLogResponseBytes int `yaml:"max_log_response_bytes"`
 }
 
 // RoutingConfig controls how cloudy chooses between cheap and strong models.
@@ -180,9 +190,10 @@ func Default() Config {
 		DefaultModel: "claude-3-5-sonnet-20241022",
 		Providers:    map[string]ProviderConfig{},
 		Safety: SafetyConfig{
-			AllowSecrets:      false,
-			MaxLogLines:       5000,
-			MaxProfileSeconds: 60,
+			AllowSecrets:        false,
+			MaxLogLines:         5000,
+			MaxProfileSeconds:   60,
+			MaxLogResponseBytes: 64 * 1024,
 		},
 		Routing: RoutingConfig{
 			CheapModel:  "claude-3-5-haiku-20241022",

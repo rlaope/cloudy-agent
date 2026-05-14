@@ -69,6 +69,37 @@ type Limits struct {
 	MaxUSDPerDay        float64 `yaml:"max_usd_per_day,omitempty"`
 }
 
+// EffectiveInt picks the most-restrictive non-zero value between a profile
+// limit and a fallback. Zero is "no opinion", so a 0 profile + 5000 fallback
+// yields 5000, but a 100 profile + 5000 fallback yields 100. Used by wiring
+// code to combine safety config defaults with active-profile narrowing.
+func EffectiveInt(profileVal, fallback int) int {
+	if profileVal > 0 {
+		if fallback > 0 && fallback < profileVal {
+			return fallback
+		}
+		return profileVal
+	}
+	return fallback
+}
+
+// EffectiveLogLines returns the per-call log-line ceiling that should apply
+// given an optional Profile. When p is nil, fallback is returned unchanged.
+func EffectiveLogLines(p *Profile, fallback int) int {
+	if p == nil {
+		return fallback
+	}
+	return EffectiveInt(p.Limits.MaxLogLines, fallback)
+}
+
+// EffectiveProfileSeconds returns the per-call profile-duration ceiling.
+func EffectiveProfileSeconds(p *Profile, fallback int) int {
+	if p == nil {
+		return fallback
+	}
+	return EffectiveInt(p.Limits.MaxProfileSeconds, fallback)
+}
+
 // ErrNotFound is returned by Load and Active when no matching profile
 // exists. Callers can use errors.Is to detect it.
 var ErrNotFound = errors.New("permission: profile not found")

@@ -93,14 +93,20 @@ func bootTUI(stdout, stderr io.Writer) error {
 
 	ctxName, ns := currentKubeContext()
 	deps := tui.Deps{
-		Provider:   provider,
-		Model:      modelID,
-		Skills:     skillReg,
-		Tools:      toolReg,
-		Session:    sess,
-		InitialCtx: ctxName,
-		InitialNS:  ns,
-		FirstRun:   firstRun,
+		Provider:                 provider,
+		Model:                    modelID,
+		Skills:                   skillReg,
+		Tools:                    toolReg,
+		Session:                  sess,
+		InitialCtx:               ctxName,
+		InitialNS:                ns,
+		FirstRun:                 firstRun,
+		MaxTokensPerSession:      cfg.Safety.MaxTokensPerSession,
+		MaxUSDPerDay:             cfg.Safety.MaxUSDPerDay,
+		MaxConversationSeconds:   cfg.Safety.MaxConversationSeconds,
+		MaxLogLinesPerCall:       permission.EffectiveLogLines(activeProfile, cfg.Safety.MaxLogLines),
+		MaxProfileSecondsPerCall: permission.EffectiveProfileSeconds(activeProfile, cfg.Safety.MaxProfileSeconds),
+		MaxLogResponseBytes:      cfg.Safety.MaxLogResponseBytes,
 	}
 	return tui.Run(context.Background(), deps)
 }

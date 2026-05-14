@@ -34,6 +34,11 @@ type Hook interface {
 	// message has been recorded but before tools are dispatched.
 	OnAssistantTurn(ctx context.Context, msg llm.Message)
 
+	// OnUsage fires every time the LLM provider reports usage data on a
+	// streaming chunk. Returning a non-nil error stops the loop and is the
+	// mechanism budget guards use to enforce per-session token / USD caps.
+	OnUsage(ctx context.Context, u llm.Usage) error
+
 	// OnStop fires once when Run is about to return, with the terminal
 	// error (nil on a normal final response).
 	OnStop(ctx context.Context, finalErr error)
@@ -52,8 +57,9 @@ func (NoopHook) BeforeToolCall(context.Context, llm.ToolCall) error { return nil
 func (NoopHook) AfterToolCall(_ context.Context, _ llm.ToolCall, obs tools.Observation, _ error) (tools.Observation, error) {
 	return obs, nil
 }
-func (NoopHook) OnAssistantTurn(context.Context, llm.Message) {}
-func (NoopHook) OnStop(context.Context, error)                {}
+func (NoopHook) OnAssistantTurn(context.Context, llm.Message)  {}
+func (NoopHook) OnUsage(context.Context, llm.Usage) error      { return nil }
+func (NoopHook) OnStop(context.Context, error)                 {}
 
 // ErrDuplicateCall is returned when the same (tool, args) pair is invoked
 // three times in a row, indicating the model is stuck in a loop.

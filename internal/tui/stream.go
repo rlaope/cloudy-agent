@@ -1,12 +1,22 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// tickInterval is the cadence at which the in-flight tool header is rewritten
+// with an updated elapsed-seconds counter.
+const tickInterval = time.Second
+
+// streamToolTickMsg is delivered once per tickInterval while a tool call is
+// in flight, prompting the stream model to refresh the header's [MM:SS] suffix.
+type streamToolTickMsg struct{}
 
 // streamTokenMsg carries a text fragment to append to the stream viewport.
 type streamTokenMsg string
@@ -44,10 +54,41 @@ type StreamModel struct {
 	// pending tool block being assembled
 	pendingTool *toolBlock
 
+	// pendingStart is when the current tool call began; used to compute the
+	// elapsed counter shown in the live header.
+	pendingStart time.Time
+	// pendingHeaderRaw is the most recently written unstyled header for the
+	// in-flight tool; tickers rewrite this in content to refresh [MM:SS].
+	pendingHeaderRaw string
+
 	toolStyle lipgloss.Style
 	obsStyle  lipgloss.Style
 	errStyle  lipgloss.Style
 	noColor   bool
+}
+
+// formatElapsed renders a duration as MM:SS (or HH:MM:SS past an hour).
+func formatElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	s := int(d.Seconds())
+	if s >= 3600 {
+		return fmt.Sprintf("%d:%02d:%02d", s/3600, (s/60)%60, s%60)
+	}
+	return fmt.Sprintf("%02d:%02d", s/60, s%60)
+}
+
+// renderToolHeader returns the unstyled header string for a tool call with
+// the given elapsed duration appended as [MM:SS].
+func renderToolHeader(name, args string, elapsed time.Duration) string {
+	return fmt.Sprintf("▶ tool: %s(%s) [%s]", name, args, formatElapsed(elapsed))
+}
+
+// tickToolCmd returns a tea.Cmd that fires one streamToolTickMsg after
+// tickInterval. Re-issued from Update on each tick while a tool is in flight.
+func tickToolCmd() tea.Cmd {
+	return tea.Tick(tickInterval, func(time.Time) tea.Msg { return streamToolTickMsg{} })
 }
 
 func newStreamModel(noColor bool) StreamModel {
@@ -92,7 +133,9 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 
 	case streamToolBeginMsg:
 		s.pendingTool = &toolBlock{name: m.name, args: m.args}
-		header := "▶ tool: " + m.name + "(" + m.args + ")"
+		s.pendingStart = time.Now()
+		s.pendingHeaderRaw = renderToolHeader(m.name, m.args, 0)
+		header := s.pendingHeaderRaw
 		if !s.noColor {
 			header = s.toolStyle.Render(header)
 		}
@@ -101,6 +144,33 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 			s.vp.SetContent(s.content.String())
 			s.vp.GotoBottom()
 		}
+		// Start the elapsed-counter tick loop.
+		cmds = append(cmds, tickToolCmd())
+
+	case streamToolTickMsg:
+		// No-op once the tool has ended — the loop stops by not re-issuing
+		// the tick command from this branch.
+		if s.pendingTool == nil {
+			break
+		}
+		newRaw := renderToolHeader(s.pendingTool.name, s.pendingTool.args, time.Since(s.pendingStart))
+		if newRaw != s.pendingHeaderRaw {
+			oldRendered := s.pendingHeaderRaw
+			newRendered := newRaw
+			if !s.noColor {
+				oldRendered = s.toolStyle.Render(s.pendingHeaderRaw)
+				newRendered = s.toolStyle.Render(newRaw)
+			}
+			cur := strings.Replace(s.content.String(), oldRendered, newRendered, 1)
+			s.content.Reset()
+			s.content.WriteString(cur)
+			s.pendingHeaderRaw = newRaw
+			if s.ready {
+				s.vp.SetContent(cur)
+				s.vp.GotoBottom()
+			}
+		}
+		cmds = append(cmds, tickToolCmd())
 
 	case streamToolEndMsg:
 		if s.pendingTool != nil {

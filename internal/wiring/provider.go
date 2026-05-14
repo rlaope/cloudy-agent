@@ -38,11 +38,18 @@ func BuildProvider(model string) (llm.Provider, string, error) {
 		return nil, "", fmt.Errorf("wiring: resolve model %q: %w", model, err)
 	}
 
-	// Validate API key presence for well-known providers.
+	// Validate API key presence for well-known providers. Fail fast on
+	// missing configuration before composing any fallback layer — a missing
+	// key is an operator error, not a transient runtime failure.
 	envVar := wellKnownKeyEnv(provider.Name())
 	if envVar != "" && os.Getenv(envVar) == "" {
 		return nil, "", &ErrMissingKey{Provider: provider.Name(), EnvVar: envVar}
 	}
+
+	// When the user has configured an openai_compat endpoint (Ollama / vLLM /
+	// LM Studio), wrap the primary so transient API outages fall through to
+	// the local model. Opt-in: only activates when the env var is set.
+	provider = llm.WrapWithCompatFallback(provider, modelID)
 
 	return provider, modelID, nil
 }
