@@ -3,6 +3,63 @@
 ## Unreleased
 
 ### Added
+- **Backend auto-discovery via `discovery.Detector` package** — `internal/discovery/`
+  defines the core abstractions: `Detector` interface, `Finding` result type,
+  `Source` enum (Kubernetes Service/Pod heuristics, user hints), and
+  `AuthHint` for credential scoping. The `Coordinator` fan-outs every
+  registered detector with a 30s deadline, per-detector panic recovery, and
+  stable 4-key sort (kind, name, namespace, labels). Backend packages
+  (`prom`, `log`, `trace`, `db`, `perf`) self-register their detectors via
+  `init()` without coupling to the core.
+- **Detectors for prom / log / trace / db / perf** — each backend tool group
+  gains a `detector.go` file that recognizes running services from K8s
+  Service names (label `app.kubernetes.io/name` match, port number, port
+  name heuristics) plus user-supplied external hints from `cloudy.yaml`:
+  - `prom` detector recognizes Prometheus endpoints.
+  - `log` detector recognizes Loki, Elasticsearch, and their endpoints.
+  - `trace` detector recognizes Tempo, Jaeger, and their endpoints.
+  - `db` detector recognizes Postgres, MySQL, Redis services.
+  - `perf` detector recognizes pprof, V8 Inspector, and rbspy targets.
+- **Bastion → in-cluster reachability** — two new transport layers enable
+  bastions outside K8s to reach workloads without VPN:
+  - `transport.ServiceProxy` constructs apiserver `services/proxy` URLs and
+    wraps the apiserver-authenticated http.Client in `ReadOnlyRoundTripper`
+    to enforce the GET/HEAD/OPTIONS whitelist end-to-end for every backend
+    HTTP call (Prometheus, Loki, Elasticsearch, Tempo, Jaeger, pprof, V8).
+  - `transport.OpenPortForward` opens a SPDY port-forward in-process and
+    hands back a `localhost:<auto>` address so TCP backends (Postgres,
+    MySQL, Redis) can be dialled transparently. `db.BuildClients` recognizes
+    a new `k8s://<context>/<ns>/<svc>:<port>` DSN scheme and transparently
+    tunnels TCP connections.
+- **Atomic registry hot-swap** — `wiring.Current()` and `wiring.Replace()`
+  back the live `*tools.Registry` with `sync/atomic.Pointer`. `agent.New`
+  gains `Options.RegistryFn func() *tools.Registry` so each `Run()` picks
+  up a registry the user just rebuilt via `/setup` without restarting the
+  process.
+- **7-step `/setup` wizard inside the TUI (Mixed flow)** — the setup wizard
+  evolves from 5 steps to 7 and becomes an embeddable `*WizardModel`:
+  kubeconfig → scan → discovered → credentials → hints → fill-in → skills
+  → save. Steps 3/4/5 are new:
+  - `stepDiscovered` is a full-screen group-by-kind checkbox selection over
+    the coordinator's `[]Finding` list.
+  - `stepCredentials` is a stream-inline Q&A that references existing env
+    vars via `$ENV_VAR` or accepts pasted values (echoed as ★) and writes
+    them to `~/.cloudy/secrets` with auto-generated keys
+    (`CLOUDY_<KIND>_<NAME>_PWD`). `cloudy.yaml` never receives a secret
+    directly.
+  - `stepHints` accepts ad-hoc external backends via `kind URL [auth]`.
+  On save the wizard rebuilds the registry via `wiring.BuildRegistry` and
+  `wiring.Replace`. Process restart is not required; the next user question
+  uses the updated catalog.
+- **`~/.cloudy/secrets`** — new `internal/secrets/` package persists user
+  credentials as a dotenv file (mode 0600) and replays them into `os.Setenv`
+  at boot so existing `*_env` config fields keep working without source
+  changes.
+- **`tui.WelcomeModel` + first-launch banner** — `cmd/main.go` no longer
+  short-circuits when config is absent. The TUI always opens; on first run
+  a `cloudy` ASCII banner with `/setup`, `/help`, `⏎` hints is rendered
+  above the empty stream, and on return visits a compact one-liner replaces
+  it.
 - **Closes the original polyglot profiler list**: Linux `perf record/report`
   wrapper, Go pprof CPU binary decode, and V8 Inspector CPU profile
   capture over the Chrome DevTools Protocol.
@@ -94,11 +151,30 @@
   copies of the registry.
 
 ### Changed
+- `db.BuildClients` signature now takes a `*k8s.Hub` so it can resolve
+  `k8s://` DSN schemes into a SPDY tunnel; non-k8s DSNs go through the
+  existing direct-dial path unchanged.
+- `cmd/main.go` removes early returns when `cfg.DefaultModel == ""` or
+  `wiring.BuildProvider` errors; both now surface as a stderr note and the
+  TUI opens so the user can reach `/setup` and repair the configuration.
+- `tui.Deps` adds `FirstRun bool` and the agent picks up the registry via
+  `Options.RegistryFn` rather than a frozen `Options.Registry`.
 - `internal/tools/prom`: empty client map now marks group `prom` skipped
   with reason `no prometheus endpoints configured`.
 - `internal/wiring/tools.go`: kube-client construction failure marks group
   `k8s` skipped with the underlying error string, in addition to returning
   the existing `*KubeWarning`.
+
+### Security
+- Three read-only guards remain intact. The new apiserver-proxy URL still
+  flows through `ReadOnlyRoundTripper`, so the GET/HEAD/OPTIONS whitelist
+  applies to every Loki / Tempo / pprof / V8 call exactly as before. The
+  new RBAC verbs (`services/proxy: get`, `pods/portforward: create`) are
+  the minimum required for the new reachability layers and do not widen
+  cloudy's mutation surface.
+- `manifests/rbac/base/clusterrole.yaml` gains two new verbs: `get` on
+  `services/proxy` and `create` on `pods/portforward`. See
+  `manifests/rbac/README.md` for a one-paragraph rationale.
 
 ## v0.3.0 — 2026-05-13
 
