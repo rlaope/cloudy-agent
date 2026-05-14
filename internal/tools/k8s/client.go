@@ -54,6 +54,12 @@ type MetricsNode struct {
 type Client struct {
 	core    kubernetes.Interface
 	metrics metricsclient.Interface
+	// restCfg is the rest.Config the production clients were built from. It
+	// is retained so callers (e.g. the wiring layer building a ServiceProxy
+	// for discovery) can reuse the apiserver auth without re-loading the
+	// kubeconfig. Tests that inject pre-built interfaces leave this nil;
+	// RESTConfig() returns nil in that case.
+	restCfg *rest.Config
 }
 
 // NewClient builds a Client. If kubeconfigPath is empty and
@@ -76,7 +82,7 @@ func NewClient(kubeconfigPath, kubeContext string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("k8s: build metrics client: %w", err)
 	}
-	return &Client{core: core, metrics: mc}, nil
+	return &Client{core: core, metrics: mc, restCfg: cfg}, nil
 }
 
 // newClientFromConfig is used in tests to inject a pre-built config.
@@ -90,13 +96,34 @@ func newClientFromConfig(cfg *rest.Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{core: core, metrics: mc}, nil
+	return &Client{core: core, metrics: mc, restCfg: cfg}, nil
 }
 
 // newTestClient constructs a Client directly from pre-built interfaces (for
 // unit tests that supply fake clientsets).
 func newTestClient(core kubernetes.Interface, mc metricsclient.Interface) *Client {
 	return &Client{core: core, metrics: mc}
+}
+
+// RESTConfig returns the *rest.Config the Client was constructed from, or nil
+// when the Client was built via newTestClient (which injects fake interfaces
+// rather than a real config). Callers that need an apiserver-authenticated
+// HTTP transport (e.g. transport.NewServiceProxy) should check for nil first.
+func (c *Client) RESTConfig() *rest.Config {
+	if c == nil {
+		return nil
+	}
+	return c.restCfg
+}
+
+// Core returns the underlying kubernetes.Interface. Used by callers that need
+// direct access to the core API group (e.g. transport.SelectPod for port-forward
+// target resolution).
+func (c *Client) Core() kubernetes.Interface {
+	if c == nil {
+		return nil
+	}
+	return c.core
 }
 
 func loadConfig(kubeconfigPath, kubeContext string) (*rest.Config, error) {
@@ -160,6 +187,11 @@ func (c *Client) Nodes() (*corev1.NodeList, error) {
 // Namespaces lists all namespaces.
 func (c *Client) Namespaces() (*corev1.NamespaceList, error) {
 	return c.core.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
+}
+
+// Services lists services in the given namespace (empty string = all namespaces).
+func (c *Client) Services(ctx context.Context, ns string, opts metav1.ListOptions) (*corev1.ServiceList, error) {
+	return c.core.CoreV1().Services(ns).List(ctx, opts)
 }
 
 // Deployments lists deployments in the given namespace.
