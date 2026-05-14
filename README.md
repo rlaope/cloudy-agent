@@ -10,7 +10,14 @@ ClusterRole RBAC).
 
 ## Status
 
-v0.2 in development. See `.omc/plans/` for the design.
+v0.4 in development. v0.2 / v0.3 released; v0.4 brings auto-discovery and TUI-integrated /setup.
+
+## v0.4 Highlights
+
+- **Auto-discovery in /setup**: A single `/setup` slash command inside the TUI scans the configured K8s contexts and proposes every detected Prometheus / Loki / Elasticsearch / Tempo / Jaeger / Postgres / MySQL / Redis / pprof / V8 inspector endpoint. The user picks them from a checkbox and inputs any required credentials inline; cloudy.yaml is generated, not hand-edited.
+- **Bastion-friendly reachability**: HTTP backends are reached via the K8s apiserver's `services/proxy` (no VPN required), and TCP databases via in-process SPDY port-forward; the existing read-only contract (`GET/HEAD/OPTIONS`) is preserved end-to-end.
+- **Live registry hot-swap**: After `/setup` the new backends are usable immediately — no `cloudy` restart. The agent picks up the new tool catalog on the next user question.
+- **First-launch banner**: Launching `cloudy` with no config shows a `cloudy` banner + the three command hints (`⚙ /setup`, `? /help`, `⏎ ask`); compact one-liner on subsequent launches.
 
 ## v0.2 Highlights
 
@@ -37,9 +44,9 @@ make build
 ## Quickstart
 
 ```sh
-cloudy setup                       # discover clusters, generate ~/.cloudy/{config,profile}.yaml
-cloudy                             # full-screen TUI
+cloudy                             # open TUI; first launch shows /setup banner
 cloudy ask "왜 결제 서비스 응답시간이 느려?"   # one-shot mode
+cloudy setup                       # equivalent non-interactive setup (CI)
 
 cloudy profile list                # list all available profiles
 cloudy profile use payments-sre    # activate a profile
@@ -50,11 +57,12 @@ cloudy profile cluster             # show RBAC permissions from current context
 
 ## Safety
 
-Three independent guards keep cloudy read-only:
+Four independent guards keep cloudy read-only:
 
 1. HTTP `RoundTripper` rejects every method other than `GET`/`HEAD`/`OPTIONS`.
 2. Kubernetes client wrapper rejects verbs other than `get`/`list`/`watch`.
 3. The bundled `ClusterRole` (`manifests/rbac/`) only grants those verbs.
+4. Bastion reachability verbs (`services/proxy: get`, `pods/portforward: create`) are the minimum required for HTTP and TCP backends and do not widen the mutation surface.
 
 Mutating tools are not registered, so the LLM never sees them.
 

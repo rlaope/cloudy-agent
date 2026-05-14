@@ -29,6 +29,7 @@ func (i paletteItem) Description() string { return i.usage }
 func (i paletteItem) FilterValue() string { return i.title }
 
 var builtinItems = []list.Item{
+	paletteItem{title: "setup", usage: "/setup        — run the discovery wizard"},
 	paletteItem{title: "skill", usage: "/skill <name>  — switch active skill"},
 	paletteItem{title: "use", usage: "/use <ctx>     — switch kubeconfig context"},
 	paletteItem{title: "model", usage: "/model <id>   — switch active model"},

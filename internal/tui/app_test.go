@@ -461,3 +461,94 @@ func TestModel_AgentUsageMsg_UpdatesHeader(t *testing.T) {
 		t.Errorf("header view should contain cost '0.012', got: %q", view)
 	}
 }
+
+// --- /setup mode tests ---
+
+// TestWelcome_VisibleOnEmptyStream verifies that the initial View() rendered
+// on an empty stream contains the cloudy banner and the /setup hint.
+func TestWelcome_VisibleOnEmptyStream(t *testing.T) {
+	deps := makeDeps()
+	deps.FirstRun = true
+	m := NewModel(deps)
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	view := m.View()
+	if !strings.Contains(view, "/setup") {
+		t.Errorf("welcome should contain '/setup' on empty stream, got: %q", view)
+	}
+	if !strings.Contains(view, "cloudy") {
+		t.Errorf("welcome should contain 'cloudy' banner on empty stream, got: %q", view)
+	}
+}
+
+// TestSetupMode_Toggle drives the model through a /setup submit, confirms
+// it enters modeSetup, then simulates the wizard finishing and confirms the
+// model returns to modeMain.
+func TestSetupMode_Toggle(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	// Submit "/setup" as if the user pressed Enter on the slash command.
+	next, cmd := m.Update(submitMsg("/setup"))
+	m = next.(Model)
+	if cmd != nil {
+		cmd()
+	}
+
+	if m.mode != modeSetup {
+		t.Fatalf("after /setup submit, mode = %v, want modeSetup", m.mode)
+	}
+	if m.setupWiz == nil {
+		t.Fatal("after /setup submit, setupWiz should be non-nil")
+	}
+
+	// Simulate the wizard reporting Done by forcing it to a terminal state.
+	// We can't poke the unexported wizard state directly, so instead we
+	// trigger the exit path manually and confirm the mode flips back.
+	m.exitSetup()
+
+	if m.mode != modeMain {
+		t.Errorf("after exitSetup, mode = %v, want modeMain", m.mode)
+	}
+	if m.setupWiz != nil {
+		t.Errorf("after exitSetup, setupWiz should be nil")
+	}
+}
+
+// TestSetupPaletteAction_EntersSetup confirms that selecting the "setup"
+// palette item routes through the same enterSetup path.
+func TestSetupPaletteAction_EntersSetup(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	cmd := m.handlePaletteAction(paletteActionMsg{cmd: "setup"})
+	if cmd != nil {
+		cmd()
+	}
+
+	if m.mode != modeSetup {
+		t.Errorf("after palette setup action, mode = %v, want modeSetup", m.mode)
+	}
+	if m.setupWiz == nil {
+		t.Error("after palette setup action, setupWiz should be non-nil")
+	}
+}
+
+// TestPaletteIncludes_Setup verifies the builtin palette items list contains
+// the "setup" entry so Tab-completion can pick it up.
+func TestPaletteIncludes_Setup(t *testing.T) {
+	found := false
+	for _, item := range builtinItems {
+		pi, ok := item.(paletteItem)
+		if ok && pi.title == "setup" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("palette builtinItems should include a 'setup' item")
+	}
+}

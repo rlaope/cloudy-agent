@@ -150,6 +150,12 @@ func (s StreamModel) View() string {
 	return s.vp.View()
 }
 
+// Empty reports whether the stream has no content yet. Used by the parent
+// Model to decide whether to render the welcome banner above the empty body.
+func (s StreamModel) Empty() bool {
+	return s.content.Len() == 0
+}
+
 // indentObs prepends prefix to every non-empty line.
 func indentObs(text, prefix string) string {
 	lines := strings.Split(text, "\n")

@@ -92,7 +92,7 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 	jvm.RegisterAll(reg)
 	py.RegisterAll(reg)
 
-	dbClients, dbSkips := db.BuildClients(context.Background(), opts.Databases)
+	dbClients, dbSkips := db.BuildClients(context.Background(), hub, opts.Databases)
 	db.RegisterAll(reg, dbClients, dbSkips)
 
 	logClients, logSkips := tlog.BuildClients(opts.Logs)
