@@ -40,8 +40,14 @@ type Options struct {
 	Provider llm.Provider
 	// Model is the fully-qualified model identifier. Required.
 	Model string
-	// Registry holds all available tools. Required.
+	// Registry holds all available tools. Mutually exclusive with RegistryFn;
+	// exactly one must be set.
 	Registry *tools.Registry
+	// RegistryFn, when non-nil, is called at the start of every Run to fetch
+	// the current registry. This lets long-lived agents pick up a registry
+	// hot-swapped by /setup. When nil, Options.Registry is used for the entire
+	// lifetime of the agent (legacy behaviour).
+	RegistryFn func() *tools.Registry
 	// Skill, if non-nil, prepends its SystemPrompt and filters the Registry
 	// through skill.AllowedTools before each run.
 	Skill *skills.Skill
@@ -61,9 +67,9 @@ type Options struct {
 // Agent executes the ReAct loop for a single user query. An Agent is safe
 // for sequential reuse but MUST NOT be used concurrently.
 type Agent struct {
-	opts     Options
-	registry *tools.Registry // possibly skill-filtered
-	hooks    []Hook
+	opts      Options
+	staticReg *tools.Registry // pre-filtered at New(); nil when RegistryFn is set
+	hooks     []Hook
 }
 
 // New constructs an Agent from opts, applying defaults and validating
@@ -75,8 +81,8 @@ func New(opts Options) (*Agent, error) {
 	if opts.Model == "" {
 		return nil, errors.New("agent: Model is required")
 	}
-	if opts.Registry == nil {
-		return nil, errors.New("agent: Registry is required")
+	if opts.Registry == nil && opts.RegistryFn == nil {
+		return nil, errors.New("agent: Registry or RegistryFn is required")
 	}
 	if opts.MaxSteps <= 0 {
 		opts.MaxSteps = defaultMaxSteps
@@ -85,9 +91,13 @@ func New(opts Options) (*Agent, error) {
 		opts.MaxToolTokens = defaultMaxToolTokens
 	}
 
-	reg := opts.Registry
-	if opts.Skill != nil && len(opts.Skill.AllowedTools) > 0 {
-		reg = opts.Registry.Filter(opts.Skill.AllowedTools)
+	// Pre-compute the filtered registry only for the static (non-fn) path.
+	var staticReg *tools.Registry
+	if opts.RegistryFn == nil {
+		staticReg = opts.Registry
+		if opts.Skill != nil && len(opts.Skill.AllowedTools) > 0 {
+			staticReg = opts.Registry.Filter(opts.Skill.AllowedTools)
+		}
 	}
 
 	hooks := opts.Hooks
@@ -95,21 +105,44 @@ func New(opts Options) (*Agent, error) {
 		hooks = []Hook{NewDupCallHook()}
 	}
 
-	return &Agent{opts: opts, registry: reg, hooks: hooks}, nil
+	return &Agent{opts: opts, staticReg: staticReg, hooks: hooks}, nil
+}
+
+// resolveRegistry returns the current Registry for this Run, applying the
+// skill filter if Skill.AllowedTools is set. When RegistryFn is set it is
+// called on every Run so hot-swapped registries are picked up automatically.
+// When only the static Registry is set it returns the pre-filtered staticReg.
+func (a *Agent) resolveRegistry() *tools.Registry {
+	if a.opts.RegistryFn != nil {
+		reg := a.opts.RegistryFn()
+		if reg == nil {
+			return nil
+		}
+		if a.opts.Skill != nil && len(a.opts.Skill.AllowedTools) > 0 {
+			return reg.Filter(a.opts.Skill.AllowedTools)
+		}
+		return reg
+	}
+	return a.staticReg
 }
 
 // Run executes the ReAct loop for userInput, streaming tokens and tool-call
 // blocks to sink. It returns the updated conversation history (including
 // the new user turn and all assistant/tool turns) or a typed error.
 func (a *Agent) Run(ctx context.Context, userInput string, sink render.Sink) ([]llm.Message, error) {
-	sysPrompt := a.buildSystemPrompt()
+	reg := a.resolveRegistry()
+	if reg == nil {
+		return nil, fmt.Errorf("agent: no registry available")
+	}
+
+	sysPrompt := a.buildSystemPrompt(reg)
 
 	msgs := make([]llm.Message, 0, len(a.opts.History)+2)
 	msgs = append(msgs, llm.Message{Role: llm.RoleSystem, Content: sysPrompt})
 	msgs = append(msgs, a.opts.History...)
 	msgs = append(msgs, llm.Message{Role: llm.RoleUser, Content: userInput})
 
-	llmTools := a.registry.ToolsFor(a.opts.Provider.Name())
+	llmTools := reg.ToolsFor(a.opts.Provider.Name())
 
 	var finalErr error
 	defer func() { a.fireOnStop(ctx, finalErr) }()
@@ -129,7 +162,7 @@ func (a *Agent) Run(ctx context.Context, userInput string, sink render.Sink) ([]
 		}
 
 		for _, tc := range assistant.ToolCalls {
-			toolMsg, err := a.dispatchTool(ctx, tc, sink)
+			toolMsg, err := a.dispatchTool(ctx, tc, reg, sink)
 			if err != nil {
 				finalErr = err
 				msgs = append(msgs, toolMsg)
@@ -206,7 +239,7 @@ func (a *Agent) streamAssistantTurn(ctx context.Context, msgs []llm.Message, llm
 
 // dispatchTool runs one tool call through the hook chain and returns the
 // tool-result message destined for the LLM.
-func (a *Agent) dispatchTool(ctx context.Context, tc llm.ToolCall, sink render.Sink) (llm.Message, error) {
+func (a *Agent) dispatchTool(ctx context.Context, tc llm.ToolCall, reg *tools.Registry, sink render.Sink) (llm.Message, error) {
 	for _, h := range a.hooks {
 		if err := h.BeforeToolCall(ctx, tc); err != nil {
 			return llm.Message{
@@ -217,7 +250,7 @@ func (a *Agent) dispatchTool(ctx context.Context, tc llm.ToolCall, sink render.S
 		}
 	}
 
-	obs, runErr := a.runTool(ctx, tc, sink)
+	obs, runErr := a.runTool(ctx, tc, reg, sink)
 
 	for _, h := range a.hooks {
 		var hookErr error
@@ -241,11 +274,11 @@ func (a *Agent) dispatchTool(ctx context.Context, tc llm.ToolCall, sink render.S
 // runTool looks up and executes a single tool call, emitting to sink. If
 // the tool is unknown it returns a descriptive error observation rather
 // than aborting.
-func (a *Agent) runTool(ctx context.Context, tc llm.ToolCall, sink render.Sink) (tools.Observation, error) {
+func (a *Agent) runTool(ctx context.Context, tc llm.ToolCall, reg *tools.Registry, sink render.Sink) (tools.Observation, error) {
 	if sink != nil {
 		sink.BeginToolCall(tc.Name, string(tc.Arguments))
 	}
-	tool, ok := a.registry.Get(tc.Name)
+	tool, ok := reg.Get(tc.Name)
 	if !ok {
 		err := fmt.Errorf("tool %q is not available", tc.Name)
 		if sink != nil {
@@ -277,15 +310,16 @@ func (a *Agent) formatObservation(obs tools.Observation, err error) string {
 	return text
 }
 
-// buildSystemPrompt assembles base preamble + skill prompt + tool catalogue.
-func (a *Agent) buildSystemPrompt() string {
+// buildSystemPrompt assembles base preamble + skill prompt + tool catalogue
+// from the given registry snapshot.
+func (a *Agent) buildSystemPrompt(reg *tools.Registry) string {
 	var sb strings.Builder
 	sb.WriteString(basePreamble)
 	if a.opts.Skill != nil && a.opts.Skill.SystemPrompt != "" {
 		sb.WriteString("\n\n")
 		sb.WriteString(a.opts.Skill.SystemPrompt)
 	}
-	tools := a.registry.List()
+	tools := reg.List()
 	if len(tools) > 0 {
 		sb.WriteString("\n\n## Available Tools\n")
 		for _, t := range tools {

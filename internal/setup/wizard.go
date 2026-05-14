@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,8 +16,12 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/rlaope/cloudy/internal/config"
+	"github.com/rlaope/cloudy/internal/discovery"
+	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/render"
+	"github.com/rlaope/cloudy/internal/secrets"
 	"github.com/rlaope/cloudy/internal/skills"
+	"github.com/rlaope/cloudy/internal/wiring"
 )
 
 // WizardOptions configures the setup wizard.
@@ -39,46 +44,43 @@ type WizardOptions struct {
 }
 
 // Run launches the setup wizard and blocks until the user completes or aborts
-// all five steps. On success the wizard writes config.yaml and profile.yaml.
+// the flow. On success the wizard writes config.yaml and profile.yaml.
 func Run(ctx context.Context, opts WizardOptions) error {
-	// Load available builtin skills for the recommendation step.
-	builtinSkills, _ := skills.LoadBuiltin()
-
-	m := &wizardModel{
-		ctx:           ctx,
-		opts:          opts,
-		builtinSkills: builtinSkills,
-		step:          stepKubeconfig,
-		spinner:       spinner.New(spinner.WithSpinner(spinner.Dot)),
-	}
-
-	// Discover kubeconfig contexts before launching the TUI.
-	contexts, err := listKubeconfigContexts(opts.KubeconfigPath)
-	if err != nil {
-		return fmt.Errorf("setup wizard: list kubeconfig contexts: %w", err)
-	}
-	m.allContexts = contexts
+	m := NewWizardModel(ctx, opts)
 
 	if opts.AutoRun {
-		// Non-interactive path: select all contexts and run scans.
-		m.selectedContexts = contexts
+		// Non-interactive path: select all contexts and run scans/persist
+		// without driving a tea.Program.
+		m.selectedContexts = append([]string(nil), m.allContexts...)
 		return m.runAutomatic()
 	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+	p := tea.NewProgram(teaAdapter{m}, tea.WithAltScreen(), tea.WithContext(ctx))
 	finalModel, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("setup wizard: %w", err)
 	}
-	wm, ok := finalModel.(*wizardModel)
-	if !ok || wm.aborted {
+	adapter, ok := finalModel.(teaAdapter)
+	if !ok || adapter.m.aborted {
 		return fmt.Errorf("setup wizard: aborted by user")
 	}
-	if wm.saveErr != nil {
-		return wm.saveErr
+	if adapter.m.saveErr != nil {
+		return adapter.m.saveErr
 	}
 	return nil
 }
+
+// teaAdapter wraps *WizardModel in the standard tea.Model interface so a
+// stand-alone tea.Program can drive it. The exported Update keeps the more
+// specific *WizardModel return type for embedders that hold a concrete value.
+type teaAdapter struct{ m *WizardModel }
+
+func (a teaAdapter) Init() tea.Cmd { return a.m.Init() }
+func (a teaAdapter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	wm, cmd := a.m.Update(msg)
+	return teaAdapter{wm}, cmd
+}
+func (a teaAdapter) View() string { return a.m.View() }
 
 // --- step constants ---
 
@@ -87,7 +89,10 @@ type wizardStep int
 const (
 	stepKubeconfig wizardStep = iota
 	stepScan
-	stepFillIn
+	stepDiscovered  // checkbox over discovery.Findings grouped by Kind
+	stepCredentials // stream-inline Q&A for each selected backend's auth
+	stepHints       // stream-inline "any external URL to add?" loop
+	stepFillIn      // LLM model + safety limits only
 	stepSkills
 	stepSave
 	stepDone
@@ -96,14 +101,18 @@ const (
 // --- messages ---
 
 type scanDoneMsg struct {
-	results []ContextResult
+	results  []ContextResult
+	findings []discovery.Finding
+	note     string
 }
 
 type saveDoneMsg struct{ err error }
 
 // --- model ---
 
-type wizardModel struct {
+// WizardModel is a bubbletea sub-model embedded by the main TUI when
+// mode=="setup", and also driven standalone by `cloudy setup` via Run().
+type WizardModel struct {
 	ctx           context.Context
 	opts          WizardOptions
 	builtinSkills []*skills.Skill
@@ -119,33 +128,100 @@ type wizardModel struct {
 	cursorCtx        int
 
 	// Step 2 — scan
-	scanning    bool
-	scanResults []ContextResult
+	scanning     bool
+	scanResults  []ContextResult
+	findings     []discovery.Finding
+	discoveryNote string
 
-	// Step 3 — fill-in
-	inputs        []*textinput.Model
-	focusedInput  int
-	filledProm    string
-	filledModel   string
-	filledTokens  string
-	filledUSD     string
-	filledSecrets string
+	// Step 3 — discovered findings (grouped checkbox)
+	findingGroups       []findingGroup // sorted by Kind
+	selectedGroupKinds  map[string]bool
+	cursorGroup         int
 
-	// Step 4 — skills
+	// Step 4 — credentials (stream-inline Q&A)
+	credQueue        []credPrompt
+	credIndex        int
+	credInput        textinput.Model
+	credAnswered     []credAnswer
+	// authEnvByFindingIdx maps an index into m.selectedFindings to the env-var
+	// name that should be threaded into config emission at step 7.
+	authEnvByFindingIdx map[int]string
+
+	// Step 5 — hint loop
+	hintInput   textinput.Model
+	httpHints   []config.HTTPEndpoint
+	dbHints     []config.DatabaseEndpoint
+	hintError   string
+	hintCounter map[string]int
+
+	// Step 6 — fill-in
+	inputs       []*textinput.Model
+	focusedInput int
+
+	// Step 7 — skills
 	recommendations []Recommendation
 	enabledSkills   map[string]bool
 	cursorSkill     int
 
-	// Step 5 — save
+	// Selected findings carried into step 7.
+	selectedFindings []discovery.Finding
+
+	// Step 8 — save
 	profile config.Profile
 	cfg     config.Config
 }
 
-func (m *wizardModel) Init() tea.Cmd {
+// findingGroup is one row in the step-3 checkbox view: all Findings sharing the
+// same Kind, listed under a single group header.
+type findingGroup struct {
+	Kind    string
+	Group   discovery.Group
+	Members []discovery.Finding
+}
+
+// credPrompt is one entry in the step-4 stream-Q&A queue.
+type credPrompt struct {
+	findingIdx int // index into m.selectedFindings
+	finding    discovery.Finding
+	question   string
+}
+
+// credAnswer is a rendered transcript entry for previously-answered prompts.
+type credAnswer struct {
+	finding discovery.Finding
+	envVar  string
+	mode    string // "env" or "literal"
+}
+
+// NewWizardModel constructs a WizardModel that the parent TUI can embed.
+// Init() returns the bubbletea startup command(s). The constructor performs
+// the cheap, synchronous setup (kubeconfig listing) so the caller surfaces
+// errors before tea.Program is started.
+func NewWizardModel(ctx context.Context, opts WizardOptions) *WizardModel {
+	builtin, _ := skills.LoadBuiltin()
+	contexts, _ := listKubeconfigContexts(opts.KubeconfigPath)
+	return &WizardModel{
+		ctx:                 ctx,
+		opts:                opts,
+		builtinSkills:       builtin,
+		step:                stepKubeconfig,
+		spinner:             spinner.New(spinner.WithSpinner(spinner.Dot)),
+		allContexts:         contexts,
+		selectedGroupKinds:  map[string]bool{},
+		hintCounter:         map[string]int{},
+		authEnvByFindingIdx: map[int]string{},
+	}
+}
+
+// Init returns the bubbletea startup command.
+func (m *WizardModel) Init() tea.Cmd {
 	return m.spinner.Tick
 }
 
-func (m *wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+// Update advances the wizard in response to bubbletea messages. The exported
+// return type is *WizardModel so callers embedding the wizard can hold a
+// concrete pointer through the entire lifecycle.
+func (m *WizardModel) Update(msg tea.Msg) (*WizardModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -158,8 +234,10 @@ func (m *wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scanDoneMsg:
 		m.scanning = false
 		m.scanResults = msg.results
-		m.step = stepFillIn
-		m.initFillIn()
+		m.findings = msg.findings
+		m.discoveryNote = msg.note
+		m.initDiscovered()
+		m.step = stepDiscovered
 		return m, nil
 
 	case saveDoneMsg:
@@ -170,10 +248,16 @@ func (m *wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *wizardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *WizardModel) handleKey(msg tea.KeyMsg) (*WizardModel, tea.Cmd) {
 	switch m.step {
 	case stepKubeconfig:
 		return m.handleKubeconfigKey(msg)
+	case stepDiscovered:
+		return m.handleDiscoveredKey(msg)
+	case stepCredentials:
+		return m.handleCredentialsKey(msg)
+	case stepHints:
+		return m.handleHintsKey(msg)
 	case stepFillIn:
 		return m.handleFillInKey(msg)
 	case stepSkills:
@@ -182,9 +266,18 @@ func (m *wizardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// Done reports whether the wizard has reached the terminal stepDone state.
+func (m *WizardModel) Done() bool { return m.step == stepDone }
+
+// Aborted reports whether the user pressed ctrl+c / q before save.
+func (m *WizardModel) Aborted() bool { return m.aborted }
+
+// SaveErr returns the persistence error from step 7, if any.
+func (m *WizardModel) SaveErr() error { return m.saveErr }
+
 // --- Step 1: kubeconfig context selection ---
 
-func (m *wizardModel) handleKubeconfigKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *WizardModel) handleKubeconfigKey(msg tea.KeyMsg) (*WizardModel, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		m.aborted = true
@@ -198,18 +291,19 @@ func (m *wizardModel) handleKubeconfigKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursorCtx++
 		}
 	case " ":
+		if len(m.allContexts) == 0 {
+			return m, nil
+		}
 		ctx := m.allContexts[m.cursorCtx]
 		m.selectedContexts = toggleString(m.selectedContexts, ctx)
 	case "enter":
 		if len(m.selectedContexts) == 0 {
-			// Nothing selected — require at least one.
 			return m, nil
 		}
 		m.step = stepScan
 		m.scanning = true
 		return m, m.startScan()
 	case "a":
-		// Select / deselect all.
 		if len(m.selectedContexts) == len(m.allContexts) {
 			m.selectedContexts = nil
 		} else {
@@ -219,29 +313,343 @@ func (m *wizardModel) handleKubeconfigKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *wizardModel) startScan() tea.Cmd {
+func (m *WizardModel) startScan() tea.Cmd {
+	ctx := m.ctx
+	kubeconfigPath := m.opts.KubeconfigPath
+	contexts := append([]string(nil), m.selectedContexts...)
 	return func() tea.Msg {
-		results := scanContextsConcurrent(m.ctx, m.opts.KubeconfigPath, m.selectedContexts, 30*time.Second)
-		return scanDoneMsg{results: results}
+		results := scanContextsConcurrent(ctx, kubeconfigPath, contexts, 30*time.Second)
+		findings, note, _ := wiring.RunDiscovery(ctx, wiring.DiscoveryOptions{
+			KubeconfigPath: kubeconfigPath,
+			Contexts:       contexts,
+		})
+		return scanDoneMsg{results: results, findings: findings, note: note}
 	}
 }
 
-// --- Step 3: fill-in ---
+// --- Step 3: discovered findings (grouped checkbox) ---
 
-func (m *wizardModel) initFillIn() {
-	// Build suggested prom URL from scan results.
-	var promSuggestion string
-	for _, r := range m.scanResults {
-		if len(r.PrometheusURLs) > 0 {
-			promSuggestion = r.PrometheusURLs[0]
-			break
+func (m *WizardModel) initDiscovered() {
+	groupsByKind := map[string][]discovery.Finding{}
+	groupOf := map[string]discovery.Group{}
+	for _, f := range m.findings {
+		groupsByKind[f.Kind] = append(groupsByKind[f.Kind], f)
+		groupOf[f.Kind] = f.Group
+	}
+	kinds := make([]string, 0, len(groupsByKind))
+	for k := range groupsByKind {
+		kinds = append(kinds, k)
+	}
+	sort.Strings(kinds)
+	m.findingGroups = make([]findingGroup, 0, len(kinds))
+	for _, k := range kinds {
+		m.findingGroups = append(m.findingGroups, findingGroup{
+			Kind:    k,
+			Group:   groupOf[k],
+			Members: groupsByKind[k],
+		})
+		// Default-select groups that have members.
+		m.selectedGroupKinds[k] = true
+	}
+	m.cursorGroup = 0
+}
+
+func (m *WizardModel) handleDiscoveredKey(msg tea.KeyMsg) (*WizardModel, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		m.aborted = true
+		return m, tea.Quit
+	case "up", "k":
+		if m.cursorGroup > 0 {
+			m.cursorGroup--
+		}
+	case "down", "j":
+		if m.cursorGroup < len(m.findingGroups)-1 {
+			m.cursorGroup++
+		}
+	case " ":
+		if len(m.findingGroups) == 0 {
+			return m, nil
+		}
+		g := m.findingGroups[m.cursorGroup]
+		if len(g.Members) == 0 {
+			return m, nil // empty groups are not toggleable
+		}
+		m.selectedGroupKinds[g.Kind] = !m.selectedGroupKinds[g.Kind]
+	case "enter":
+		m.commitSelectedFindings()
+		m.initCredentials()
+		if len(m.credQueue) == 0 {
+			m.initHints()
+			m.step = stepHints
+		} else {
+			m.step = stepCredentials
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// commitSelectedFindings flattens m.findingGroups by the toggle state and
+// stores the result on m.selectedFindings.
+func (m *WizardModel) commitSelectedFindings() {
+	m.selectedFindings = nil
+	for _, g := range m.findingGroups {
+		if !m.selectedGroupKinds[g.Kind] {
+			continue
+		}
+		m.selectedFindings = append(m.selectedFindings, g.Members...)
+	}
+}
+
+// --- Step 4: credentials (stream-inline Q&A) ---
+
+func (m *WizardModel) initCredentials() {
+	m.credQueue = m.credQueue[:0]
+	for i, f := range m.selectedFindings {
+		if f.AuthHint.Kind == discovery.AuthNone || f.AuthHint.Kind == "" {
+			continue
+		}
+		m.credQueue = append(m.credQueue, credPrompt{
+			findingIdx: i,
+			finding:    f,
+			question:   credQuestionFor(f),
+		})
+	}
+	m.credIndex = 0
+	m.credAnswered = m.credAnswered[:0]
+
+	if len(m.credQueue) > 0 {
+		ti := textinput.New()
+		ti.Placeholder = "value or $ENV_VAR"
+		ti.Focus()
+		ti.EchoMode = textinput.EchoPassword
+		ti.EchoCharacter = '*'
+		ti.CharLimit = 256
+		m.credInput = ti
+	}
+}
+
+// credQuestionFor builds the human-readable prompt string for a finding.
+func credQuestionFor(f discovery.Finding) string {
+	target := f.Source.ServiceName
+	if target == "" {
+		target = f.Source.ExternalURL
+	}
+	if target == "" {
+		target = f.EndpointURL
+	}
+	switch f.AuthHint.Kind {
+	case discovery.AuthBasic:
+		return fmt.Sprintf("%s basic-auth password for %s: ", f.Kind, target)
+	case discovery.AuthBearer:
+		return fmt.Sprintf("%s bearer token for %s: ", f.Kind, target)
+	case discovery.AuthPassword:
+		return fmt.Sprintf("%s password for %s: ", f.Kind, target)
+	default:
+		return fmt.Sprintf("%s credential for %s: ", f.Kind, target)
+	}
+}
+
+func (m *WizardModel) handleCredentialsKey(msg tea.KeyMsg) (*WizardModel, tea.Cmd) {
+	if m.credIndex >= len(m.credQueue) {
+		m.initHints()
+		m.step = stepHints
+		return m, nil
+	}
+	switch msg.String() {
+	case "ctrl+c":
+		m.aborted = true
+		return m, tea.Quit
+	case "esc":
+		// Skip this credential — leave the auth env empty.
+		m.credIndex++
+		m.advanceCredOrHints()
+		return m, nil
+	case "enter":
+		raw := strings.TrimSpace(m.credInput.Value())
+		cur := m.credQueue[m.credIndex]
+		if raw == "" {
+			// Treat blank as skip.
+			m.credIndex++
+			m.advanceCredOrHints()
+			return m, nil
+		}
+		envName, mode, err := m.recordCredential(cur, raw)
+		if err != nil {
+			// Surface the error inline by overriding the question text; let
+			// the user retry on the same prompt.
+			m.credQueue[m.credIndex].question = fmt.Sprintf("error: %v — retry: ", err)
+			return m, nil
+		}
+		m.credAnswered = append(m.credAnswered, credAnswer{
+			finding: cur.finding,
+			envVar:  envName,
+			mode:    mode,
+		})
+		m.credInput.SetValue("")
+		m.credIndex++
+		m.advanceCredOrHints()
+		return m, nil
+	default:
+		var cmd tea.Cmd
+		m.credInput, cmd = m.credInput.Update(msg)
+		return m, cmd
+	}
+}
+
+func (m *WizardModel) advanceCredOrHints() {
+	if m.credIndex >= len(m.credQueue) {
+		m.initHints()
+		m.step = stepHints
+	}
+}
+
+// recordCredential applies the input semantics described in the spec:
+//
+//   - `$NAME`     → store env-var reference; do not call os.Getenv now.
+//   - literal     → secrets.Add(generated env name, value); store env-var name.
+//
+// Returns the env-var name that should be threaded into the emitted config.
+func (m *WizardModel) recordCredential(p credPrompt, raw string) (string, string, error) {
+	if strings.HasPrefix(raw, "$") {
+		env := strings.TrimSpace(strings.TrimPrefix(raw, "$"))
+		if env == "" {
+			return "", "", fmt.Errorf("empty env name")
+		}
+		m.authEnvByFindingIdx[p.findingIdx] = env
+		return env, "env", nil
+	}
+	env := generatedEnvVarName(p.finding)
+	if err := secrets.Add(env, raw); err != nil {
+		return "", "", err
+	}
+	m.authEnvByFindingIdx[p.findingIdx] = env
+	return env, "literal", nil
+}
+
+// generatedEnvVarName builds the CLOUDY_<KIND>_<NAME-UPPER>_PWD convention.
+func generatedEnvVarName(f discovery.Finding) string {
+	name := f.Source.ServiceName
+	if name == "" {
+		name = f.Source.ExternalURL
+	}
+	if name == "" {
+		name = f.Kind
+	}
+	upper := strings.ToUpper(sanitizeIdent(name))
+	kind := strings.ToUpper(sanitizeIdent(f.Kind))
+	return fmt.Sprintf("CLOUDY_%s_%s_PWD", kind, upper)
+}
+
+// sanitizeIdent replaces any character outside [A-Za-z0-9_] with `_`.
+func sanitizeIdent(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
 		}
 	}
+	return b.String()
+}
 
-	prom := textinput.New()
-	prom.Placeholder = "http://prometheus.monitoring.svc:9090"
-	prom.SetValue(promSuggestion)
+// --- Step 5: hint loop ---
 
+func (m *WizardModel) initHints() {
+	ti := textinput.New()
+	ti.Placeholder = "kind URL [bearer-env|basic-user:basic-pass-env] or 'done'"
+	ti.Focus()
+	ti.CharLimit = 512
+	m.hintInput = ti
+	m.hintError = ""
+}
+
+func (m *WizardModel) handleHintsKey(msg tea.KeyMsg) (*WizardModel, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		m.aborted = true
+		return m, tea.Quit
+	case "esc":
+		m.advanceHintsToFillIn()
+		return m, nil
+	case "enter":
+		raw := strings.TrimSpace(m.hintInput.Value())
+		if raw == "" || raw == "done" || raw == "skip" {
+			m.advanceHintsToFillIn()
+			return m, nil
+		}
+		if err := m.parseAndStoreHint(raw); err != nil {
+			m.hintError = err.Error()
+		} else {
+			m.hintError = ""
+		}
+		m.hintInput.SetValue("")
+		return m, nil
+	default:
+		var cmd tea.Cmd
+		m.hintInput, cmd = m.hintInput.Update(msg)
+		return m, cmd
+	}
+}
+
+func (m *WizardModel) advanceHintsToFillIn() {
+	m.step = stepFillIn
+	m.initFillIn()
+}
+
+// parseAndStoreHint parses a single-line hint of the form
+// `kind URL [bearer-env|basic-user:basic-pass-env]` and routes it into either
+// httpHints or dbHints depending on Kind.
+func (m *WizardModel) parseAndStoreHint(line string) error {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return fmt.Errorf("expected: kind URL [auth]")
+	}
+	kind := strings.ToLower(fields[0])
+	urlOrDSN := fields[1]
+	tail := ""
+	if len(fields) > 2 {
+		tail = strings.Join(fields[2:], " ")
+	}
+
+	m.hintCounter[kind]++
+	name := fmt.Sprintf("%s-%d", kind, m.hintCounter[kind])
+
+	switch kind {
+	case "postgres", "mysql", "redis":
+		ep := config.DatabaseEndpoint{Name: name, Kind: kind, DSN: urlOrDSN}
+		if tail != "" {
+			// Single-token tail = password env var name.
+			ep.PasswordEnv = strings.TrimSpace(tail)
+		}
+		m.dbHints = append(m.dbHints, ep)
+		return nil
+	case "prom", "prometheus", "loki", "elasticsearch", "tempo", "jaeger", "pprof", "v8":
+		ep := config.HTTPEndpoint{Name: name, Kind: kind, URL: urlOrDSN}
+		if tail != "" {
+			if strings.Contains(tail, ":") {
+				parts := strings.SplitN(tail, ":", 2)
+				ep.BasicUser = strings.TrimSpace(parts[0])
+				ep.BasicPassEnv = strings.TrimSpace(parts[1])
+			} else {
+				ep.BearerEnv = strings.TrimSpace(tail)
+			}
+		}
+		m.httpHints = append(m.httpHints, ep)
+		return nil
+	default:
+		// Roll back the counter so the next valid line of this kind starts at 1.
+		m.hintCounter[kind]--
+		return fmt.Errorf("unknown kind %q", kind)
+	}
+}
+
+// --- Step 6: fill-in ---
+
+func (m *WizardModel) initFillIn() {
 	model := textinput.New()
 	model.Placeholder = "claude-3-5-sonnet-20241022"
 	model.SetValue("claude-3-5-sonnet-20241022")
@@ -254,16 +662,16 @@ func (m *wizardModel) initFillIn() {
 	usd.Placeholder = "0.00 (0 = unlimited)"
 	usd.SetValue("0")
 
-	secrets := textinput.New()
-	secrets.Placeholder = "false"
-	secrets.SetValue("false")
+	secretsIn := textinput.New()
+	secretsIn.Placeholder = "false"
+	secretsIn.SetValue("false")
 
-	m.inputs = []*textinput.Model{&prom, &model, &tokens, &usd, &secrets}
+	m.inputs = []*textinput.Model{&model, &tokens, &usd, &secretsIn}
 	m.focusedInput = 0
 	m.inputs[0].Focus()
 }
 
-func (m *wizardModel) handleFillInKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *WizardModel) handleFillInKey(msg tea.KeyMsg) (*WizardModel, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		m.aborted = true
@@ -282,12 +690,10 @@ func (m *wizardModel) handleFillInKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.focusedInput++
 			m.inputs[m.focusedInput].Focus()
 		} else {
-			// Advance to skills step.
 			m.step = stepSkills
 			m.initSkills()
 		}
 	default:
-		// Forward to focused input.
 		updated, cmd := m.inputs[m.focusedInput].Update(msg)
 		*m.inputs[m.focusedInput] = updated
 		return m, cmd
@@ -295,10 +701,9 @@ func (m *wizardModel) handleFillInKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// --- Step 4: skills ---
+// --- Step 7: skills ---
 
-func (m *wizardModel) initSkills() {
-	// Build profile from scan results for recommendation logic.
+func (m *WizardModel) initSkills() {
 	p := buildProfileFromScans(m.scanResults)
 	m.recommendations = Recommend(p, m.builtinSkills)
 	m.enabledSkills = make(map[string]bool, len(m.recommendations))
@@ -308,7 +713,7 @@ func (m *wizardModel) initSkills() {
 	m.cursorSkill = 0
 }
 
-func (m *wizardModel) handleSkillsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *WizardModel) handleSkillsKey(msg tea.KeyMsg) (*WizardModel, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		m.aborted = true
@@ -333,7 +738,7 @@ func (m *wizardModel) handleSkillsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *wizardModel) startSave() tea.Cmd {
+func (m *WizardModel) startSave() tea.Cmd {
 	return func() tea.Msg {
 		err := m.persistConfig()
 		return saveDoneMsg{err: err}
@@ -342,12 +747,19 @@ func (m *wizardModel) startSave() tea.Cmd {
 
 // --- View ---
 
-func (m *wizardModel) View() string {
+// View renders the current step.
+func (m *WizardModel) View() string {
 	switch m.step {
 	case stepKubeconfig:
 		return m.viewKubeconfig()
 	case stepScan:
 		return m.viewScan()
+	case stepDiscovered:
+		return m.viewDiscovered()
+	case stepCredentials:
+		return m.viewCredentials()
+	case stepHints:
+		return m.viewHints()
 	case stepFillIn:
 		return m.viewFillIn()
 	case stepSkills:
@@ -360,10 +772,14 @@ func (m *wizardModel) View() string {
 	return ""
 }
 
-func (m *wizardModel) viewKubeconfig() string {
+func (m *WizardModel) viewKubeconfig() string {
 	var b strings.Builder
-	b.WriteString(header("Step 1/5 — Select Kubernetes contexts"))
+	b.WriteString(header("Step 1/7 — Select Kubernetes contexts"))
 	b.WriteString("\nUse ↑/↓ to move, SPACE to select, A to toggle all, ENTER to continue.\n\n")
+	if len(m.allContexts) == 0 {
+		b.WriteString("(no kubeconfig contexts found)\n")
+		return b.String()
+	}
 	for i, ctx := range m.allContexts {
 		cursor := "  "
 		if i == m.cursorCtx {
@@ -381,24 +797,110 @@ func (m *wizardModel) viewKubeconfig() string {
 	return b.String()
 }
 
-func (m *wizardModel) viewScan() string {
+func (m *WizardModel) viewScan() string {
 	return fmt.Sprintf("%s\n\n%s  Scanning %d context(s)…\n",
-		header("Step 2/5 — Scanning cluster(s)"),
+		header("Step 2/7 — Scanning cluster(s)"),
 		m.spinner.View(),
 		len(m.selectedContexts),
 	)
 }
 
-func (m *wizardModel) viewFillIn() string {
+func (m *WizardModel) viewDiscovered() string {
+	var b strings.Builder
+	b.WriteString(header("Step 3/7 — Discovered backends"))
+	b.WriteString("\n↑/↓ to move group, SPACE to toggle, ENTER to continue.\n\n")
+	if m.discoveryNote != "" {
+		b.WriteString("  note: " + m.discoveryNote + "\n\n")
+	}
+	if len(m.findingGroups) == 0 {
+		b.WriteString("  (no backends discovered)\n")
+		return b.String()
+	}
+	for i, g := range m.findingGroups {
+		cursor := "  "
+		if i == m.cursorGroup {
+			cursor = "> "
+		}
+		checked := "[ ]"
+		if m.selectedGroupKinds[g.Kind] && len(g.Members) > 0 {
+			checked = "[x]"
+		}
+		count := len(g.Members)
+		var detail string
+		if count == 0 {
+			detail = "no candidates"
+		} else {
+			labels := make([]string, 0, count)
+			for _, f := range g.Members {
+				if f.Source.External {
+					labels = append(labels, f.Source.ExternalURL)
+					continue
+				}
+				if f.Source.Namespace != "" && f.Source.ServiceName != "" {
+					labels = append(labels, fmt.Sprintf("%s/%s", f.Source.Namespace, f.Source.ServiceName))
+				} else if f.EndpointURL != "" {
+					labels = append(labels, f.EndpointURL)
+				} else {
+					labels = append(labels, f.Kind)
+				}
+			}
+			detail = strings.Join(labels, ", ")
+		}
+		b.WriteString(fmt.Sprintf("%s%s %-10s (%d)  %s\n", cursor, checked, g.Kind, count, detail))
+	}
+	return b.String()
+}
+
+func (m *WizardModel) viewCredentials() string {
+	var b strings.Builder
+	b.WriteString(header("Step 4/7 — Credentials"))
+	b.WriteString("\nType a value (echoed as *) or '$ENV_NAME' to reference an env var. ENTER to confirm, ESC to skip.\n\n")
+	for _, ans := range m.credAnswered {
+		target := ans.finding.Source.ServiceName
+		if target == "" {
+			target = ans.finding.Source.ExternalURL
+		}
+		b.WriteString(fmt.Sprintf("  ✓ %s (%s) → %s [%s]\n", ans.finding.Kind, target, ans.envVar, ans.mode))
+	}
+	if m.credIndex < len(m.credQueue) {
+		cur := m.credQueue[m.credIndex]
+		b.WriteString("\n  " + lipgloss.NewStyle().Bold(true).Render(cur.question))
+		b.WriteString("\n  " + m.credInput.View() + "\n")
+	} else {
+		b.WriteString("\n  (no more credentials)\n")
+	}
+	return b.String()
+}
+
+func (m *WizardModel) viewHints() string {
+	var b strings.Builder
+	b.WriteString(header("Step 5/7 — External endpoints"))
+	b.WriteString("\nAdd any external HTTP / DB URL the cluster scan missed. Type 'done' or press ESC to continue.\n\n")
+	if len(m.httpHints)+len(m.dbHints) > 0 {
+		for _, h := range m.httpHints {
+			b.WriteString(fmt.Sprintf("  • %-12s %s  (%s)\n", h.Kind, h.URL, h.Name))
+		}
+		for _, h := range m.dbHints {
+			b.WriteString(fmt.Sprintf("  • %-12s %s  (%s)\n", h.Kind, h.DSN, h.Name))
+		}
+		b.WriteString("\n")
+	}
+	if m.hintError != "" {
+		b.WriteString("  error: " + m.hintError + "\n")
+	}
+	b.WriteString("  > " + m.hintInput.View() + "\n")
+	return b.String()
+}
+
+func (m *WizardModel) viewFillIn() string {
 	labels := []string{
-		"Prometheus URL",
 		"Default model",
 		"Max tokens per session (0=unlimited)",
 		"Max USD per day     (0=unlimited)",
 		"Allow secrets (true/false)",
 	}
 	var b strings.Builder
-	b.WriteString(header("Step 3/5 — Configuration"))
+	b.WriteString(header("Step 6/7 — Configuration"))
 	b.WriteString("\nTAB/↑↓ to move between fields, ENTER to advance, ENTER on last field to continue.\n\n")
 	for i, inp := range m.inputs {
 		label := labels[i]
@@ -410,9 +912,9 @@ func (m *wizardModel) viewFillIn() string {
 	return b.String()
 }
 
-func (m *wizardModel) viewSkills() string {
+func (m *WizardModel) viewSkills() string {
 	var b strings.Builder
-	b.WriteString(header("Step 4/5 — Recommended skills"))
+	b.WriteString(header("Step 7/7 — Recommended skills"))
 	b.WriteString("\nSPACE to toggle, ENTER to confirm.\n\n")
 	for i, rec := range m.recommendations {
 		cursor := "  "
@@ -428,14 +930,14 @@ func (m *wizardModel) viewSkills() string {
 	return b.String()
 }
 
-func (m *wizardModel) viewSave() string {
+func (m *WizardModel) viewSave() string {
 	return fmt.Sprintf("%s\n\n%s  Saving configuration…\n",
-		header("Step 5/5 — Saving"),
+		header("Saving"),
 		m.spinner.View(),
 	)
 }
 
-func (m *wizardModel) viewDone() string {
+func (m *WizardModel) viewDone() string {
 	if m.saveErr != nil {
 		return fmt.Sprintf("\nError saving configuration: %v\n", m.saveErr)
 	}
@@ -444,11 +946,10 @@ func (m *wizardModel) viewDone() string {
 
 // --- persistence ---
 
-func (m *wizardModel) persistConfig() error {
+func (m *WizardModel) persistConfig() error {
 	profile := buildProfileFromScans(m.scanResults)
 	profile.GeneratedAt = time.Now()
 
-	// Collect enabled skill names.
 	var enabled []string
 	for _, r := range m.recommendations {
 		if m.enabledSkills[r.SkillName] {
@@ -461,35 +962,191 @@ func (m *wizardModel) persistConfig() error {
 		return err
 	}
 
-	// Build config.
 	cfg := config.Default()
-	if m.inputs != nil && len(m.inputs) >= 5 {
-		promURL := strings.TrimSpace(m.inputs[0].Value())
-		if promURL != "" {
-			cfg.Prometheus = []config.PrometheusEndpoint{{Name: "default", URL: promURL}}
-		}
-		if v := strings.TrimSpace(m.inputs[1].Value()); v != "" {
+	cfg.Contexts = append([]string(nil), m.selectedContexts...)
+
+	// Apply step-6 fill-in values.
+	if len(m.inputs) >= 4 {
+		if v := strings.TrimSpace(m.inputs[0].Value()); v != "" {
 			cfg.DefaultModel = v
 		}
-		if v := strings.TrimSpace(m.inputs[2].Value()); v != "" {
+		if v := strings.TrimSpace(m.inputs[1].Value()); v != "" {
 			fmt.Sscan(v, &cfg.Safety.MaxTokensPerSession)
 		}
-		if v := strings.TrimSpace(m.inputs[3].Value()); v != "" {
+		if v := strings.TrimSpace(m.inputs[2].Value()); v != "" {
 			fmt.Sscan(v, &cfg.Safety.MaxUSDPerDay)
 		}
-		if strings.TrimSpace(m.inputs[4].Value()) == "true" {
+		if strings.TrimSpace(m.inputs[3].Value()) == "true" {
 			cfg.Safety.AllowSecrets = true
 		}
 	}
 
-	return config.Save(m.opts.ConfigPath, cfg)
+	// Convert findings + hints → typed config slices.
+	logs, traces, proms, pprofEps, nodeEps, dbs := convertFindings(m.selectedFindings, m.authEnvByFindingIdx)
+	cfg.Prometheus = append(cfg.Prometheus, proms...)
+	cfg.Logs = append(cfg.Logs, logs...)
+	cfg.Tracing = append(cfg.Tracing, traces...)
+	cfg.Pprof = append(cfg.Pprof, pprofEps...)
+	cfg.NodeInspectors = append(cfg.NodeInspectors, nodeEps...)
+	cfg.Databases = append(cfg.Databases, dbs...)
+
+	// Layer in step-5 user-supplied hints, dispatched by Kind.
+	for _, h := range m.httpHints {
+		switch strings.ToLower(h.Kind) {
+		case "prom", "prometheus":
+			cfg.Prometheus = append(cfg.Prometheus, config.PrometheusEndpoint{
+				Name:         h.Name,
+				URL:          h.URL,
+				BasicUser:    h.BasicUser,
+				BasicPassEnv: h.BasicPassEnv,
+				BearerEnv:    h.BearerEnv,
+			})
+		case "loki", "elasticsearch":
+			cfg.Logs = append(cfg.Logs, h)
+		case "tempo", "jaeger":
+			cfg.Tracing = append(cfg.Tracing, h)
+		case "pprof":
+			cfg.Pprof = append(cfg.Pprof, h)
+		case "v8":
+			cfg.NodeInspectors = append(cfg.NodeInspectors, h)
+		}
+	}
+	cfg.Databases = append(cfg.Databases, m.dbHints...)
+
+	if err := config.Save(m.opts.ConfigPath, cfg); err != nil {
+		return err
+	}
+
+	// Rebuild registry from the freshly written config + active profile.
+	activeProfile, _ := permission.LoadActive()
+	newReg, _ := wiring.BuildRegistry(wiring.Options{
+		KubeconfigPath: m.opts.KubeconfigPath,
+		Contexts:       cfg.Contexts,
+		Profile:        activeProfile,
+		PromEndpoints:  cfg.Prometheus,
+		Databases:      cfg.Databases,
+		Logs:           cfg.Logs,
+		Tracing:        cfg.Tracing,
+		Pprof:          cfg.Pprof,
+		NodeInspectors: cfg.NodeInspectors,
+	})
+	wiring.Replace(newReg)
+	return nil
+}
+
+// convertFindings is the testable seam that maps a slice of selected Findings
+// (plus an optional env-var map keyed by findings index) into the typed config
+// slices the wizard emits at step 7. It does not touch I/O.
+func convertFindings(findings []discovery.Finding, authEnvByIdx map[int]string) (
+	logs []config.HTTPEndpoint,
+	traces []config.HTTPEndpoint,
+	proms []config.PrometheusEndpoint,
+	pprofEps []config.HTTPEndpoint,
+	nodeEps []config.HTTPEndpoint,
+	dbs []config.DatabaseEndpoint,
+) {
+	counters := map[string]int{}
+	nameFor := func(kind string) string {
+		counters[kind]++
+		return fmt.Sprintf("%s-%d", kind, counters[kind])
+	}
+
+	for i, f := range findings {
+		envName := ""
+		if authEnvByIdx != nil {
+			envName = authEnvByIdx[i]
+		}
+		switch strings.ToLower(f.Kind) {
+		case "prometheus", "prom":
+			ep := config.PrometheusEndpoint{Name: nameFor("prom"), URL: f.EndpointURL}
+			applyAuthToProm(&ep, f.AuthHint.Kind, envName)
+			proms = append(proms, ep)
+		case "loki", "elasticsearch":
+			ep := config.HTTPEndpoint{Name: nameFor(f.Kind), Kind: f.Kind, URL: f.EndpointURL}
+			applyAuthToHTTP(&ep, f.AuthHint.Kind, envName)
+			logs = append(logs, ep)
+		case "tempo", "jaeger":
+			ep := config.HTTPEndpoint{Name: nameFor(f.Kind), Kind: f.Kind, URL: f.EndpointURL}
+			applyAuthToHTTP(&ep, f.AuthHint.Kind, envName)
+			traces = append(traces, ep)
+		case "pprof":
+			ep := config.HTTPEndpoint{Name: nameFor("pprof"), Kind: "pprof", URL: f.EndpointURL}
+			applyAuthToHTTP(&ep, f.AuthHint.Kind, envName)
+			pprofEps = append(pprofEps, ep)
+		case "v8":
+			ep := config.HTTPEndpoint{Name: nameFor("v8"), Kind: "v8", URL: f.EndpointURL}
+			applyAuthToHTTP(&ep, f.AuthHint.Kind, envName)
+			nodeEps = append(nodeEps, ep)
+		case "postgres", "mysql", "redis":
+			ep := config.DatabaseEndpoint{
+				Name: nameFor(f.Kind),
+				Kind: f.Kind,
+				DSN:  dsnForFinding(f),
+			}
+			if envName != "" {
+				ep.PasswordEnv = envName
+			}
+			dbs = append(dbs, ep)
+		}
+	}
+	return
+}
+
+// dsnForFinding returns a DSN string for a DB finding. K8s-sourced findings
+// use the `k8s://ns/svc:port` placeholder that the DB clients understand.
+func dsnForFinding(f discovery.Finding) string {
+	if f.EndpointURL != "" {
+		return f.EndpointURL
+	}
+	if f.Source.External {
+		return f.Source.ExternalURL
+	}
+	if f.Source.Namespace != "" && f.Source.ServiceName != "" {
+		return fmt.Sprintf("k8s://%s/%s", f.Source.Namespace, f.Source.ServiceName)
+	}
+	return ""
+}
+
+func applyAuthToProm(ep *config.PrometheusEndpoint, kind discovery.AuthKind, env string) {
+	if env == "" {
+		return
+	}
+	switch kind {
+	case discovery.AuthBearer:
+		ep.BearerEnv = env
+	case discovery.AuthBasic:
+		ep.BasicPassEnv = env
+	}
+}
+
+func applyAuthToHTTP(ep *config.HTTPEndpoint, kind discovery.AuthKind, env string) {
+	if env == "" {
+		return
+	}
+	switch kind {
+	case discovery.AuthBearer:
+		ep.BearerEnv = env
+	case discovery.AuthBasic:
+		ep.BasicPassEnv = env
+	}
 }
 
 // --- AutoRun (non-interactive) ---
 
-func (m *wizardModel) runAutomatic() error {
+// runAutomatic skips steps 3-5 entirely (no findings selection, no credential
+// prompts, no hints) and goes straight from scan to save with defaults.
+func (m *WizardModel) runAutomatic() error {
 	results := scanContextsConcurrent(m.ctx, m.opts.KubeconfigPath, m.selectedContexts, 30*time.Second)
 	m.scanResults = results
+	// Build the default skills list as if the user had hit enter on step 7.
+	p := buildProfileFromScans(results)
+	m.recommendations = Recommend(p, m.builtinSkills)
+	m.enabledSkills = make(map[string]bool, len(m.recommendations))
+	for _, r := range m.recommendations {
+		m.enabledSkills[r.SkillName] = true
+	}
+	// initFillIn populates m.inputs with default values used by persistConfig.
+	m.initFillIn()
 	return m.persistConfig()
 }
 
@@ -528,7 +1185,6 @@ func listKubeconfigContexts(kubeconfigPath string) ([]string, error) {
 		&clientcmd.ConfigOverrides{},
 	).RawConfig()
 	if err != nil {
-		// If no kubeconfig exists at all, return empty without error.
 		if os.IsNotExist(err) {
 			return nil, nil
 		}

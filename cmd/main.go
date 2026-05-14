@@ -15,7 +15,9 @@ import (
 
 	"github.com/rlaope/cloudy/internal/cli"
 	"github.com/rlaope/cloudy/internal/config"
+	"github.com/rlaope/cloudy/internal/llm"
 	"github.com/rlaope/cloudy/internal/permission"
+	"github.com/rlaope/cloudy/internal/secrets"
 	"github.com/rlaope/cloudy/internal/session"
 	"github.com/rlaope/cloudy/internal/tui"
 	"github.com/rlaope/cloudy/internal/wiring"
@@ -36,26 +38,35 @@ func bootTUI(stdout, stderr io.Writer) error {
 		return nil
 	}
 
-	cfg, err := config.Load(config.Path())
-	if err != nil {
-		fmt.Fprintf(stderr, "cloudy: config error: %v\n", err)
-		return nil
-	}
-	if cfg.DefaultModel == "" {
-		fmt.Fprintln(stderr, "cloudy: no model configured — run `cloudy setup` to get started")
-		return nil
-	}
+	// Export any persisted credentials before building provider clients so
+	// that *_env config fields resolve correctly.
+	_ = secrets.Load()
 
-	provider, modelID, err := wiring.BuildProvider(cfg.DefaultModel)
-	if err != nil {
-		fmt.Fprintf(stderr, "cloudy: %v\n", err)
-		return nil
+	// Detect first run: config file is absent when os.Stat returns not-exist.
+	cfgPath := config.Path()
+	_, statErr := os.Stat(cfgPath)
+	firstRun := os.IsNotExist(statErr)
+
+	cfg, _ := config.Load(cfgPath) // missing file returns Default() + nil err
+
+	var (
+		provider    llm.Provider
+		modelID     string
+		providerErr error
+	)
+	if cfg.DefaultModel != "" {
+		provider, modelID, providerErr = wiring.BuildProvider(cfg.DefaultModel)
+		if providerErr != nil {
+			fmt.Fprintf(stderr, "cloudy: %v\n", providerErr)
+			// Do NOT return — proceed into TUI with provider=nil so the user
+			// can run /setup to fix the configuration.
+		}
 	}
 
 	skillReg, err := wiring.BuildSkillRegistry()
 	if err != nil {
 		fmt.Fprintf(stderr, "cloudy: skills: %v\n", err)
-		return nil
+		// Non-fatal: continue without user skills.
 	}
 
 	activeProfile, _ := permission.LoadActive()
@@ -71,6 +82,7 @@ func bootTUI(stdout, stderr io.Writer) error {
 	if activeProfile != nil {
 		fmt.Fprintf(stderr, "cloudy: profile=%s\n", activeProfile.Name)
 	}
+	wiring.Replace(toolReg)
 
 	sess, err := session.New("")
 	if err != nil {
@@ -88,6 +100,7 @@ func bootTUI(stdout, stderr io.Writer) error {
 		Session:    sess,
 		InitialCtx: ctxName,
 		InitialNS:  ns,
+		FirstRun:   firstRun,
 	}
 	return tui.Run(context.Background(), deps)
 }

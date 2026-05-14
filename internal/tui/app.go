@@ -1,16 +1,28 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/rlaope/cloudy/internal/buildinfo"
+	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/llm"
 	"github.com/rlaope/cloudy/internal/session"
+	"github.com/rlaope/cloudy/internal/setup"
 	"github.com/rlaope/cloudy/internal/skills"
 	"github.com/rlaope/cloudy/internal/tools"
+)
+
+// uiMode discriminates between the main interactive chat and the embedded
+// /setup wizard.
+type uiMode int
+
+const (
+	modeMain uiMode = iota
+	modeSetup
 )
 
 // ctrlCTimeout is the window within which two Ctrl+C presses quit the program.
@@ -32,6 +44,9 @@ type Deps struct {
 	InitialCtx string
 	// InitialNS is the initial namespace (best-effort).
 	InitialNS string
+	// FirstRun is true when no config file exists yet, causing the TUI to
+	// display the full welcome banner and prompt the user to run /setup.
+	FirstRun bool
 	// AgentRunner is the function called to run the agent on user input.
 	// Injected by run.go so that tests can stub it. cancel is closed by the
 	// TUI when the user cancels the in-flight request.
@@ -106,6 +121,15 @@ type Model struct {
 	// running indicates an agent run is in progress.
 	running bool
 
+	// mode controls which sub-view is rendered/routed.
+	mode uiMode
+	// welcome renders the banner above an empty stream in main mode.
+	welcome WelcomeModel
+	// setupWiz holds the embedded setup wizard when mode == modeSetup.
+	setupWiz    *setup.WizardModel
+	setupCtx    context.Context
+	setupCancel context.CancelFunc
+
 	width  int
 	height int
 	ready  bool
@@ -124,6 +148,8 @@ func NewModel(deps Deps) Model {
 		deps:    deps,
 		keys:    keys,
 		cancel:  func() {},
+		mode:    modeMain,
+		welcome: NewWelcomeModel(deps.FirstRun, deps.InitialCtx),
 	}
 }
 
@@ -133,6 +159,20 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+
+	// While the setup wizard owns the screen, forward every non-resize
+	// message to it. WindowSizeMsg still flows through to the sub-models
+	// below so the underlying layout stays correct on return.
+	if m.mode == modeSetup && m.setupWiz != nil {
+		if _, ok := msg.(tea.WindowSizeMsg); !ok {
+			var cmd tea.Cmd
+			m.setupWiz, cmd = m.setupWiz.Update(msg)
+			if m.setupWiz.Done() || m.setupWiz.Aborted() {
+				m.exitSetup()
+			}
+			return m, cmd
+		}
+	}
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -228,6 +268,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if strings.HasPrefix(val, "/scope ") {
 			return m, m.handleScopeCmd(strings.TrimPrefix(val, "/scope "))
 		}
+		if val == "/setup" || strings.HasPrefix(val, "/setup ") {
+			return m, m.enterSetup()
+		}
 		return m, m.runAgent(val)
 
 	case paletteActionMsg:
@@ -283,11 +326,18 @@ func (m Model) View() string {
 		return "loading…"
 	}
 
+	if m.mode == modeSetup && m.setupWiz != nil {
+		return m.setupWiz.View()
+	}
+
 	header := m.header.View()
-	stream := m.stream.View()
+	body := m.stream.View()
+	if m.stream.Empty() {
+		body = m.welcome.View() + "\n" + body
+	}
 	prompt := m.prompt.View()
 
-	view := header + "\n" + stream + "\n" + prompt
+	view := header + "\n" + body + "\n" + prompt
 
 	// Overlay palette if active.
 	if m.palette.Active() {
@@ -494,10 +544,68 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		m.stream, sCmd = m.stream.Update(streamTokenMsg("replay not yet implemented\n"))
 		m.prompt.SetValue("")
 		return sCmd
+
+	case "setup":
+		m.prompt.SetValue("")
+		return m.enterSetup()
 	}
 
 	m.prompt.SetValue("")
 	return nil
+}
+
+// enterSetup transitions the model into modeSetup, constructs a fresh wizard
+// bound to a cancellable context, and returns the wizard's Init command.
+func (m *Model) enterSetup() tea.Cmd {
+	m.setupCtx, m.setupCancel = context.WithCancel(context.Background())
+	m.setupWiz = setup.NewWizardModel(m.setupCtx, setup.WizardOptions{
+		ConfigPath:  config.Path(),
+		ProfilePath: config.ProfilePath(),
+	})
+	m.mode = modeSetup
+	m.prompt.SetValue("")
+	if m.setupWiz == nil {
+		// Defensive: if the wizard could not be created, fall back to main.
+		m.exitSetup()
+		return nil
+	}
+	return m.setupWiz.Init()
+}
+
+// exitSetup returns the model to modeMain, cancels the wizard context, writes
+// a status line to the stream based on SaveErr(), and resets the welcome
+// banner to its compact form.
+func (m *Model) exitSetup() {
+	aborted := false
+	var saveErr error
+	if m.setupWiz != nil {
+		aborted = m.setupWiz.Aborted()
+		saveErr = m.setupWiz.SaveErr()
+	}
+
+	if m.setupCancel != nil {
+		m.setupCancel()
+	}
+	m.setupCancel = nil
+	m.setupCtx = nil
+	m.setupWiz = nil
+	m.mode = modeMain
+
+	var line string
+	switch {
+	case saveErr != nil:
+		line = "[setup error: " + saveErr.Error() + "]\n"
+	case aborted:
+		line = "[setup aborted]\n"
+	default:
+		line = "[setup complete]\n"
+	}
+	var sCmd tea.Cmd
+	m.stream, sCmd = m.stream.Update(streamTokenMsg(line))
+	_ = sCmd
+
+	// After /setup the user has been here before — drop the full banner.
+	m.welcome = NewWelcomeModel(false, m.deps.InitialCtx)
 }
 
 // handleScopeCmd parses and applies a /scope argument, emitting confirmation.

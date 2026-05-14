@@ -2,22 +2,23 @@ package tui
 
 import (
 	"context"
-	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/rlaope/cloudy/internal/agent"
 	"github.com/rlaope/cloudy/internal/llm"
+	"github.com/rlaope/cloudy/internal/tools"
+	"github.com/rlaope/cloudy/internal/wiring"
 )
 
 // Run builds the TUI Model, wires the agent runner, and starts the bubbletea
 // program with the alternate screen. It blocks until the user quits.
+// When deps.Provider is nil (no config yet) the TUI still opens so the user
+// can run /setup from inside.
 func Run(ctx context.Context, deps Deps) error {
-	if deps.Provider == nil {
-		return fmt.Errorf("no LLM provider configured — run `cloudy setup` first")
+	if deps.Provider != nil {
+		deps.AgentRunner = makeAgentRunner(ctx, deps.Provider, deps)
 	}
-
-	deps.AgentRunner = makeAgentRunner(ctx, deps.Provider, deps)
 
 	m := NewModel(deps)
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -47,8 +48,13 @@ func makeAgentRunner(rootCtx context.Context, provider llm.Provider, deps Deps) 
 		ag, err := agent.New(agent.Options{
 			Provider: provider,
 			Model:    deps.Model,
-			Registry: deps.Tools,
-			History:  history,
+			RegistryFn: func() *tools.Registry {
+				if r := wiring.Current(); r != nil {
+					return r
+				}
+				return deps.Tools
+			},
+			History: history,
 		})
 		if err != nil {
 			emit(AgentEvent{Err: err, Done: true})
