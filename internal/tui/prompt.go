@@ -44,9 +44,14 @@ func newPromptModel(keys keyMap) PromptModel {
 	ta := textarea.New()
 	ta.Placeholder = "ask cloudy…"
 	ta.CharLimit = 0
-	ta.SetHeight(3)
+	// Start at one row like Claude — grows as the operator inserts newlines.
+	ta.SetHeight(1)
 	ta.SetWidth(80)
 	ta.ShowLineNumbers = false
+	// Single-character chevron at the start of each line: matches Claude's
+	// "> " input affordance. Two columns wide (chevron + space) so the
+	// caret sits where the user expects.
+	ta.Prompt = "> "
 	ta.Focus()
 
 	return PromptModel{
@@ -111,19 +116,27 @@ func (p PromptModel) Update(msg tea.Msg) (PromptModel, tea.Cmd) {
 			p.histIdx = -1
 			p.draft = ""
 			p.ta.SetValue("")
-			p.ta.SetHeight(3)
+			p.ta.SetHeight(1) // collapse back to one row on submit
 			return p, func() tea.Msg { return submitMsg(val) }
 
-		case "shift+enter":
+		case "shift+enter", "alt+enter", "ctrl+j":
+			// Newline. Three keys are accepted because terminal emulators
+			// disagree on which sequence Shift+Enter actually sends:
+			//   - iTerm2 with "report modifiers" sends shift+enter literally.
+			//   - macOS Terminal.app sends a bare CR (indistinguishable from
+			//     plain Enter); Option+Enter is the realistic alternative.
+			//   - tmux / older xterms expose Ctrl+J as the canonical "send
+			//     a literal LF without submitting" sequence.
 			if p.inSearch {
 				return p, nil
 			}
-			// Insert newline and grow textarea up to max.
-			p.ta, cmd = p.ta.Update(msg)
-			lines := strings.Count(p.ta.Value(), "\n") + 1
-			if lines < maxPromptLines {
-				p.ta.SetHeight(lines + 1)
-			}
+			// Forward an Alt+Enter event because bubbles/textarea binds
+			// InsertNewline to that exact key combination; other newline-ish
+			// shortcuts the operator pressed are routed through the same
+			// canonical form so the textarea always sees something it knows
+			// how to insert.
+			p.ta, cmd = p.ta.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+			p.syncHeight()
 			return p, cmd
 
 		case "up":
@@ -188,6 +201,7 @@ func (p PromptModel) Update(msg tea.Msg) (PromptModel, tea.Cmd) {
 	}
 
 	p.ta, cmd = p.ta.Update(msg)
+	p.syncHeight()
 
 	// Auto-detect slash prefix to signal palette.
 	val := p.ta.Value()
@@ -197,6 +211,22 @@ func (p PromptModel) Update(msg tea.Msg) (PromptModel, tea.Cmd) {
 	}
 
 	return p, cmd
+}
+
+// syncHeight resizes the textarea to match the current line count, bounded
+// by [1, maxPromptLines]. Called after every Update so the input box grows
+// (and shrinks) with the operator's typing — matching Claude's prompt UX.
+func (p *PromptModel) syncHeight() {
+	lines := strings.Count(p.ta.Value(), "\n") + 1
+	if lines < 1 {
+		lines = 1
+	}
+	if lines > maxPromptLines {
+		lines = maxPromptLines
+	}
+	if p.ta.Height() != lines {
+		p.ta.SetHeight(lines)
+	}
 }
 
 // Value returns the current textarea content.

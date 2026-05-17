@@ -58,10 +58,17 @@ func (m WelcomeModel) renderFullBanner() string {
 ╚██████╗███████╗╚██████╔╝╚██████╔╝██████╔╝   ██║
  ╚═════╝╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝    ╚═╝`
 
+	// Sky-blue brand colour for the banner. 117 (SkyBlue1) reads well on
+	// both light and dark terminals without competing with the body text.
+	asciiStyle := lipgloss.NewStyle()
+	if !m.noColor {
+		asciiStyle = asciiStyle.Foreground(lipgloss.Color("117")).Bold(true)
+	}
+
 	tagline := fmt.Sprintf("cloudy %s — read-only multi-cluster SRE agent", buildinfo.Version)
 	taglineStyle := lipgloss.NewStyle()
 	if !m.noColor {
-		taglineStyle = taglineStyle.Foreground(lipgloss.Color("6")) // cyan
+		taglineStyle = taglineStyle.Foreground(lipgloss.Color("153")) // lighter sky blue
 	}
 
 	// Command hints with dim glyphs
@@ -77,7 +84,7 @@ func (m WelcomeModel) renderFullBanner() string {
 	}
 
 	lines := []string{
-		ascii,
+		asciiStyle.Render(ascii),
 		"",
 		"  " + taglineStyle.Render(tagline),
 		"",
@@ -92,24 +99,29 @@ func (m WelcomeModel) renderFullBanner() string {
 
 func (m WelcomeModel) renderCompactBanner() string {
 	version := buildinfo.Version
-	parts := []string{
-		"cloudy " + version,
-	}
 
-	// Add context only if it's not empty
-	if m.lastContext != "" {
-		parts = append(parts, "ctx="+m.lastContext)
-	}
-
-	parts = append(parts, "/help", "/setup")
-
-	content := strings.Join(parts, " · ")
-
-	// Apply dim style if color is enabled
 	if m.noColor {
-		return content
+		parts := []string{"cloudy " + version}
+		if m.lastContext != "" {
+			parts = append(parts, "ctx="+m.lastContext)
+		}
+		parts = append(parts, "/help", "/setup")
+		return strings.Join(parts, " · ")
 	}
 
-	style := lipgloss.NewStyle().Foreground(lipgloss.Color("8")) // dim
-	return style.Render(content)
+	// Brand the "cloudy <ver>" segment in sky blue; keep the rest dim so the
+	// compact banner looks deliberate rather than uniformly grey.
+	brand := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("117")).Bold(true).
+		Render("cloudy " + version)
+
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	sep := dim.Render(" · ")
+
+	rest := []string{}
+	if m.lastContext != "" {
+		rest = append(rest, "ctx="+m.lastContext)
+	}
+	rest = append(rest, "/help", "/setup")
+	return brand + sep + dim.Render(strings.Join(rest, " · "))
 }
