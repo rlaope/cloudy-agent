@@ -377,11 +377,11 @@ func TestModel_PaletteIncludes_Scope(t *testing.T) {
 	m := NewModel(makeDeps())
 	next, _ := m.Update(windowMsg())
 	m = next.(Model)
+	_ = m
 
 	found := false
 	for _, item := range builtinItems {
-		pi, ok := item.(paletteItem)
-		if ok && pi.title == "scope" {
+		if item.title == "scope" {
 			found = true
 			break
 		}
@@ -542,13 +542,86 @@ func TestSetupPaletteAction_EntersSetup(t *testing.T) {
 func TestPaletteIncludes_Setup(t *testing.T) {
 	found := false
 	for _, item := range builtinItems {
-		pi, ok := item.(paletteItem)
-		if ok && pi.title == "setup" {
+		if item.title == "setup" {
 			found = true
 			break
 		}
 	}
 	if !found {
 		t.Error("palette builtinItems should include a 'setup' item")
+	}
+}
+
+// TestPaletteIncludes_NewCommands verifies the new v0.4-UX commands
+// (/exit, /set-up, /update) are registered so palette tab-completion can
+// pick them up alongside the original /quit, /setup, etc.
+func TestPaletteIncludes_NewCommands(t *testing.T) {
+	want := map[string]bool{"exit": false, "set-up": false, "update": false}
+	for _, item := range builtinItems {
+		if _, ok := want[item.title]; ok {
+			want[item.title] = true
+		}
+	}
+	for cmd, present := range want {
+		if !present {
+			t.Errorf("builtinItems missing %q", cmd)
+		}
+	}
+}
+
+// TestPaletteAction_Exit_Quits confirms the /exit alias produces a tea.Quit
+// command, matching the /quit behaviour the user already relied on.
+func TestPaletteAction_Exit_Quits(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	cmd := m.handlePaletteAction(paletteActionMsg{cmd: "exit"})
+	if cmd == nil {
+		t.Fatal("exit action should return a tea.Quit command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("exit action should produce tea.QuitMsg, got %T", cmd())
+	}
+}
+
+// TestPaletteAction_Update_WritesInstructions confirms /update prints a
+// guide rather than attempting to rewrite the running binary.
+func TestPaletteAction_Update_WritesInstructions(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	cmd := m.handlePaletteAction(paletteActionMsg{cmd: "update"})
+	if cmd != nil {
+		cmd()
+	}
+
+	out := m.stream.content.String()
+	if !strings.Contains(out, "cloudy update") {
+		t.Errorf("update action should write the update guide header, got %q", out)
+	}
+	if !strings.Contains(out, "make build") {
+		t.Errorf("update action should mention 'make build', got %q", out)
+	}
+	if !strings.Contains(out, "/exit") {
+		t.Errorf("update action should reference /exit, got %q", out)
+	}
+}
+
+// TestPaletteAction_SetUpAlias_EntersSetup confirms /set-up routes to the
+// same wizard entry point as /setup.
+func TestPaletteAction_SetUpAlias_EntersSetup(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	cmd := m.handlePaletteAction(paletteActionMsg{cmd: "set-up"})
+	if cmd != nil {
+		cmd()
+	}
+
+	if m.mode != modeSetup {
+		t.Errorf("set-up alias should enter modeSetup, got %v", m.mode)
 	}
 }

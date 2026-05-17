@@ -3,10 +3,12 @@ package tui
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/rlaope/cloudy/internal/buildinfo"
 	"github.com/rlaope/cloudy/internal/config"
@@ -223,11 +225,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(hCmd, sCmd, prCmd, paCmd)
 
 	case tea.KeyMsg:
-		// Palette is active — route all keys there first.
+		// Palette is active. Nav keys go to the palette; text keys flow into
+		// the prompt so the user can keep typing past the '/', and the
+		// palette then refilters against the new prompt value.
 		if m.palette.Active() {
-			var cmd tea.Cmd
-			m.palette, cmd = m.palette.Update(msg)
-			return m, cmd
+			switch msg.String() {
+			case "up", "down", "enter", "tab", "esc", "ctrl+c":
+				var cmd tea.Cmd
+				m.palette, cmd = m.palette.Update(msg)
+				return m, cmd
+			}
+			var prCmd tea.Cmd
+			m.prompt, prCmd = m.prompt.Update(msg)
+			val := m.prompt.Value()
+			if strings.HasPrefix(val, "/") {
+				m.palette.Refilter(val)
+			} else {
+				m.palette.Close()
+			}
+			return m, prCmd
 		}
 
 		// Approval gate has priority over normal key handling: while a
@@ -336,8 +352,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handlePaletteAction(msg)
 
 	case paletteDismissMsg:
-		// Palette closed without action; restore focus to prompt.
+		// Palette closed without action; drop any leading '/' the user typed
+		// so the prompt doesn't keep re-triggering the suggestions on the
+		// next character.
+		if strings.HasPrefix(m.prompt.Value(), "/") {
+			m.prompt.SetValue("")
+		}
 		return m, nil
+
+	case paletteEscalateMsg:
+		// Palette forwarded a key it does not handle (currently only Ctrl+C).
+		// Re-apply the key to the main Update so Ctrl+C cancels the request
+		// or double-tap-quits the program regardless of palette state.
+		return m.Update(msg.key)
 
 	case agentEventMsg:
 		evt := AgentEvent(msg)
@@ -390,30 +417,53 @@ func (m Model) View() string {
 	}
 
 	header := m.header.View()
+	prompt := m.prompt.View()
+	paletteView := m.palette.View()
+
+	// Approval banner sits directly above the prompt (Claude-style) so the
+	// operator cannot miss it. Composed at View time so the agent goroutine
+	// never has to touch the stream's Builder.
+	var banner string
+	if m.pendingApproval != nil {
+		banner = fmt.Sprintf("⚠ approval required: %s(%s) — RiskHigh\n  press [y] to approve, [n] or Esc to deny",
+			m.pendingApproval.Tool, m.pendingApproval.Args)
+	}
+
+	// Compute the body height by subtracting every other component's actual
+	// rendered height from the terminal height. lipgloss.Height counts rows
+	// correctly even when content wraps, so this stays correct in narrow
+	// split panes.
+	headerH := lipgloss.Height(header)
+	promptH := lipgloss.Height(prompt)
+	paletteH := lipgloss.Height(paletteView)
+	bannerH := 0
+	if banner != "" {
+		bannerH = lipgloss.Height(banner)
+	}
+	bodyH := m.height - headerH - promptH - paletteH - bannerH
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	m.stream.SetViewportSize(m.width, bodyH)
+
 	body := m.stream.View()
 	if m.stream.Empty() {
 		body = m.welcome.View() + "\n" + body
 	}
-	prompt := m.prompt.View()
 
-	view := header + "\n" + body + "\n" + prompt
-
-	// Overlay palette if active.
-	if m.palette.Active() {
-		// Simple overlay: render palette below header.
-		view = header + "\n" + m.palette.View() + "\n" + prompt
+	// Composed bottom-up: header → body (stream/welcome) → optional approval
+	// banner → prompt → optional palette suggestions. Palette below prompt
+	// matches Claude's slash-menu placement and frees the body area above.
+	parts := []string{header, body}
+	if banner != "" {
+		parts = append(parts, banner)
+	}
+	parts = append(parts, prompt)
+	if paletteView != "" {
+		parts = append(parts, paletteView)
 	}
 
-	// Approval banner sits directly above the prompt so the operator sees
-	// it without scrolling. Composed at View time (not Update time) so the
-	// agent goroutine never has to touch the stream's Builder.
-	if m.pendingApproval != nil {
-		banner := fmt.Sprintf("\n⚠ approval required: %s(%s) — RiskHigh\n  press [y] to approve, [n] or Esc to deny",
-			m.pendingApproval.Tool, m.pendingApproval.Args)
-		view = view + banner
-	}
-
-	return view
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 // runAgent starts the agent in a goroutine and returns a tea.Cmd that delivers
@@ -537,8 +587,14 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		m.prompt.SetValue("")
 		return sCmd
 
-	case "quit":
+	case "quit", "exit":
 		return tea.Quit
+
+	case "update":
+		var sCmd tea.Cmd
+		m.stream, sCmd = m.stream.Update(streamTokenMsg(renderUpdateInstructions()))
+		m.prompt.SetValue("")
+		return sCmd
 
 	case "help":
 		help := helpText()
@@ -616,7 +672,7 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		m.prompt.SetValue("")
 		return sCmd
 
-	case "setup":
+	case "setup", "set-up":
 		m.prompt.SetValue("")
 		return m.enterSetup()
 	}
@@ -679,6 +735,27 @@ func (m *Model) exitSetup() {
 	m.welcome = NewWelcomeModel(false, m.deps.InitialCtx)
 }
 
+// renderUpdateInstructions returns a self-update guide rather than running git
+// or make from inside the agent process: a long-running binary cannot safely
+// overwrite itself on disk, and silently triggering a rebuild while the user
+// is mid-session would be surprising. Print the commands instead and let the
+// operator decide when to apply them.
+func renderUpdateInstructions() string {
+	var b strings.Builder
+	b.WriteString("\n--- cloudy update ---\n")
+	fmt.Fprintf(&b, "  current : %s  (%s/%s)\n", buildinfo.Version, runtime.GOOS, runtime.GOARCH)
+	b.WriteString("  latest  : https://github.com/rlaope/cloudy/releases/latest\n\n")
+	b.WriteString("Run from your cloudy clone (do NOT edit the running binary):\n\n")
+	b.WriteString("  git fetch --tags origin\n")
+	b.WriteString("  git checkout v0.4.0          # or the tag from the link above\n")
+	b.WriteString("  make build\n")
+	b.WriteString("  ./cloudy --version\n\n")
+	b.WriteString("If cloudy is on $PATH via a symlink (e.g. /usr/local/bin/cloudy → repo)\n")
+	b.WriteString("the rebuild propagates automatically; otherwise copy the new binary into\n")
+	b.WriteString("place after exit. Use /exit to leave this session first.\n")
+	return b.String()
+}
+
 // handleScopeCmd parses and applies a /scope argument, emitting confirmation.
 func (m *Model) handleScopeCmd(arg string) tea.Cmd {
 	sc, err := parseScope(arg)
@@ -722,26 +799,29 @@ func helpText() string {
 
   Enter          submit prompt
   Shift+Enter    insert newline
-  Up / Down      navigate history
+  Up / Down      navigate history (or palette when open)
   Ctrl+R         incremental history search
   Ctrl+L         clear stream
-  Ctrl+C         cancel in-flight request
-  Ctrl+C×2       quit
-  Esc            cancel request
-  Tab            open command palette
+  Ctrl+C         cancel in-flight request (works even when palette is open)
+  Ctrl+C×2       quit cloudy
+  Esc            cancel request / close palette
+  Tab            open command palette / tab-complete selected command
   PageUp/Dn      scroll output
 
-commands (type / to open palette):
+commands (type / to open suggestions; arrow keys to pick):
+  /setup              run the discovery wizard (alias: /set-up)
   /skill <name>       switch active skill
   /use <ctx>          switch kubeconfig context
   /model <id>         switch model
   /scope ns=<csv>     narrow session to namespaces (comma-separated)
   /scope ctx=<csv>    narrow session to contexts (comma-separated)
   /scope reset        drop session scope
+  /tools              list registered tool groups + skip reasons
   /replay <session>   replay session
   /clear              clear output
-  /quit               exit
+  /update             show install commands for the latest cloudy release
   /help               show this text
   /version            print version
+  /quit               exit cloudy (alias: /exit)
 `
 }
