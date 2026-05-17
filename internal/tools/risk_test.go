@@ -8,9 +8,9 @@ import (
 
 type riskNamedTool struct{ n string }
 
-func (r riskNamedTool) Name() string                                            { return r.n }
-func (r riskNamedTool) Description() string                                     { return "" }
-func (r riskNamedTool) Schema() json.RawMessage                                  { return json.RawMessage(`{}`) }
+func (r riskNamedTool) Name() string            { return r.n }
+func (r riskNamedTool) Description() string     { return "" }
+func (r riskNamedTool) Schema() json.RawMessage { return json.RawMessage(`{}`) }
 func (r riskNamedTool) Run(context.Context, json.RawMessage) (Observation, error) {
 	return Observation{}, nil
 }

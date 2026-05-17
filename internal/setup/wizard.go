@@ -128,21 +128,21 @@ type WizardModel struct {
 	cursorCtx        int
 
 	// Step 2 — scan
-	scanning     bool
-	scanResults  []ContextResult
-	findings     []discovery.Finding
+	scanning      bool
+	scanResults   []ContextResult
+	findings      []discovery.Finding
 	discoveryNote string
 
 	// Step 3 — discovered findings (grouped checkbox)
-	findingGroups       []findingGroup // sorted by Kind
-	selectedGroupKinds  map[string]bool
-	cursorGroup         int
+	findingGroups      []findingGroup // sorted by Kind
+	selectedGroupKinds map[string]bool
+	cursorGroup        int
 
 	// Step 4 — credentials (stream-inline Q&A)
-	credQueue        []credPrompt
-	credIndex        int
-	credInput        textinput.Model
-	credAnswered     []credAnswer
+	credQueue    []credPrompt
+	credIndex    int
+	credInput    textinput.Model
+	credAnswered []credAnswer
 	// authEnvByFindingIdx maps an index into m.selectedFindings to the env-var
 	// name that should be threaded into config emission at step 7.
 	authEnvByFindingIdx map[int]string

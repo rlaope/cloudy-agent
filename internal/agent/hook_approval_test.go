@@ -12,18 +12,18 @@ import (
 
 type fakeLowRisk struct{}
 
-func (fakeLowRisk) Name() string                                            { return "k8s.list_pods" }
-func (fakeLowRisk) Description() string                                     { return "" }
-func (fakeLowRisk) Schema() json.RawMessage                                  { return json.RawMessage(`{}`) }
+func (fakeLowRisk) Name() string            { return "k8s.list_pods" }
+func (fakeLowRisk) Description() string     { return "" }
+func (fakeLowRisk) Schema() json.RawMessage { return json.RawMessage(`{}`) }
 func (fakeLowRisk) Run(context.Context, json.RawMessage) (tools.Observation, error) {
 	return tools.Observation{}, nil
 }
 
 type fakeProfile struct{}
 
-func (fakeProfile) Name() string                                            { return "jvm.async_profile" }
-func (fakeProfile) Description() string                                     { return "" }
-func (fakeProfile) Schema() json.RawMessage                                  { return json.RawMessage(`{}`) }
+func (fakeProfile) Name() string            { return "jvm.async_profile" }
+func (fakeProfile) Description() string     { return "" }
+func (fakeProfile) Schema() json.RawMessage { return json.RawMessage(`{}`) }
 func (fakeProfile) Run(context.Context, json.RawMessage) (tools.Observation, error) {
 	return tools.Observation{}, nil
 }

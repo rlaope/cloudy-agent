@@ -131,10 +131,10 @@ func TestPathResolution(t *testing.T) {
 			expected:   "/opt/cloudy/secrets",
 		},
 		{
-			name:      "XDG_CONFIG_HOME second precedence",
+			name:       "XDG_CONFIG_HOME second precedence",
 			cloudyHome: "",
-			xdgConfig: "/etc/xdg",
-			expected:  "/etc/xdg/cloudy/secrets",
+			xdgConfig:  "/etc/xdg",
+			expected:   "/etc/xdg/cloudy/secrets",
 		},
 	}
 

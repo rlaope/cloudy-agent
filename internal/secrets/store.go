@@ -78,7 +78,7 @@ func Load() error {
 			continue
 		}
 
-		os.Setenv(key, value)
+		_ = os.Setenv(key, value)
 		loaded[key] = true
 	}
 
@@ -175,7 +175,7 @@ func Add(key, value string) error {
 	}
 
 	// Update process environment
-	os.Setenv(key, value)
+	_ = os.Setenv(key, value)
 
 	// Update loaded map
 	mu.Lock()

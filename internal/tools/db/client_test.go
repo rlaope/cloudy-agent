@@ -17,13 +17,13 @@ func TestParseK8sDSN(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name    string
-		dsn     string
-		wantCtx string
-		wantNS  string
-		wantSvc string
+		name     string
+		dsn      string
+		wantCtx  string
+		wantNS   string
+		wantSvc  string
 		wantPort int
-		wantOK  bool
+		wantOK   bool
 	}{
 		{
 			name:     "full ctx",
