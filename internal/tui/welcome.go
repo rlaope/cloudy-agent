@@ -10,47 +10,47 @@ import (
 	"github.com/rlaope/cloudy/internal/buildinfo"
 )
 
-// WelcomeModel renders the cloudy banner shown above the empty stream when
-// the user first enters the TUI. It is a stateless renderer; the parent
-// Model decides when to display it.
+// WelcomeModel renders the cloudy banner shown above an empty stream.
+// All inputs (firstRun, lastContext, noColor) are immutable after
+// construction, so the rendered output is precomputed once and reused
+// on every View() call — bubbletea redraws frequently and re-styling
+// the ASCII block on every keystroke is wasted work.
 type WelcomeModel struct {
 	firstRun    bool
 	lastContext string
 	width       int
 	noColor     bool
+	cached      string
 }
 
-// NewWelcomeModel constructs a WelcomeModel.
-//
-//	firstRun=true draws the full ASCII banner.
-//	firstRun=false draws the compact one-liner.
-//
-// lastContext is the kubeconfig context to display in the compact form.
+// NewWelcomeModel constructs a WelcomeModel and precomputes the rendered
+// banner. firstRun=true appends the /setup, /help, ⏎ onboarding hints;
+// firstRun=false appends a single dim line with the active context (when
+// known) plus /setup and /help.
 func NewWelcomeModel(firstRun bool, lastContext string) WelcomeModel {
-	noColor := os.Getenv("NO_COLOR") != ""
-	return WelcomeModel{
+	m := WelcomeModel{
 		firstRun:    firstRun,
 		lastContext: lastContext,
 		width:       80,
-		noColor:     noColor,
+		noColor:     os.Getenv("NO_COLOR") != "",
 	}
+	m.cached = m.renderFullBanner()
+	return m
 }
 
-// SetWidth allows the parent to constrain the banner width.
+// SetWidth allows the parent to constrain the banner width. The banner
+// content does not currently react to width (the ASCII block is fixed
+// at 52 cols), so this is informational only.
 func (m *WelcomeModel) SetWidth(w int) {
 	m.width = w
 }
 
-// View returns the rendered banner. Honors NO_COLOR / the noColor field.
-// The cloudy ASCII art is drawn on every launch (not just the first run);
-// firstRun only controls whether the /setup discovery hints are appended
-// below the banner.
+// View returns the cached banner.
 func (m WelcomeModel) View() string {
-	return m.renderFullBanner()
+	return m.cached
 }
 
-func (m WelcomeModel) renderFullBanner() string {
-	ascii := `
+const welcomeASCII = `
  ██████╗██╗      ██████╗ ██╗   ██╗██████╗ ██╗   ██╗
 ██╔════╝██║     ██╔═══██╗██║   ██║██╔══██╗╚██╗ ██╔╝
 ██║     ██║     ██║   ██║██║   ██║██║  ██║ ╚████╔╝
@@ -58,34 +58,27 @@ func (m WelcomeModel) renderFullBanner() string {
 ╚██████╗███████╗╚██████╔╝╚██████╔╝██████╔╝   ██║
  ╚═════╝╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝    ╚═╝`
 
-	// Sky-blue brand colour for the banner. 117 (SkyBlue1) reads well on
-	// both light and dark terminals without competing with the body text.
+func (m WelcomeModel) renderFullBanner() string {
+	// Sky-blue brand on the ASCII block reads well on both light and dark
+	// terminals without competing with the body text below it.
 	asciiStyle := lipgloss.NewStyle()
+	taglineStyle := lipgloss.NewStyle()
+	dim := lipgloss.NewStyle()
 	if !m.noColor {
 		asciiStyle = asciiStyle.Foreground(lipgloss.Color("117")).Bold(true)
+		taglineStyle = taglineStyle.Foreground(lipgloss.Color("153"))
+		dim = dim.Foreground(lipgloss.Color("8"))
 	}
 
 	tagline := fmt.Sprintf("cloudy %s — read-only multi-cluster SRE agent", buildinfo.Version)
-	taglineStyle := lipgloss.NewStyle()
-	if !m.noColor {
-		taglineStyle = taglineStyle.Foreground(lipgloss.Color("153")) // lighter sky blue
-	}
 
 	lines := []string{
-		asciiStyle.Render(ascii),
+		asciiStyle.Render(welcomeASCII),
 		"",
 		"  " + taglineStyle.Render(tagline),
 	}
 
-	// First-launch hints are appended only when the user has no config yet,
-	// so a returning operator sees the brand banner without the onboarding
-	// noise. The status footer (cloudy …| state … | model …) carries the
-	// at-a-glance context info every launch.
 	if m.firstRun {
-		hintStyle := lipgloss.NewStyle()
-		if !m.noColor {
-			hintStyle = hintStyle.Foreground(lipgloss.Color("8")) // dim
-		}
 		hints := []string{
 			"⚙  /setup    discover clusters & backends",
 			"?  /help     keyboard shortcuts",
@@ -93,16 +86,9 @@ func (m WelcomeModel) renderFullBanner() string {
 		}
 		lines = append(lines, "")
 		for _, hint := range hints {
-			lines = append(lines, "  "+hintStyle.Render(hint))
+			lines = append(lines, "  "+dim.Render(hint))
 		}
 	} else {
-		// Returning user: a single dim hint line with the active context
-		// (when known) plus the two slash commands the operator is most
-		// likely to want at session start.
-		dim := lipgloss.NewStyle()
-		if !m.noColor {
-			dim = dim.Foreground(lipgloss.Color("8"))
-		}
 		segs := []string{}
 		if m.lastContext != "" {
 			segs = append(segs, "ctx="+m.lastContext)
@@ -112,33 +98,4 @@ func (m WelcomeModel) renderFullBanner() string {
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-func (m WelcomeModel) renderCompactBanner() string {
-	version := buildinfo.Version
-
-	if m.noColor {
-		parts := []string{"cloudy " + version}
-		if m.lastContext != "" {
-			parts = append(parts, "ctx="+m.lastContext)
-		}
-		parts = append(parts, "/help", "/setup")
-		return strings.Join(parts, " · ")
-	}
-
-	// Brand the "cloudy <ver>" segment in sky blue; keep the rest dim so the
-	// compact banner looks deliberate rather than uniformly grey.
-	brand := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("117")).Bold(true).
-		Render("cloudy " + version)
-
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	sep := dim.Render(" · ")
-
-	rest := []string{}
-	if m.lastContext != "" {
-		rest = append(rest, "ctx="+m.lastContext)
-	}
-	rest = append(rest, "/help", "/setup")
-	return brand + sep + dim.Render(strings.Join(rest, " · "))
 }

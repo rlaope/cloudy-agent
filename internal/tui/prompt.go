@@ -19,6 +19,8 @@ var promptBorderStyle = lipgloss.NewStyle().
 
 // promptBorderHeight is the number of extra terminal rows the border adds
 // (top rule + bottom rule = 2). Used by the parent Model for layout math.
+// Hard-coded to 2 because promptBorderStyle uses lipgloss.NormalBorder()
+// with top+bottom only; bump if the border style ever grows extra rows.
 const promptBorderHeight = 2
 
 // submitMsg is sent when the user presses Enter on a non-slash prompt.
