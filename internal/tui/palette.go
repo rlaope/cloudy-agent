@@ -36,6 +36,7 @@ type paletteItem struct {
 var builtinItems = []paletteItem{
 	{title: "setup", usage: "/setup        — run the discovery wizard"},
 	{title: "set-up", usage: "/set-up       — alias of /setup; re-analyse the cluster"},
+	{title: "login", usage: "/login        — save an LLM provider API key inline"},
 	{title: "skill", usage: "/skill <name> — switch active skill"},
 	{title: "use", usage: "/use <ctx>    — switch kubeconfig context"},
 	{title: "model", usage: "/model <id>   — switch active model"},

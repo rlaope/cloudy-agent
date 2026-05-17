@@ -192,6 +192,20 @@ type Model struct {
 	splashStart time.Time
 	splashDone  bool
 	splashFrame int
+
+	// In-flight agent status. Drives the "✦ Thinking… (3s · 240 tokens)"
+	// row rendered above the prompt while running == true.
+	agentRunStart     time.Time
+	agentTokens       int
+	agentVerbIdx      int
+	agentStreaming    bool
+	thinkingTickCount int
+
+	// Active inline conversation, if any. Mutually exclusive: only one
+	// of these is non-nil at a time. submitMsg routes to whichever is
+	// active before falling through to the agent.
+	loginChat *loginChat
+	setupChat *setupChat
 }
 
 // NewModel constructs the root TUI model.
@@ -267,6 +281,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, sCmd
 		}
 		return m, splashTickCmd()
+
+	case thinkingTickMsg:
+		if !m.running {
+			// Agent finished or was cancelled; let the tick loop die.
+			return m, nil
+		}
+		m.thinkingTickCount++
+		if m.thinkingTickCount%thinkingVerbRotateTicks == 0 {
+			m.agentVerbIdx = (m.agentVerbIdx + 1) % len(thinkingVerbs)
+		}
+		return m, thinkingTickCmd()
 
 	case tea.KeyMsg:
 		// Palette is active. Nav keys go to the palette; text keys flow into
@@ -384,19 +409,69 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case submitMsg:
 		val := string(msg)
+
+		// Inline conversations (e.g. /login, /setup) capture every plain
+		// submit until they signal done. Slash commands still resolve
+		// through the palette path below, so the operator can /cancel a
+		// flow with /quit or similar without typing into the prompt.
+		if m.loginChat != nil && !strings.HasPrefix(val, "/") {
+			res := m.loginChat.Step(val)
+			if res.done {
+				m.loginChat = nil
+			}
+			return m, m.writeStream(res.out)
+		}
+		if m.setupChat != nil && !strings.HasPrefix(val, "/") {
+			res := m.setupChat.Step(val)
+			if res.done {
+				m.setupChat = nil
+			}
+			cmds := []tea.Cmd{m.writeStream(res.out)}
+			if res.cmd != nil {
+				cmds = append(cmds, res.cmd)
+			}
+			return m, tea.Batch(cmds...)
+		}
+
 		if strings.HasPrefix(val, "/scope ") {
 			return m, m.handleScopeCmd(strings.TrimPrefix(val, "/scope "))
 		}
 		if val == "/setup" || strings.HasPrefix(val, "/setup ") {
 			return m, m.enterSetup()
 		}
+
 		// Echo the user's question into the stream so it scrolls up
 		// alongside the agent's answer; otherwise the operator only
 		// sees the response and loses track of what was asked.
 		echo := userEchoStyle.Render("> "+val) + "\n"
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamTokenMsg("\n" + echo))
-		return m, tea.Batch(sCmd, m.runAgent(val))
+
+		// Setup gate: refuse to dispatch when no provider/model is
+		// configured. The agent goroutine would otherwise silently
+		// finish with no output, leaving the operator confused.
+		if m.deps.Provider == nil || m.deps.Model == "" {
+			warn := setupRequiredStyle.Render(
+				"⚠ cloudy is not configured. Run /setup to discover your clusters "+
+					"and pick a model, or /login to save an API key.",
+			) + "\n"
+			var wCmd tea.Cmd
+			m.stream, wCmd = m.stream.Update(streamTokenMsg(warn))
+			return m, tea.Batch(sCmd, wCmd)
+		}
+
+		// Start the in-flight thinking animation. Verb is picked from
+		// thinkingVerbs by current second so each run feels different.
+		m.agentRunStart = time.Now()
+		m.agentTokens = 0
+		m.agentVerbIdx = int(m.agentRunStart.UnixNano()) % len(thinkingVerbs)
+		if m.agentVerbIdx < 0 {
+			m.agentVerbIdx += len(thinkingVerbs)
+		}
+		m.agentStreaming = false
+		m.thinkingTickCount = 0
+
+		return m, tea.Batch(sCmd, m.runAgent(val), thinkingTickCmd())
 
 	case paletteActionMsg:
 		return m, m.handlePaletteAction(msg)
@@ -421,8 +496,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		evt := AgentEvent(msg)
 		return m, m.applyAgentEvent(evt)
 
+	case setupScanDoneMsg, setupSaveDoneMsg:
+		if m.setupChat == nil {
+			return m, nil
+		}
+		res := m.setupChat.Apply(msg)
+		if res.done {
+			m.setupChat = nil
+		}
+		cmds := []tea.Cmd{m.writeStream(res.out)}
+		if res.cmd != nil {
+			cmds = append(cmds, res.cmd)
+		}
+		return m, tea.Batch(cmds...)
+
 	case agentDoneMsg:
 		m.running = false
+		m.agentStreaming = false
 		if msg.err != nil {
 			var sCmd tea.Cmd
 			m.stream, sCmd = m.stream.Update(streamTokenMsg("\n[error: " + msg.err.Error() + "]\n"))
@@ -478,6 +568,7 @@ func (m Model) View() string {
 	prompt := m.prompt.View()
 	paletteView := m.palette.View()
 	footer := m.footer.View()
+	thinking := m.renderThinkingRow()
 
 	// Approval banner sits directly above the prompt (Claude-style) so the
 	// operator cannot miss it. Composed at View time so the agent goroutine
@@ -505,7 +596,11 @@ func (m Model) View() string {
 	if banner != "" {
 		bannerH = lipgloss.Height(banner)
 	}
-	bodyH := m.height - headerH - promptH - paletteH - footerH - bannerH - chromeBottomPad
+	thinkingH := 0
+	if thinking != "" {
+		thinkingH = lipgloss.Height(thinking)
+	}
+	bodyH := m.height - headerH - promptH - paletteH - footerH - bannerH - thinkingH - chromeBottomPad
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -516,13 +611,17 @@ func (m Model) View() string {
 		body = m.welcome.View() + "\n" + body
 	}
 
-	// Composed bottom-up: header → body (stream/welcome) → optional approval
-	// banner → prompt → optional palette suggestions → blank separator →
-	// status footer → blank bottom padding. The trailing blank lifts the
-	// footer off the terminal edge so the chrome doesn't feel cramped.
+	// Composed bottom-up: header → body (stream/welcome) → optional
+	// approval banner → optional thinking row → prompt → optional palette
+	// suggestions → blank separator → status footer → blank bottom
+	// padding. The trailing blank lifts the footer off the terminal edge
+	// so the chrome doesn't feel cramped.
 	parts := []string{header, body}
 	if banner != "" {
 		parts = append(parts, banner)
+	}
+	if thinking != "" {
+		parts = append(parts, thinking)
 	}
 	parts = append(parts, prompt)
 	if paletteView != "" {
@@ -591,6 +690,11 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 	var cmds []tea.Cmd
 
 	if evt.Token != "" {
+		// Switch the thinking row from verb-cycling to "Streaming" once
+		// real bytes arrive. agentTokens is a coarse char-rate stand-in
+		// until evt.Usage from the provider gives us a true token count.
+		m.agentStreaming = true
+		m.agentTokens += approxTokens(evt.Token)
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamTokenMsg(evt.Token))
 		cmds = append(cmds, sCmd)
@@ -620,6 +724,11 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 		m.usage.Input += evt.Usage.Input
 		m.usage.Output += evt.Usage.Output
 		m.usage.USD += evt.Usage.USD
+		// Prefer the provider's authoritative output-token count over the
+		// approxTokens estimator built up from streaming chunks.
+		if evt.Usage.Output > 0 {
+			m.agentTokens = evt.Usage.Output
+		}
 		var hCmd tea.Cmd
 		m.header, hCmd = m.header.Update(headerStateMsg{cost: evt.Usage.USD})
 		cmds = append(cmds, hCmd)
@@ -723,28 +832,33 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 	case "setup", "set-up":
 		m.prompt.SetValue("")
 		return m.enterSetup()
+
+	case "login":
+		m.prompt.SetValue("")
+		chat, greeting := newLoginChat()
+		m.loginChat = chat
+		return m.writeStream(greeting)
 	}
 
 	m.prompt.SetValue("")
 	return nil
 }
 
-// enterSetup transitions the model into modeSetup, constructs a fresh wizard
-// bound to a cancellable context, and returns the wizard's Init command.
+// enterSetup starts the stream-inline /setup conversation. The legacy
+// full-screen wizard (modeSetup + setup.NewWizardModel) is no longer
+// used from the TUI — the CLI `cloudy setup` entry point in cmd/main.go
+// still drives setup.Run directly for non-interactive bootstrap.
 func (m *Model) enterSetup() tea.Cmd {
 	m.setupCtx, m.setupCancel = context.WithCancel(context.Background())
-	m.setupWiz = setup.NewWizardModel(m.setupCtx, setup.WizardOptions{
-		ConfigPath:  config.Path(),
-		ProfilePath: config.ProfilePath(),
-	})
-	m.mode = modeSetup
+	chat, greeting := newSetupChat(m.setupCtx, "", config.Path(), config.ProfilePath())
 	m.prompt.SetValue("")
-	if m.setupWiz == nil {
-		// Defensive: if the wizard could not be created, fall back to main.
-		m.exitSetup()
-		return nil
+	if chat == nil {
+		// No kubeconfig contexts found: write the greeting (which is
+		// the error message in that branch) and don't enter chat mode.
+		return m.writeStream(greeting)
 	}
-	return m.setupWiz.Init()
+	m.setupChat = chat
+	return m.writeStream(greeting)
 }
 
 // exitSetup returns the model to modeMain, cancels the wizard context, writes
@@ -790,11 +904,104 @@ func (m *Model) exitSetup() {
 // rebuild the style on every frame.
 var splashDotsStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("153"))
 
+// approxTokens estimates the token count of a streaming chunk using
+// the four-chars-per-token rule of thumb. Used until the provider
+// emits an authoritative Usage event with the real output count.
+func approxTokens(s string) int {
+	n := len(s) / 4
+	if n < 1 && s != "" {
+		return 1
+	}
+	return n
+}
+
+// formatThinkingElapsed returns "3s" / "1m05s" / "1h05m" for the
+// thinking row's compact timer.
+func formatThinkingElapsed(d time.Duration) string {
+	if d < time.Second {
+		return "0s"
+	}
+	s := int(d.Seconds())
+	switch {
+	case s < 60:
+		return fmt.Sprintf("%ds", s)
+	case s < 3600:
+		return fmt.Sprintf("%dm%02ds", s/60, s%60)
+	default:
+		return fmt.Sprintf("%dh%02dm", s/3600, (s/60)%60)
+	}
+}
+
+// renderThinkingRow returns the in-flight agent status row, or an
+// empty string when no run is active. Format:
+//
+//	✦ Synthesizing… (3s · 240 tokens)
+//	✦ Streaming   (1m12s · 1240 tokens)
+func (m Model) renderThinkingRow() string {
+	if !m.running {
+		return ""
+	}
+	elapsed := formatThinkingElapsed(time.Since(m.agentRunStart))
+	verb := "Streaming"
+	if !m.agentStreaming {
+		verb = thinkingVerbs[m.agentVerbIdx] + "…"
+	}
+	line := fmt.Sprintf("✦ %s   (%s · %d tokens)", verb, elapsed, m.agentTokens)
+	return thinkingStyle.Render(line)
+}
+
 // userEchoStyle renders the "> <input>" line that mirrors the operator's
-// last submitted prompt back into the stream. Bright white + bold so it
-// stands out from the dim tool blocks and the obs body around it.
+// last submitted prompt back into the stream. Bright-white text on a
+// dark-grey background with a single-cell horizontal padding so the
+// echo reads as a distinct chip — matches Claude's input-replay
+// affordance and makes it impossible to confuse with agent output.
 var userEchoStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("15")).Bold(true)
+	Foreground(lipgloss.Color("15")).
+	Background(lipgloss.Color("236")).
+	Bold(true).
+	Padding(0, 1)
+
+// setupRequiredStyle is the red banner shown in-stream when the operator
+// asks a question before /setup or /login has configured a model.
+var setupRequiredStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("196")).Bold(true)
+
+// thinkingStyle is the soft sky-blue used by the in-flight agent status
+// row ("✦ Synthesizing… (3s · 240 tokens)") that sits above the prompt.
+var thinkingStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("153"))
+
+// thinkingVerbs cycle as the agent works so the screen never looks
+// frozen during a long generation. Phrasing borrows from Claude's CLI
+// for familiarity; one is picked at random per run and rotated every
+// thinkingVerbRotateTicks ticks.
+var thinkingVerbs = []string{
+	"Thinking",
+	"Hmm",
+	"Cogitating",
+	"Pondering",
+	"Synthesizing",
+	"Catapulting",
+	"Spelunking",
+	"Brewing",
+	"Mulling",
+}
+
+// thinkingTickInterval and thinkingVerbRotateTicks together pace the
+// in-flight animation: 250ms per tick, verb changes every 8 ticks (≈2s).
+const (
+	thinkingTickInterval    = 250 * time.Millisecond
+	thinkingVerbRotateTicks = 8
+)
+
+// thinkingTickMsg fires once per thinkingTickInterval while an agent run
+// is active, prompting View() to refresh the elapsed counter.
+type thinkingTickMsg struct{}
+
+// thinkingTickCmd returns a tea.Cmd that emits one thinkingTickMsg.
+func thinkingTickCmd() tea.Cmd {
+	return tea.Tick(thinkingTickInterval, func(time.Time) tea.Msg { return thinkingTickMsg{} })
+}
 
 // renderSplash returns the boot splash frame: the welcome banner with an
 // animated "initialising…" trailer driven by splashFrame. Padded with a
@@ -881,6 +1088,7 @@ func helpText() string {
 
 commands (type / to open suggestions; arrow keys to pick):
   /setup              run the discovery wizard (alias: /set-up)
+  /login              save an LLM provider API key inline
   /skill <name>       switch active skill
   /use <ctx>          switch kubeconfig context
   /model <id>         switch model
