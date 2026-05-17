@@ -31,6 +31,22 @@ const (
 // ctrlCTimeout is the window within which two Ctrl+C presses quit the program.
 const ctrlCTimeout = 2 * time.Second
 
+// splashDuration is how long the boot splash (cloudy banner + animated dots)
+// stays on screen before the main TUI takes over. Long enough to make the
+// brand land, short enough that the operator never has to wait on it.
+const splashDuration = 700 * time.Millisecond
+
+// splashTickInterval drives the dots animation while the splash is visible.
+const splashTickInterval = 120 * time.Millisecond
+
+// splashTickMsg fires once per splashTickInterval until splashDuration elapses.
+type splashTickMsg struct{}
+
+// splashTickCmd returns a tea.Cmd that emits one splashTickMsg.
+func splashTickCmd() tea.Cmd {
+	return tea.Tick(splashTickInterval, func(time.Time) tea.Msg { return splashTickMsg{} })
+}
+
 // Deps holds all external dependencies the TUI needs.
 type Deps struct {
 	// Provider is the LLM backend. May be nil when no config is present.
@@ -171,6 +187,11 @@ type Model struct {
 	width  int
 	height int
 	ready  bool
+
+	// Boot splash: time-bounded brand screen shown before the main TUI.
+	splashStart time.Time
+	splashDone  bool
+	splashFrame int
 }
 
 // NewModel constructs the root TUI model.
@@ -184,21 +205,22 @@ func NewModel(deps Deps) Model {
 	}
 
 	return Model{
-		header:  newHeaderModel(deps.InitialCtx, deps.InitialNS, deps.Model),
-		stream:  newStreamModel(noColor),
-		prompt:  newPromptModel(keys),
-		palette: newPaletteModel(),
-		footer:  NewFooterModel(state, deps.Model),
-		deps:    deps,
-		keys:    keys,
-		cancel:  func() {},
-		mode:    modeMain,
-		welcome: NewWelcomeModel(deps.FirstRun, deps.InitialCtx),
+		header:      newHeaderModel(deps.InitialCtx, deps.InitialNS, deps.Model),
+		stream:      newStreamModel(noColor),
+		prompt:      newPromptModel(keys),
+		palette:     newPaletteModel(),
+		footer:      NewFooterModel(state, deps.Model),
+		deps:        deps,
+		keys:        keys,
+		cancel:      func() {},
+		mode:        modeMain,
+		welcome:     NewWelcomeModel(deps.FirstRun, deps.InitialCtx),
+		splashStart: time.Now(),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.prompt.Init()
+	return tea.Batch(m.prompt.Init(), splashTickCmd())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -232,6 +254,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.footer.SetWidth(msg.Width)
 		m.welcome.SetWidth(msg.Width)
 		return m, tea.Batch(hCmd, sCmd, prCmd, paCmd)
+
+	case splashTickMsg:
+		m.splashFrame++
+		if time.Since(m.splashStart) >= splashDuration {
+			m.splashDone = true
+			return m, nil
+		}
+		return m, splashTickCmd()
 
 	case tea.KeyMsg:
 		// Palette is active. Nav keys go to the palette; text keys flow into
@@ -419,6 +449,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	if !m.ready {
 		return "loading…"
+	}
+
+	// Boot splash takes over the screen for splashDuration milliseconds so
+	// the brand banner lands before the operator starts typing. Skipped in
+	// modeSetup so re-running the wizard mid-session never re-shows it.
+	if !m.splashDone && m.mode == modeMain {
+		return m.renderSplash()
 	}
 
 	if m.mode == modeSetup && m.setupWiz != nil {
@@ -749,6 +786,17 @@ func (m *Model) exitSetup() {
 	// After /setup the user has been here before — drop the full banner.
 	m.welcome = NewWelcomeModel(false, m.deps.InitialCtx)
 	m.welcome.SetWidth(m.width)
+}
+
+// renderSplash returns the boot splash frame: the welcome banner with an
+// animated "initialising…" trailer driven by splashFrame. Padded with a
+// blank line so the body lands roughly mid-screen on a typical terminal.
+func (m Model) renderSplash() string {
+	banner := m.welcome.View()
+	dots := strings.Repeat(".", (m.splashFrame%3)+1)
+	dotsStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("153"))
+	trailer := "  " + dotsStyle.Render("initialising"+dots)
+	return banner + "\n\n" + trailer
 }
 
 // renderUpdateInstructions returns a self-update guide rather than running git
