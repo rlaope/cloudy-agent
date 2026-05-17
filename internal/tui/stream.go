@@ -206,7 +206,7 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 			s.content.WriteString(errLine + "\n")
 		}
 		if m.observation != "" {
-			obs := indentObs(m.observation, "  ")
+			obs := indentObs(m.observation)
 			if !s.noColor {
 				obs = s.obsStyle.Render(obs)
 			}
@@ -270,16 +270,12 @@ func (s StreamModel) Empty() bool {
 
 // indentObs renders a tool observation block in Claude's continuation
 // style: the first non-empty line gets the "⎿  " branch glyph, every
-// subsequent non-empty line gets aligned padding so the visual rail
-// stays straight. Empty lines are passed through untouched so a result
-// containing blank separators still reads correctly.
-//
-// prefix is kept as the function parameter for backward compatibility
-// with the existing call site, but is now treated as the secondary
-// per-line indent (default "  " from the caller). The branch glyph is
-// fixed.
-func indentObs(text, prefix string) string {
+// subsequent non-empty line is padded with three columns so the
+// vertical rail stays straight. Empty lines are passed through so a
+// result containing blank separators still reads correctly.
+func indentObs(text string) string {
 	const branch = "⎿  "
+	const cont = "   " // same width as branch
 	lines := strings.Split(text, "\n")
 	first := true
 	for i, l := range lines {
@@ -291,12 +287,7 @@ func indentObs(text, prefix string) string {
 			first = false
 			continue
 		}
-		// Align subsequent lines under the branch glyph. branch is
-		// three columns wide ("⎿" + two spaces); prefix is the
-		// existing two-space indent so the total prefix width
-		// matches.
-		_ = prefix
-		lines[i] = "   " + l
+		lines[i] = cont + l
 	}
 	return strings.Join(lines, "\n")
 }

@@ -9,8 +9,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/discovery"
@@ -75,7 +73,7 @@ type setupResult struct {
 // Returns nil when no contexts can be enumerated — caller writes an
 // error to the stream and aborts entry.
 func newSetupChat(ctx context.Context, kubeconfigPath, cfgPath, profPath string) (*setupChat, string) {
-	contexts, _ := listSetupChatContexts(kubeconfigPath)
+	contexts, _ := setup.ListKubeconfigContexts(kubeconfigPath)
 	if len(contexts) == 0 {
 		return nil, "[/setup] no kubeconfig contexts found. " +
 			"Set KUBECONFIG or place a config at ~/.kube/config, then run /setup again.\n"
@@ -366,31 +364,3 @@ func pickByIndexOrAll(input string, candidates []string) ([]string, error) {
 	}
 	return picked, nil
 }
-
-// listSetupChatContexts reads the kubeconfig and returns the context
-// names. Mirrors the wizard's helper so the chat can stay decoupled
-// from internal/setup's unexported listKubeconfigContexts.
-func listSetupChatContexts(kubeconfigPath string) ([]string, error) {
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if kubeconfigPath != "" {
-		rules.ExplicitPath = kubeconfigPath
-	}
-	raw, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		rules,
-		&clientcmd.ConfigOverrides{},
-	).RawConfig()
-	if err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(raw.Contexts))
-	for name := range raw.Contexts {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names, nil
-}
-
-// Silence unused metav1 import warning in older toolchains: the
-// k8s.io/client-go transitive surface needs it for clientcmd ListOptions
-// pulled in by other wiring helpers.
-var _ = metav1.ListOptions{}

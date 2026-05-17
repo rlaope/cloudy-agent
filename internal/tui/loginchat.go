@@ -38,9 +38,16 @@ func lookupLoginProvider(input string) (loginProvider, bool) {
 // screen, no popup. Each Step returns the text to print and a
 // done-flag the parent uses to clear the active conversation.
 type loginChat struct {
-	step     int    // 0: pick provider, 1: paste key
+	step     int
 	provider string // one of: anthropic, openai, google, moonshot
 }
+
+// Named steps for loginChat.step. Matches setupChat's naming style so
+// debug prints stay legible.
+const (
+	loginStepProvider = 0
+	loginStepKey      = 1
+)
 
 // loginProvider is one row of the numbered picker the operator sees on
 // step 0. Order here is the order shown on screen and the order numeric
@@ -95,7 +102,7 @@ func (l *loginChat) Step(input string) loginResult {
 	}
 
 	switch l.step {
-	case 0:
+	case loginStepProvider:
 		p, ok := lookupLoginProvider(input)
 		if !ok {
 			return loginResult{
@@ -105,13 +112,13 @@ func (l *loginChat) Step(input string) loginResult {
 			}
 		}
 		l.provider = p.key
-		l.step = 1
+		l.step = loginStepKey
 		return loginResult{
 			out: fmt.Sprintf("Paste your %s API key (will be saved to ~/.cloudy/secrets as %s):\n",
 				p.key, p.envVar),
 		}
 
-	case 1:
+	case loginStepKey:
 		p, _ := lookupLoginProvider(l.provider)
 		if input == "" {
 			return loginResult{out: "(empty) — paste the key, or type 'cancel':\n"}
