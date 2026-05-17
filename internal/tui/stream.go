@@ -46,9 +46,15 @@ type toolBlock struct {
 }
 
 // StreamModel backs the scrollable output area using a bubbles/viewport.
+//
+// content is a *strings.Builder, not a value, on purpose: the bubbletea
+// Update contract returns a fresh StreamModel by value, and Go's runtime
+// panics if a non-zero strings.Builder is copied. Holding the Builder
+// behind a pointer means the copy carries only the pointer and every
+// receiver writes to the same underlying buffer.
 type StreamModel struct {
 	vp      viewport.Model
-	content strings.Builder
+	content *strings.Builder
 	ready   bool
 
 	// pending tool block being assembled
@@ -92,7 +98,7 @@ func tickToolCmd() tea.Cmd {
 }
 
 func newStreamModel(noColor bool) StreamModel {
-	s := StreamModel{noColor: noColor}
+	s := StreamModel{noColor: noColor, content: &strings.Builder{}}
 	if !noColor {
 		s.toolStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 		s.obsStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
