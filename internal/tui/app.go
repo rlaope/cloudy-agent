@@ -199,9 +199,9 @@ func NewModel(deps Deps) Model {
 	keys := defaultKeys()
 	noColor := false
 
-	state := "set-up done"
+	state := footerStateReady
 	if deps.FirstRun {
-		state = "no set-up"
+		state = footerStateUnconfigured
 	}
 
 	return Model{
@@ -209,7 +209,7 @@ func NewModel(deps Deps) Model {
 		stream:      newStreamModel(noColor),
 		prompt:      newPromptModel(keys),
 		palette:     newPaletteModel(),
-		footer:      NewFooterModel(state, deps.Model),
+		footer:      NewFooterModel(state, deps.Model, buildinfo.Version),
 		deps:        deps,
 		keys:        keys,
 		cancel:      func() {},
@@ -391,10 +391,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handlePaletteAction(msg)
 
 	case paletteDismissMsg:
-		// Palette closed without action; drop any leading '/' the user typed
-		// so the prompt doesn't keep re-triggering the suggestions on the
-		// next character.
-		if strings.HasPrefix(m.prompt.Value(), "/") {
+		// Palette closed without action. Drop the leading '/' only when the
+		// operator is still on the verb (no arguments typed yet) so a typo
+		// like "/scope ns=foo" + Esc doesn't wipe the whole line.
+		val := m.prompt.Value()
+		if strings.HasPrefix(val, "/") && !strings.ContainsRune(val, ' ') {
 			m.prompt.SetValue("")
 		}
 		return m, nil
@@ -608,21 +609,29 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 		cmds = append(cmds, hCmd)
 	}
 	if evt.Approval != nil {
+		// A high-risk tool call has paused the agent. Close the palette so
+		// the y/N keystroke goes to the approval gate (Update routes
+		// palette-active keystrokes first; an open palette would swallow
+		// the response and leave the agent goroutine blocked on Reply).
+		if m.palette.Active() {
+			m.palette.Close()
+		}
 		m.pendingApproval = evt.Approval
-	}
-
-	// Continue reading from the channel.
-	if m.deps.AgentRunner != nil && m.running {
-		cmds = append(cmds, m.nextAgentEvent())
 	}
 
 	return tea.Batch(cmds...)
 }
 
-// nextAgentEvent is a placeholder — the actual channel read loop is driven by
-// the cmd returned from runAgent; this is not needed in the simple model.
-// Left empty so compile passes.
-func (m *Model) nextAgentEvent() tea.Cmd { return nil }
+// writeStream is the every-other-palette-action shape: clear the prompt
+// and append text to the stream output. Extracted because the same three
+// lines appeared in 11 branches of handlePaletteAction; collapsing them
+// makes the dispatcher scannable.
+func (m *Model) writeStream(s string) tea.Cmd {
+	var c tea.Cmd
+	m.stream, c = m.stream.Update(streamTokenMsg(s))
+	m.prompt.SetValue("")
+	return c
+}
 
 // handlePaletteAction dispatches a palette selection.
 func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
@@ -641,30 +650,17 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		return tea.Quit
 
 	case "update":
-		var sCmd tea.Cmd
-		m.stream, sCmd = m.stream.Update(streamTokenMsg(renderUpdateInstructions()))
-		m.prompt.SetValue("")
-		return sCmd
+		return m.writeStream(renderUpdateInstructions())
 
 	case "help":
-		help := helpText()
-		var sCmd tea.Cmd
-		m.stream, sCmd = m.stream.Update(streamTokenMsg(help))
-		m.prompt.SetValue("")
-		return sCmd
+		return m.writeStream(helpText())
 
 	case "version":
-		var sCmd tea.Cmd
-		m.stream, sCmd = m.stream.Update(streamTokenMsg("cloudy " + buildinfo.Version + "\n"))
-		m.prompt.SetValue("")
-		return sCmd
+		return m.writeStream("cloudy " + buildinfo.Version + "\n")
 
 	case "skill":
 		if action.arg == "" {
-			var sCmd tea.Cmd
-			m.stream, sCmd = m.stream.Update(streamTokenMsg("usage: /skill <name>\n"))
-			m.prompt.SetValue("")
-			return sCmd
+			return m.writeStream("usage: /skill <name>\n")
 		}
 		if m.deps.Skills != nil {
 			if sk, ok := m.deps.Skills.Get(action.arg); ok {
@@ -675,17 +671,11 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 				return hCmd
 			}
 		}
-		var sCmd tea.Cmd
-		m.stream, sCmd = m.stream.Update(streamTokenMsg("skill not found: " + action.arg + "\n"))
-		m.prompt.SetValue("")
-		return sCmd
+		return m.writeStream("skill not found: " + action.arg + "\n")
 
 	case "use":
 		if action.arg == "" {
-			var sCmd tea.Cmd
-			m.stream, sCmd = m.stream.Update(streamTokenMsg("usage: /use <context>\n"))
-			m.prompt.SetValue("")
-			return sCmd
+			return m.writeStream("usage: /use <context>\n")
 		}
 		var hCmd tea.Cmd
 		m.header, hCmd = m.header.Update(headerStateMsg{ctx: action.arg})
@@ -694,10 +684,7 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 
 	case "model":
 		if action.arg == "" {
-			var sCmd tea.Cmd
-			m.stream, sCmd = m.stream.Update(streamTokenMsg("usage: /model <id>\n"))
-			m.prompt.SetValue("")
-			return sCmd
+			return m.writeStream("usage: /model <id>\n")
 		}
 		m.deps.Model = action.arg
 		m.footer.SetModel(action.arg)
@@ -712,16 +699,10 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		return nil
 
 	case "tools":
-		var sCmd tea.Cmd
-		m.stream, sCmd = m.stream.Update(streamTokenMsg(renderInventory(m.deps.Tools)))
-		m.prompt.SetValue("")
-		return sCmd
+		return m.writeStream(renderInventory(m.deps.Tools))
 
 	case "replay":
-		var sCmd tea.Cmd
-		m.stream, sCmd = m.stream.Update(streamTokenMsg("replay not yet implemented\n"))
-		m.prompt.SetValue("")
-		return sCmd
+		return m.writeStream("replay not yet implemented\n")
 
 	case "setup", "set-up":
 		m.prompt.SetValue("")
@@ -777,7 +758,7 @@ func (m *Model) exitSetup() {
 		line = "[setup aborted]\n"
 	default:
 		line = "[setup complete]\n"
-		m.footer.SetState("set-up done")
+		m.footer.SetState(footerStateReady)
 	}
 	var sCmd tea.Cmd
 	m.stream, sCmd = m.stream.Update(streamTokenMsg(line))
@@ -788,14 +769,18 @@ func (m *Model) exitSetup() {
 	m.welcome.SetWidth(m.width)
 }
 
+// splashDotsStyle is the lighter sky-blue colour used by the splash
+// trailer. Kept at package scope so the splash tick (120ms) does not
+// rebuild the style on every frame.
+var splashDotsStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("153"))
+
 // renderSplash returns the boot splash frame: the welcome banner with an
 // animated "initialising…" trailer driven by splashFrame. Padded with a
 // blank line so the body lands roughly mid-screen on a typical terminal.
 func (m Model) renderSplash() string {
 	banner := m.welcome.View()
 	dots := strings.Repeat(".", (m.splashFrame%3)+1)
-	dotsStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("153"))
-	trailer := "  " + dotsStyle.Render("initialising"+dots)
+	trailer := "  " + splashDotsStyle.Render("initialising"+dots)
 	return banner + "\n\n" + trailer
 }
 

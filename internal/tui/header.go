@@ -125,15 +125,20 @@ func (h HeaderModel) View() string {
 // shortField returns s truncated to at most max runes, appending a single
 // horizontal ellipsis when the input is longer. Used by the compact-mode
 // header so each segment has a hard upper bound.
+//
+// Rune-counted, not byte-counted: a Korean kubeconfig context name like
+// "프로덕션" is 12 bytes but 4 runes; byte slicing would cut mid-rune and
+// emit invalid UTF-8 to the terminal.
 func shortField(s string, max int) string {
 	if max <= 0 {
 		return ""
 	}
-	if len(s) <= max {
+	r := []rune(s)
+	if len(r) <= max {
 		return s
 	}
 	if max == 1 {
 		return "…"
 	}
-	return s[:max-1] + "…"
+	return string(r[:max-1]) + "…"
 }
