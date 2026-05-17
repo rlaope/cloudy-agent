@@ -332,4 +332,3 @@ func redisPort(ports []corev1.ServicePort) (int32, bool) {
 	}
 	return 0, false
 }
-

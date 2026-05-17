@@ -10,14 +10,15 @@ ClusterRole RBAC).
 
 ## Status
 
-v0.4 in development. v0.2 / v0.3 released; v0.4 brings auto-discovery and TUI-integrated /setup.
+v0.4.0 released. v0.4 brings auto-discovery, TUI-integrated `/setup`, registry hot-swap, and risk-rated approval gating.
 
 ## v0.4 Highlights
 
-- **Auto-discovery in /setup**: A single `/setup` slash command inside the TUI scans the configured K8s contexts and proposes every detected Prometheus / Loki / Elasticsearch / Tempo / Jaeger / Postgres / MySQL / Redis / pprof / V8 inspector endpoint. The user picks them from a checkbox and inputs any required credentials inline; cloudy.yaml is generated, not hand-edited.
+- **Auto-discovery in /setup**: A single `/setup` slash command inside the TUI scans the configured K8s contexts and proposes every detected Prometheus / Loki / Elasticsearch / Tempo / Jaeger / Postgres / MySQL / Redis / pprof / V8 inspector endpoint. The user picks them from a checkbox and inputs any required credentials inline; cloudy.yaml is generated, not hand-edited. See [docs/AUTO_DISCOVERY.md](docs/AUTO_DISCOVERY.md).
 - **Bastion-friendly reachability**: HTTP backends are reached via the K8s apiserver's `services/proxy` (no VPN required), and TCP databases via in-process SPDY port-forward; the existing read-only contract (`GET/HEAD/OPTIONS`) is preserved end-to-end.
 - **Live registry hot-swap**: After `/setup` the new backends are usable immediately — no `cloudy` restart. The agent picks up the new tool catalog on the next user question.
 - **First-launch banner**: Launching `cloudy` with no config shows a `cloudy` banner + the three command hints (`⚙ /setup`, `? /help`, `⏎ ask`); compact one-liner on subsequent launches.
+- **Risk-rated tools + approval gate**: Every tool is rated `low` / `medium` / `high` by how much it perturbs the system being observed. High-risk calls (STW pauses, attached probes, long profiling windows) require an interactive `y/N` operator decision in the TUI; non-interactive entry points refuse them with a clear message. Read-only blocks now surface a per-method *alternative* hint so the LLM picks a cheaper path on retry. See [docs/SAFETY.md](docs/SAFETY.md).
 
 ## v0.2 Highlights
 

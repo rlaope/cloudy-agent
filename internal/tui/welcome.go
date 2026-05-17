@@ -21,8 +21,10 @@ type WelcomeModel struct {
 }
 
 // NewWelcomeModel constructs a WelcomeModel.
-//   firstRun=true draws the full ASCII banner.
-//   firstRun=false draws the compact one-liner.
+//
+//	firstRun=true draws the full ASCII banner.
+//	firstRun=false draws the compact one-liner.
+//
 // lastContext is the kubeconfig context to display in the compact form.
 func NewWelcomeModel(firstRun bool, lastContext string) WelcomeModel {
 	noColor := os.Getenv("NO_COLOR") != ""

@@ -11,15 +11,15 @@ func TestServiceProxy_URL(t *testing.T) {
 	p := &ServiceProxy{apiHost: "https://10.0.0.1:6443"}
 
 	tests := []struct {
-		name     string
-		ns       string
-		svc      string
-		scheme   string
-		port     string
-		path     string
-		wantSufx string // expected URL suffix (checked via strings.HasSuffix)
-		wantFull string // exact full URL when set
-		wantEmpty bool  // expect empty string return
+		name      string
+		ns        string
+		svc       string
+		scheme    string
+		port      string
+		path      string
+		wantSufx  string // expected URL suffix (checked via strings.HasSuffix)
+		wantFull  string // exact full URL when set
+		wantEmpty bool   // expect empty string return
 	}{
 		{
 			name:     "http scheme numeric port with path",

@@ -1,8 +1,48 @@
 # Changelog
 
-## Unreleased
+## v0.4.0 — 2026-05-17
 
-### Added
+### Added — Safety hardening
+- **Risk-rated tools + interactive approval gate** — `tools.RiskLevel`
+  classifies every tool as `low` / `medium` / `high` based on how much the
+  call perturbs the system being observed (STW pauses, attached probes,
+  long sampling windows, cluster-wide scans). `RiskRated` is an optional
+  interface tools may implement; an `riskByName` allowlist catches the
+  curated set (`jvm.async_profile`, `jvm.jcmd_gc`, all `perf.*`, all
+  `py.spy_*`, all `ebpf.*`). `agent.ApprovalHook` gates `RiskHigh` calls
+  through a pluggable `Approver`; lower-risk calls pass through unchanged.
+  The TUI surfaces a `y/N/Esc` banner (`AgentEvent.Approval` +
+  `ApprovalRequest{Tool, Args, Reply}`); unrelated keys are swallowed
+  while a decision is pending. `agent.DenyApprover` is the non-interactive
+  default for `cloudy ask`, so headless entry points refuse high-risk
+  calls with a message pointing the operator at the TUI.
+- **`LogSummaryHook` for oversized log observations** —
+  `agent.LogSummaryHook` compresses `log.*` tool responses larger than
+  `Options.MaxLogResponseBytes` (default 64 KB). `SummarizeLog` keeps
+  head/tail on newline boundaries plus exception/error context windows
+  (`exception|caused by|panic|traceback|stack trace|fatal|error`, ±5
+  lines) with adjacent-duplicate dedup. Below the threshold the
+  observation passes through unchanged — head/tail clipping is more
+  expensive than a flat truncate, so it is reserved for cases where it
+  actually pays for itself.
+- **Cost guard hook** — `agent.LimitGuardHook` and `agent.CostGuardHook`
+  enforce per-session token caps and per-day USD caps, plus profile
+  duration / log-line caps. Wired from `config.SafetyConfig` through
+  `cmd/main.go`, `cli/ask.go`, and `tui.Deps` to `agent.Options`.
+- **LLM circuit breaker + provider fallback** — `llm.Circuit` short-
+  circuits a failing provider for a cooldown window; `llm.Fallback`
+  composes a primary + secondary `Provider` and switches on persistent
+  failure. The wiring layer composes these around the openai_compat
+  adapter so vLLM / Ollama / OpenRouter outages degrade gracefully.
+- **Cloud identity discovery** — `discovery.cloud_iam` probes AWS /
+  GCP / Azure metadata endpoints to surface the apparent IAM identity
+  in `/setup` and `cloudy doctor`, helping operators sanity-check which
+  account cloudy is running under on a bastion.
+- **Conversation timeout** — `agent.Options.ConversationTimeout` bounds
+  total wall-clock for a single `Run()`. Hits surface as a clear
+  `conversation timeout` rather than an opaque context-deadline error.
+
+### Added — Auto-discovery & TUI integration
 - **Backend auto-discovery via `discovery.Detector` package** — `internal/discovery/`
   defines the core abstractions: `Detector` interface, `Finding` result type,
   `Source` enum (Kubernetes Service/Pod heuristics, user hints), and
@@ -151,6 +191,16 @@
   copies of the registry.
 
 ### Changed
+- **Alt-guidance on every read-only block** — `transport/readonly.go`
+  rejects non-`GET/HEAD/OPTIONS` requests with a per-method alternative
+  hint (e.g. `POST → use the GET equivalent`), and `tools.Registry`
+  rejects mutator-named tool registration at boot with a panic that
+  suggests the read-only verb. The LLM sees these strings, so the
+  feedback loop is "use a cheaper / read-only alternative", not "fail".
+- **Agent preamble updated** — the system prompt now explicitly tells
+  the LLM not to retry on approval-denied or read-only-violation errors
+  and to pick a lower-risk alternative instead, matching the alt-guidance
+  surfaced by the transport and registry layers.
 - `db.BuildClients` signature now takes a `*k8s.Hub` so it can resolve
   `k8s://` DSN schemes into a SPDY tunnel; non-k8s DSNs go through the
   existing direct-dial path unchanged.
@@ -175,6 +225,15 @@
 - `manifests/rbac/base/clusterrole.yaml` gains two new verbs: `get` on
   `services/proxy` and `create` on `pods/portforward`. See
   `manifests/rbac/README.md` for a one-paragraph rationale.
+- **Approval gate is defense-in-depth, not the primary read-only contract.**
+  The HTTP method whitelist, K8s verb whitelist, and ClusterRole RBAC
+  already make mutation impossible. The risk-rated approval gate only
+  prevents *expensive but legal* read-only calls (STW pauses, multi-second
+  profile windows, attached probes) from being dispatched without an
+  operator decision. Tool registration also panics at boot if a name
+  contains a mutation verb (`tools.Registry` mutator enforcement), closing
+  a final gap where a future contributor might add a tool with a
+  mutation-sounding name by accident.
 
 ## v0.3.0 — 2026-05-13
 

@@ -57,9 +57,9 @@ func (NoopHook) BeforeToolCall(context.Context, llm.ToolCall) error { return nil
 func (NoopHook) AfterToolCall(_ context.Context, _ llm.ToolCall, obs tools.Observation, _ error) (tools.Observation, error) {
 	return obs, nil
 }
-func (NoopHook) OnAssistantTurn(context.Context, llm.Message)  {}
-func (NoopHook) OnUsage(context.Context, llm.Usage) error      { return nil }
-func (NoopHook) OnStop(context.Context, error)                 {}
+func (NoopHook) OnAssistantTurn(context.Context, llm.Message) {}
+func (NoopHook) OnUsage(context.Context, llm.Usage) error     { return nil }
+func (NoopHook) OnStop(context.Context, error)                {}
 
 // ErrDuplicateCall is returned when the same (tool, args) pair is invoked
 // three times in a row, indicating the model is stuck in a loop.
