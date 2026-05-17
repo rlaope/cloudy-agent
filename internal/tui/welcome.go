@@ -42,11 +42,11 @@ func (m *WelcomeModel) SetWidth(w int) {
 }
 
 // View returns the rendered banner. Honors NO_COLOR / the noColor field.
+// The cloudy ASCII art is drawn on every launch (not just the first run);
+// firstRun only controls whether the /setup discovery hints are appended
+// below the banner.
 func (m WelcomeModel) View() string {
-	if m.firstRun {
-		return m.renderFullBanner()
-	}
-	return m.renderCompactBanner()
+	return m.renderFullBanner()
 }
 
 func (m WelcomeModel) renderFullBanner() string {
@@ -71,27 +71,44 @@ func (m WelcomeModel) renderFullBanner() string {
 		taglineStyle = taglineStyle.Foreground(lipgloss.Color("153")) // lighter sky blue
 	}
 
-	// Command hints with dim glyphs
-	hints := []string{
-		"⚙  /setup    discover clusters & backends",
-		"?  /help     keyboard shortcuts",
-		"⏎           or just ask a question",
-	}
-
-	hintStyle := lipgloss.NewStyle()
-	if !m.noColor {
-		hintStyle = hintStyle.Foreground(lipgloss.Color("8")) // dim
-	}
-
 	lines := []string{
 		asciiStyle.Render(ascii),
 		"",
 		"  " + taglineStyle.Render(tagline),
-		"",
 	}
 
-	for _, hint := range hints {
-		lines = append(lines, "  "+hintStyle.Render(hint))
+	// First-launch hints are appended only when the user has no config yet,
+	// so a returning operator sees the brand banner without the onboarding
+	// noise. The status footer (cloudy …| state … | model …) carries the
+	// at-a-glance context info every launch.
+	if m.firstRun {
+		hintStyle := lipgloss.NewStyle()
+		if !m.noColor {
+			hintStyle = hintStyle.Foreground(lipgloss.Color("8")) // dim
+		}
+		hints := []string{
+			"⚙  /setup    discover clusters & backends",
+			"?  /help     keyboard shortcuts",
+			"⏎           or just ask a question",
+		}
+		lines = append(lines, "")
+		for _, hint := range hints {
+			lines = append(lines, "  "+hintStyle.Render(hint))
+		}
+	} else {
+		// Returning user: a single dim hint line with the active context
+		// (when known) plus the two slash commands the operator is most
+		// likely to want at session start.
+		dim := lipgloss.NewStyle()
+		if !m.noColor {
+			dim = dim.Foreground(lipgloss.Color("8"))
+		}
+		segs := []string{}
+		if m.lastContext != "" {
+			segs = append(segs, "ctx="+m.lastContext)
+		}
+		segs = append(segs, "/setup", "/help")
+		lines = append(lines, "  "+dim.Render(strings.Join(segs, "  ·  ")))
 	}
 
 	return strings.Join(lines, "\n")
