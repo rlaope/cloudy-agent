@@ -13,9 +13,11 @@ const maxPromptLines = 6
 // promptBorderStyle draws a horizontal line above and below the textarea
 // (Claude-style input box). Left/right borders are intentionally suppressed —
 // the prompt fills the full terminal width with two clean rules framing it.
+// Border colour is bright white (15) so the input box reads as the focus
+// surface in the TUI, contrasted against the dim chrome elsewhere.
 var promptBorderStyle = lipgloss.NewStyle().
 	Border(lipgloss.NormalBorder(), true, false, true, false).
-	BorderForeground(lipgloss.Color("240"))
+	BorderForeground(lipgloss.Color("15"))
 
 // promptBorderHeight is the number of extra terminal rows the border adds
 // (top rule + bottom rule = 2). Used by the parent Model for layout math.
@@ -54,6 +56,20 @@ func newPromptModel(keys keyMap) PromptModel {
 	// "> " input affordance. Two columns wide (chevron + space) so the
 	// caret sits where the user expects.
 	ta.Prompt = "> "
+
+	// Render the user's typed text and the "> " chevron in bright white.
+	// Placeholder stays dim so the box reads as "empty waiting input" until
+	// the operator types. Cursor-line styling is left as default — most
+	// terminals already show a sensible focus block via the cursor render.
+	white := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	ta.FocusedStyle.Text = white
+	ta.FocusedStyle.Prompt = white
+	ta.FocusedStyle.Placeholder = dim
+	ta.BlurredStyle.Text = white
+	ta.BlurredStyle.Prompt = white
+	ta.BlurredStyle.Placeholder = dim
+
 	ta.Focus()
 
 	return PromptModel{
