@@ -5,9 +5,21 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 const maxPromptLines = 6
+
+// promptBorderStyle draws a horizontal line above and below the textarea
+// (Claude-style input box). Left/right borders are intentionally suppressed —
+// the prompt fills the full terminal width with two clean rules framing it.
+var promptBorderStyle = lipgloss.NewStyle().
+	Border(lipgloss.NormalBorder(), true, false, true, false).
+	BorderForeground(lipgloss.Color("240"))
+
+// promptBorderHeight is the number of extra terminal rows the border adds
+// (top rule + bottom rule = 2). Used by the parent Model for layout math.
+const promptBorderHeight = 2
 
 // submitMsg is sent when the user presses Enter on a non-slash prompt.
 type submitMsg string
@@ -203,15 +215,20 @@ func (p *PromptModel) Focus() tea.Cmd {
 }
 
 func (p PromptModel) View() string {
+	var inner string
 	if p.inSearch {
-		return "[search: " + p.searchBuf + "]\n" + p.ta.View()
+		inner = "[search: " + p.searchBuf + "]\n" + p.ta.View()
+	} else {
+		inner = p.ta.View()
 	}
-	return p.ta.View()
+	return promptBorderStyle.Render(inner)
 }
 
-// Height returns the current textarea height in lines.
+// Height returns the prompt's full rendered height in terminal rows, including
+// the top + bottom border lines that promptBorderStyle adds. Parent layout
+// code subtracts this from the terminal height to size the stream viewport.
 func (p PromptModel) Height() int {
-	return p.ta.Height()
+	return p.ta.Height() + promptBorderHeight
 }
 
 func (p *PromptModel) rebuildSearchHits() {

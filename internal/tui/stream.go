@@ -109,19 +109,17 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
-		headerHeight := 1
-		promptHeight := 3
-		vpHeight := m.Height - headerHeight - promptHeight
-		if vpHeight < 1 {
-			vpHeight = 1
-		}
+		// First WindowSizeMsg seeds the viewport so the very first frame
+		// has something to render. The parent Model recomputes the exact
+		// body height every View via SetViewportSize, accounting for the
+		// prompt's border + an active palette + an approval banner — none
+		// of which the stream can know about on its own.
 		if !s.ready {
-			s.vp = viewport.New(m.Width, vpHeight)
+			s.vp = viewport.New(m.Width, m.Height)
 			s.vp.SetContent(s.content.String())
 			s.ready = true
 		} else {
 			s.vp.Width = m.Width
-			s.vp.Height = vpHeight
 		}
 
 	case streamTokenMsg:
@@ -218,6 +216,28 @@ func (s StreamModel) View() string {
 		return ""
 	}
 	return s.vp.View()
+}
+
+// SetViewportSize lets the parent Model push an exact body width/height
+// computed from the latest View pass. Needed because the stream cannot know
+// how many rows the prompt border, palette, or approval banner consume.
+// Width/height ≤ 0 are clamped to 1 to keep the viewport addressable.
+func (s *StreamModel) SetViewportSize(width, height int) {
+	if !s.ready {
+		return
+	}
+	if width < 1 {
+		width = 1
+	}
+	if height < 1 {
+		height = 1
+	}
+	if s.vp.Width != width {
+		s.vp.Width = width
+	}
+	if s.vp.Height != height {
+		s.vp.Height = height
+	}
 }
 
 // Empty reports whether the stream has no content yet. Used by the parent

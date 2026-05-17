@@ -8,6 +8,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// headerCompactThreshold is the terminal width below which the header
+// switches to the abbreviated single-line form to avoid wrap/truncation
+// when the user runs cloudy in a narrow split pane.
+const headerCompactThreshold = 100
+
 // headerStateMsg is sent to update header fields dynamically.
 type headerStateMsg struct {
 	ctx   string
@@ -91,16 +96,44 @@ func (h HeaderModel) Update(msg tea.Msg) (HeaderModel, tea.Cmd) {
 }
 
 func (h HeaderModel) View() string {
-	content := fmt.Sprintf(
-		"ctx=%-12s  ns=%-12s  model=%-28s  skill=%-14s  $%.4f",
-		h.ctx, h.ns, h.model, h.skill, h.cost,
-	)
-	if h.scope != "" {
-		content += "  scope=" + h.scope
+	var content string
+	if h.width > 0 && h.width < headerCompactThreshold {
+		// Compact form for narrow panes: drop fixed-width padding and ns/skill
+		// segments so the line fits without wrap/truncation.
+		content = fmt.Sprintf("ctx=%s  model=%s  $%.4f",
+			shortField(h.ctx, 14), shortField(h.model, 18), h.cost)
+		if h.scope != "" {
+			content += "  s=" + shortField(h.scope, 10)
+		}
+	} else {
+		content = fmt.Sprintf(
+			"ctx=%-12s  ns=%-12s  model=%-28s  skill=%-14s  $%.4f",
+			h.ctx, h.ns, h.model, h.skill, h.cost,
+		)
+		if h.scope != "" {
+			content += "  scope=" + h.scope
+		}
 	}
+
 	if h.noColor {
 		return content
 	}
 	s := h.style.Width(h.width)
 	return s.Render(content)
+}
+
+// shortField returns s truncated to at most max runes, appending a single
+// horizontal ellipsis when the input is longer. Used by the compact-mode
+// header so each segment has a hard upper bound.
+func shortField(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if len(s) <= max {
+		return s
+	}
+	if max == 1 {
+		return "…"
+	}
+	return s[:max-1] + "…"
 }
