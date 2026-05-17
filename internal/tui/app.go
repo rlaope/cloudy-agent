@@ -14,18 +14,8 @@ import (
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/llm"
 	"github.com/rlaope/cloudy/internal/session"
-	"github.com/rlaope/cloudy/internal/setup"
 	"github.com/rlaope/cloudy/internal/skills"
 	"github.com/rlaope/cloudy/internal/tools"
-)
-
-// uiMode discriminates between the main interactive chat and the embedded
-// /setup wizard.
-type uiMode int
-
-const (
-	modeMain uiMode = iota
-	modeSetup
 )
 
 // ctrlCTimeout is the window within which two Ctrl+C presses quit the program.
@@ -175,31 +165,19 @@ type Model struct {
 	// running indicates an agent run is in progress.
 	running bool
 
-	// mode controls which sub-view is rendered/routed.
-	mode uiMode
-	// welcome renders the banner above an empty stream in main mode.
+	// welcome renders the banner above an empty stream.
 	welcome WelcomeModel
-	// setupWiz holds the embedded setup wizard when mode == modeSetup.
-	setupWiz    *setup.WizardModel
-	setupCtx    context.Context
-	setupCancel context.CancelFunc
 
 	width  int
 	height int
 	ready  bool
 
 	// Boot splash: time-bounded brand screen shown before the main TUI.
-	splashStart time.Time
-	splashDone  bool
-	splashFrame int
+	splash splashState
 
 	// In-flight agent status. Drives the "✦ Thinking… (3s · 240 tokens)"
 	// row rendered above the prompt while running == true.
-	agentRunStart     time.Time
-	agentTokens       int
-	agentVerbIdx      int
-	agentStreaming    bool
-	thinkingTickCount int
+	thinking thinkingState
 
 	// Active inline conversation, if any. Mutually exclusive: only one
 	// of these is non-nil at a time. submitMsg routes to whichever is
@@ -224,17 +202,16 @@ func NewModel(deps Deps) Model {
 	}
 
 	return Model{
-		header:      newHeaderModel(deps.InitialCtx, deps.InitialNS, deps.Model),
-		stream:      newStreamModel(noColor),
-		prompt:      newPromptModel(keys),
-		palette:     newPaletteModel(),
-		footer:      NewFooterModel(state, deps.Model, buildinfo.Version),
-		deps:        deps,
-		keys:        keys,
-		cancel:      func() {},
-		mode:        modeMain,
-		welcome:     NewWelcomeModel(deps.FirstRun, deps.InitialCtx),
-		splashStart: time.Now(),
+		header:  newHeaderModel(deps.InitialCtx, deps.InitialNS, deps.Model),
+		stream:  newStreamModel(noColor),
+		prompt:  newPromptModel(keys),
+		palette: newPaletteModel(),
+		footer:  NewFooterModel(state, deps.Model, buildinfo.Version),
+		deps:    deps,
+		keys:    keys,
+		cancel:  func() {},
+		welcome: NewWelcomeModel(deps.FirstRun, deps.InitialCtx),
+		splash:  splashState{start: time.Now()},
 	}
 }
 
@@ -244,20 +221,6 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-
-	// While the setup wizard owns the screen, forward every non-resize
-	// message to it. WindowSizeMsg still flows through to the sub-models
-	// below so the underlying layout stays correct on return.
-	if m.mode == modeSetup && m.setupWiz != nil {
-		if _, ok := msg.(tea.WindowSizeMsg); !ok {
-			var cmd tea.Cmd
-			m.setupWiz, cmd = m.setupWiz.Update(msg)
-			if m.setupWiz.Done() || m.setupWiz.Aborted() {
-				m.exitSetup()
-			}
-			return m, cmd
-		}
-	}
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -275,9 +238,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(hCmd, sCmd, prCmd, paCmd)
 
 	case splashTickMsg:
-		m.splashFrame++
-		if time.Since(m.splashStart) >= splashDuration {
-			m.splashDone = true
+		m.splash.frame++
+		if time.Since(m.splash.start) >= splashDuration {
+			m.splash.done = true
 			// Seed the stream with the welcome banner so it scrolls up
 			// naturally as the operator starts chatting instead of
 			// disappearing on the first input.
@@ -292,10 +255,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Agent finished or was cancelled; let the tick loop die.
 			return m, nil
 		}
-		m.thinkingTickCount++
-		if m.thinkingTickCount%thinkingVerbRotateTicks == 0 {
-			m.agentVerbIdx = (m.agentVerbIdx + 1) % len(thinkingVerbs)
-		}
+		m.thinking.tick()
 		return m, thinkingTickCmd()
 
 	case tea.KeyMsg:
@@ -492,16 +452,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(sCmd, wCmd)
 		}
 
-		// Start the in-flight thinking animation. Verb is picked from
-		// thinkingVerbs by current second so each run feels different.
-		m.agentRunStart = time.Now()
-		m.agentTokens = 0
-		m.agentVerbIdx = int(m.agentRunStart.UnixNano()) % len(thinkingVerbs)
-		if m.agentVerbIdx < 0 {
-			m.agentVerbIdx += len(thinkingVerbs)
-		}
-		m.agentStreaming = false
-		m.thinkingTickCount = 0
+		// Start the in-flight thinking animation. Reset seeds a new
+		// verb and zeroes the streaming counters.
+		m.thinking.reset()
 
 		return m, tea.Batch(sCmd, m.runAgent(val), thinkingTickCmd())
 
@@ -548,7 +501,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		evt := AgentEvent(msg)
 		return m, m.applyAgentEvent(evt)
 
-	case setupScanDoneMsg, setupSaveDoneMsg:
+	case setupScanDoneMsg:
 		if m.setupChat == nil {
 			return m, nil
 		}
@@ -562,13 +515,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case setupSaveDoneMsg:
+		if m.setupChat == nil {
+			return m, nil
+		}
+		res := m.setupChat.Apply(msg)
+		if res.done {
+			m.setupChat = nil
+		}
+		// Save succeeded: flip the footer state segment and reset the
+		// welcome banner so the next launch / cleared stream shows the
+		// returning-user form. Used to live in exitSetup; now lives on
+		// the actual success edge.
+		if msg.err == nil {
+			m.footer.SetState(footerStateReady)
+			m.welcome = NewWelcomeModel(false, m.deps.InitialCtx)
+			m.welcome.SetWidth(m.width)
+		}
+		return m, m.writeStream(res.out)
+
 	case agentDoneMsg:
 		m.running = false
-		m.agentStreaming = false
+		m.thinking.streaming = false
 		if msg.err != nil {
-			var sCmd tea.Cmd
-			m.stream, sCmd = m.stream.Update(streamTokenMsg("\n[error: " + msg.err.Error() + "]\n"))
-			return m, sCmd
+			return m, m.writeStream("\n" + agentError("error", msg.err))
 		}
 		return m, nil
 
@@ -606,14 +576,9 @@ func (m Model) View() string {
 	}
 
 	// Boot splash takes over the screen for splashDuration milliseconds so
-	// the brand banner lands before the operator starts typing. Skipped in
-	// modeSetup so re-running the wizard mid-session never re-shows it.
-	if !m.splashDone && m.mode == modeMain {
+	// the brand banner lands before the operator starts typing.
+	if !m.splash.done {
 		return m.renderSplash()
-	}
-
-	if m.mode == modeSetup && m.setupWiz != nil {
-		return m.setupWiz.View()
 	}
 
 	header := m.header.View()
@@ -754,10 +719,10 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 
 	if evt.Token != "" {
 		// Switch the thinking row from verb-cycling to "Streaming" once
-		// real bytes arrive. agentTokens is a coarse char-rate stand-in
+		// real bytes arrive. tokens is a coarse char-rate stand-in
 		// until evt.Usage from the provider gives us a true token count.
-		m.agentStreaming = true
-		m.agentTokens += approxTokens(evt.Token)
+		m.thinking.streaming = true
+		m.thinking.tokens += approxTokens(evt.Token)
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamTokenMsg(evt.Token))
 		cmds = append(cmds, sCmd)
@@ -790,20 +755,18 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 		// Prefer the provider's authoritative output-token count over the
 		// approxTokens estimator built up from streaming chunks.
 		if evt.Usage.Output > 0 {
-			m.agentTokens = evt.Usage.Output
+			m.thinking.tokens = evt.Usage.Output
 		}
 		var hCmd tea.Cmd
 		m.header, hCmd = m.header.Update(headerStateMsg{cost: evt.Usage.USD})
 		cmds = append(cmds, hCmd)
 	}
 	if evt.Approval != nil {
-		// A high-risk tool call has paused the agent. Close the palette so
-		// the y/N keystroke goes to the approval gate (Update routes
-		// palette-active keystrokes first; an open palette would swallow
-		// the response and leave the agent goroutine blocked on Reply).
-		if m.palette.Active() {
-			m.palette.Close()
-		}
+		// A high-risk tool call has paused the agent. Any open overlay
+		// (palette suggestions, arrow picker) must yield so the y/N
+		// keystroke reaches the approval gate; otherwise the agent
+		// goroutine stays blocked on Reply.
+		m.dismissOpenOverlays()
 		m.pendingApproval = evt.Approval
 	}
 
@@ -819,6 +782,25 @@ func (m *Model) writeStream(s string) tea.Cmd {
 	m.stream, c = m.stream.Update(streamTokenMsg(s))
 	m.prompt.SetValue("")
 	return c
+}
+
+// agentError formats an in-stream diagnostic line for the operator.
+// All error surfaces in the TUI (scope, scan, save, agent, …) route
+// through this so the bracket convention stays uniform and a future
+// localisation pass touches one helper.
+func agentError(scope string, err error) string {
+	return fmt.Sprintf("[%s: %v]\n", scope, err)
+}
+
+// dismissOpenOverlays closes any blocking surface that would swallow
+// keystrokes meant for a higher-priority handler (e.g. the approval
+// gate, the global Ctrl+C). Both the slash-command palette and the
+// arrow picker currently qualify. Idempotent.
+func (m *Model) dismissOpenOverlays() {
+	if m.palette.Active() {
+		m.palette.Close()
+	}
+	m.arrowPicker = nil
 }
 
 // handlePaletteAction dispatches a palette selection.
@@ -910,59 +892,24 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 	return nil
 }
 
-// enterSetup starts the stream-inline /setup conversation. The legacy
-// full-screen wizard (modeSetup + setup.NewWizardModel) is no longer
-// used from the TUI — the CLI `cloudy setup` entry point in cmd/main.go
-// still drives setup.Run directly for non-interactive bootstrap.
+// enterSetup starts the stream-inline /setup conversation. The full-screen
+// wizard (legacy modeSetup branch) is gone; the CLI `cloudy setup` entry in
+// cmd/main.go still drives setup.Run directly for non-interactive bootstrap.
+//
+// The discovery scan respects internal/discovery's own 30 s deadline, so the
+// chat does not need to hold a cancellable context — plain Background is
+// enough and avoids the leak that the deleted exitSetup helper used to clean
+// up.
 func (m *Model) enterSetup() tea.Cmd {
-	m.setupCtx, m.setupCancel = context.WithCancel(context.Background())
-	chat, greeting := newSetupChat(m.setupCtx, "", config.Path(), config.ProfilePath())
+	chat, greeting := newSetupChat(context.Background(), "", config.Path(), config.ProfilePath())
 	m.prompt.SetValue("")
 	if chat == nil {
-		// No kubeconfig contexts found: write the greeting (which is
-		// the error message in that branch) and don't enter chat mode.
+		// No kubeconfig contexts found: the greeting is the error message;
+		// just write it without installing the conversation.
 		return m.writeStream(greeting)
 	}
 	m.setupChat = chat
 	return m.writeStream(greeting)
-}
-
-// exitSetup returns the model to modeMain, cancels the wizard context, writes
-// a status line to the stream based on SaveErr(), and resets the welcome
-// banner to its compact form.
-func (m *Model) exitSetup() {
-	aborted := false
-	var saveErr error
-	if m.setupWiz != nil {
-		aborted = m.setupWiz.Aborted()
-		saveErr = m.setupWiz.SaveErr()
-	}
-
-	if m.setupCancel != nil {
-		m.setupCancel()
-	}
-	m.setupCancel = nil
-	m.setupCtx = nil
-	m.setupWiz = nil
-	m.mode = modeMain
-
-	var line string
-	switch {
-	case saveErr != nil:
-		line = "[setup error: " + saveErr.Error() + "]\n"
-	case aborted:
-		line = "[setup aborted]\n"
-	default:
-		line = "[setup complete]\n"
-		m.footer.SetState(footerStateReady)
-	}
-	var sCmd tea.Cmd
-	m.stream, sCmd = m.stream.Update(streamTokenMsg(line))
-	_ = sCmd
-
-	// After /setup the user has been here before — drop the full banner.
-	m.welcome = NewWelcomeModel(false, m.deps.InitialCtx)
-	m.welcome.SetWidth(m.width)
 }
 
 // splashDotsStyle is the lighter sky-blue colour used by the splash
@@ -1007,12 +954,12 @@ func (m Model) renderThinkingRow() string {
 	if !m.running {
 		return ""
 	}
-	elapsed := formatThinkingElapsed(time.Since(m.agentRunStart))
+	elapsed := formatThinkingElapsed(time.Since(m.thinking.start))
 	verb := "Streaming"
-	if !m.agentStreaming {
-		verb = thinkingVerbs[m.agentVerbIdx] + "…"
+	if !m.thinking.streaming {
+		verb = thinkingVerbs[m.thinking.verbIdx] + "…"
 	}
-	line := fmt.Sprintf("✦ %s   (%s · %d tokens)", verb, elapsed, m.agentTokens)
+	line := fmt.Sprintf("✦ %s   (%s · %d tokens)", verb, elapsed, m.thinking.tokens)
 	return thinkingStyle.Render(line)
 }
 
@@ -1069,12 +1016,53 @@ func thinkingTickCmd() tea.Cmd {
 	return tea.Tick(thinkingTickInterval, func(time.Time) tea.Msg { return thinkingTickMsg{} })
 }
 
+// thinkingState bundles every field that drives the in-flight agent
+// row. The fields always mutate together (set in submitMsg, cleared in
+// agentDoneMsg, read in renderThinkingRow) — keeping them on one
+// struct makes the lifetime explicit and lets the helpers replace
+// 5-line reset/tick sequences with a single call.
+type thinkingState struct {
+	start     time.Time
+	tokens    int
+	verbIdx   int
+	streaming bool
+	tickCount int
+}
+
+// reset begins a new in-flight run. Verb index is seeded from the
+// nanosecond clock so consecutive runs feel different.
+func (t *thinkingState) reset() {
+	*t = thinkingState{
+		start:   time.Now(),
+		verbIdx: int(time.Now().UnixNano()) % len(thinkingVerbs),
+	}
+	if t.verbIdx < 0 {
+		t.verbIdx += len(thinkingVerbs)
+	}
+}
+
+// tick advances the rotating-verb animation.
+func (t *thinkingState) tick() {
+	t.tickCount++
+	if t.tickCount%thinkingVerbRotateTicks == 0 {
+		t.verbIdx = (t.verbIdx + 1) % len(thinkingVerbs)
+	}
+}
+
+// splashState bundles the brand-banner gate. done flips once the
+// splashDuration has elapsed; frame drives the dots animation.
+type splashState struct {
+	start time.Time
+	done  bool
+	frame int
+}
+
 // renderSplash returns the boot splash frame: the welcome banner with an
-// animated "initialising…" trailer driven by splashFrame. Padded with a
+// animated "initialising…" trailer driven by splash.frame. Padded with a
 // blank line so the body lands roughly mid-screen on a typical terminal.
 func (m Model) renderSplash() string {
 	banner := m.welcome.View()
-	dots := strings.Repeat(".", (m.splashFrame%3)+1)
+	dots := strings.Repeat(".", (m.splash.frame%3)+1)
 	trailer := "  " + splashDotsStyle.Render("initialising"+dots)
 	return banner + "\n\n" + trailer
 }
@@ -1104,10 +1092,7 @@ func renderUpdateInstructions() string {
 func (m *Model) handleScopeCmd(arg string) tea.Cmd {
 	sc, err := parseScope(arg)
 	if err != nil {
-		var sCmd tea.Cmd
-		m.stream, sCmd = m.stream.Update(streamTokenMsg("[scope error: " + err.Error() + "]\n"))
-		m.prompt.SetValue("")
-		return sCmd
+		return m.writeStream(agentError("scope error", err))
 	}
 
 	m.scope = sc
@@ -1124,15 +1109,11 @@ func (m *Model) handleScopeCmd(arg string) tea.Cmd {
 	m.header, hCmd = m.header.Update(headerStateMsg{scope: scopeStr})
 	cmds = append(cmds, hCmd)
 
-	var feedback string
-	if sc.Empty() {
-		feedback = "[scope reset]\n"
-	} else {
+	feedback := "[scope reset]\n"
+	if !sc.Empty() {
 		feedback = "[scope set: " + sc.String() + "]\n"
 	}
-	var sCmd tea.Cmd
-	m.stream, sCmd = m.stream.Update(streamTokenMsg(feedback))
-	cmds = append(cmds, sCmd)
+	cmds = append(cmds, m.writeStream(feedback))
 
 	m.prompt.SetValue("")
 	return tea.Batch(cmds...)

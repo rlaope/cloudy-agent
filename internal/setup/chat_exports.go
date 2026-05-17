@@ -8,6 +8,15 @@ import (
 	"github.com/rlaope/cloudy/internal/discovery"
 )
 
+// ListKubeconfigContexts returns the names of every context present
+// in the kubeconfig at path. An empty path falls back to clientcmd's
+// default loading rules. Wraps the unexported listKubeconfigContexts
+// helper so the TUI's stream-inline /setup flow can enumerate
+// contexts without duplicating clientcmd plumbing.
+func ListKubeconfigContexts(path string) ([]string, error) {
+	return listKubeconfigContexts(path)
+}
+
 // ScanResultsForContexts is an exported wrapper around the private
 // scanContextsConcurrent so the TUI's stream-inline /setup flow can
 // reuse the same per-context probe the full-screen wizard uses.
