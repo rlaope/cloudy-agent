@@ -598,6 +598,34 @@ func TestPaletteAction_Update_WritesInstructions(t *testing.T) {
 	}
 }
 
+// TestWriteStream_TwoCallsNoPanic regresses the strings.Builder copy
+// panic that hit /login: StreamModel.Update has a value receiver, so a
+// non-zero strings.Builder was copied and Go's runtime rejected the
+// second write. Holding the Builder behind a pointer fixes it; two
+// back-to-back writeStream calls must run cleanly through stream.Update
+// without recovering from a panic.
+func TestWriteStream_TwoCallsNoPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("writeStream panicked on second call: %v", r)
+		}
+	}()
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	if c := m.writeStream("first\n"); c != nil {
+		c()
+	}
+	if c := m.writeStream("second\n"); c != nil {
+		c()
+	}
+	if !strings.Contains(m.stream.content.String(), "first") ||
+		!strings.Contains(m.stream.content.String(), "second") {
+		t.Errorf("stream missing one of the writes: %q", m.stream.content.String())
+	}
+}
+
 // TestPaletteAction_SetUpAlias_EntersSetup confirms /set-up routes to the
 // same wizard entry point as /setup.
 func TestPaletteAction_SetUpAlias_EntersSetup(t *testing.T) {
