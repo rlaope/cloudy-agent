@@ -200,6 +200,11 @@ type Model struct {
 	agentVerbIdx      int
 	agentStreaming    bool
 	thinkingTickCount int
+
+	// Active inline conversation, if any. Mutually exclusive: only one
+	// of these is non-nil at a time. submitMsg routes to whichever is
+	// active before falling through to the agent.
+	loginChat *loginChat
 }
 
 // NewModel constructs the root TUI model.
@@ -403,6 +408,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case submitMsg:
 		val := string(msg)
+
+		// Inline conversations (e.g. /login) capture every plain submit
+		// until they signal done. Slash commands still resolve through
+		// the palette path below, so the operator can /cancel a login
+		// flow with /quit or similar without typing into the prompt.
+		if m.loginChat != nil && !strings.HasPrefix(val, "/") {
+			res := m.loginChat.Step(val)
+			if res.done {
+				m.loginChat = nil
+			}
+			return m, m.writeStream(res.out)
+		}
+
 		if strings.HasPrefix(val, "/scope ") {
 			return m, m.handleScopeCmd(strings.TrimPrefix(val, "/scope "))
 		}
@@ -788,6 +806,12 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 	case "setup", "set-up":
 		m.prompt.SetValue("")
 		return m.enterSetup()
+
+	case "login":
+		m.prompt.SetValue("")
+		chat, greeting := newLoginChat()
+		m.loginChat = chat
+		return m.writeStream(greeting)
 	}
 
 	m.prompt.SetValue("")
@@ -1039,6 +1063,7 @@ func helpText() string {
 
 commands (type / to open suggestions; arrow keys to pick):
   /setup              run the discovery wizard (alias: /set-up)
+  /login              save an LLM provider API key inline
   /skill <name>       switch active skill
   /use <ctx>          switch kubeconfig context
   /model <id>         switch model
