@@ -85,10 +85,26 @@ func formatElapsed(d time.Duration) string {
 	return fmt.Sprintf("%02d:%02d", s/60, s%60)
 }
 
-// renderToolHeader returns the unstyled header string for a tool call with
-// the given elapsed duration appended as [MM:SS].
+// renderToolHeader returns the unstyled header string for a tool call.
+// Format matches Claude's CLI: a filled bullet, the tool name, the
+// truncated args, and a parenthesised elapsed timer. Styling (sky-blue
+// bullet + bold name + dim args/timer) is applied by the parent
+// stream renderer; the unstyled form is what tick logic substitutes
+// in/out of the content builder, so styles are re-applied on every
+// refresh consistently.
 func renderToolHeader(name, args string, elapsed time.Duration) string {
-	return fmt.Sprintf("▶ tool: %s(%s) [%s]", name, args, formatElapsed(elapsed))
+	return fmt.Sprintf("● %s(%s) (%s)", name, truncateToolArgs(args), formatElapsed(elapsed))
+}
+
+// truncateToolArgs keeps the args readable by clipping anything past
+// ~60 chars and adding an ellipsis. Matches Claude's "Read(file.txt)"
+// style — the operator sees what was called, not a JSON dump.
+func truncateToolArgs(s string) string {
+	const max = 60
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-1] + "…"
 }
 
 // tickToolCmd returns a tea.Cmd that fires one streamToolTickMsg after
@@ -252,13 +268,35 @@ func (s StreamModel) Empty() bool {
 	return s.content.Len() == 0
 }
 
-// indentObs prepends prefix to every non-empty line.
+// indentObs renders a tool observation block in Claude's continuation
+// style: the first non-empty line gets the "⎿  " branch glyph, every
+// subsequent non-empty line gets aligned padding so the visual rail
+// stays straight. Empty lines are passed through untouched so a result
+// containing blank separators still reads correctly.
+//
+// prefix is kept as the function parameter for backward compatibility
+// with the existing call site, but is now treated as the secondary
+// per-line indent (default "  " from the caller). The branch glyph is
+// fixed.
 func indentObs(text, prefix string) string {
+	const branch = "⎿  "
 	lines := strings.Split(text, "\n")
+	first := true
 	for i, l := range lines {
-		if l != "" {
-			lines[i] = prefix + l
+		if l == "" {
+			continue
 		}
+		if first {
+			lines[i] = branch + l
+			first = false
+			continue
+		}
+		// Align subsequent lines under the branch glyph. branch is
+		// three columns wide ("⎿" + two spaces); prefix is the
+		// existing two-space indent so the total prefix width
+		// matches.
+		_ = prefix
+		lines[i] = "   " + l
 	}
 	return strings.Join(lines, "\n")
 }

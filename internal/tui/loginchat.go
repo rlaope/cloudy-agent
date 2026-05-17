@@ -59,24 +59,32 @@ var loginProviders = []loginProvider{
 	{"moonshot", "MOONSHOT_API_KEY", "Kimi — kimi-k2-instruct, …", "kimi-k2-instruct"},
 }
 
-// loginResult is what every Step returns: stream output to print, plus
-// whether the conversation is finished (parent clears the active chat).
+// loginResult is what every Step returns: stream output to print, an
+// optional arrow-picker the parent should activate, and a done flag
+// the parent uses to clear the active chat.
 type loginResult struct {
-	out  string
-	done bool
+	out    string
+	picker *arrowPicker
+	done   bool
 }
 
-// newLoginChat starts a fresh login conversation. The returned greeting
-// is the first stream-write the caller should append.
-func newLoginChat() (*loginChat, string) {
-	var b strings.Builder
-	b.WriteString("\n--- /login — add an LLM API key ---\n")
-	b.WriteString("Pick a provider:\n")
-	for i, p := range loginProviders {
-		fmt.Fprintf(&b, "  %d. %-10s (%s)\n", i+1, p.key, p.hint)
+// newLoginChat starts a fresh login conversation. The greeting is one
+// line; the actual provider menu is an arrow-picker the parent
+// activates from the returned loginResult.
+func newLoginChat() (*loginChat, loginResult) {
+	greeting := "\n--- /login — add an LLM API key ---\n"
+	items := make([]arrowPickerItem, 0, len(loginProviders))
+	for _, p := range loginProviders {
+		items = append(items, arrowPickerItem{
+			label: p.key,
+			hint:  p.hint,
+			key:   p.key,
+		})
 	}
-	b.WriteString("\nType a number, the provider name, or 'cancel':\n")
-	return &loginChat{step: 0}, b.String()
+	return &loginChat{step: 0}, loginResult{
+		out:    greeting,
+		picker: newArrowPicker("Pick an LLM provider:", items),
+	}
 }
 
 // Step advances the conversation by one operator answer.

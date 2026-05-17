@@ -5,13 +5,30 @@ import (
 	"testing"
 )
 
-// TestLoginChat_NumberSelection drives the picker with a numeric input
-// and confirms the conversation advances to the key-prompt step.
-func TestLoginChat_NumberSelection(t *testing.T) {
-	chat, greeting := newLoginChat()
-	if !strings.Contains(greeting, "1. anthropic") {
-		t.Errorf("greeting should list providers as a numbered menu, got: %q", greeting)
+// TestLoginChat_Greeting_ProvidesArrowPicker confirms newLoginChat
+// returns a picker spec instead of dumping options into the greeting.
+func TestLoginChat_Greeting_ProvidesArrowPicker(t *testing.T) {
+	_, res := newLoginChat()
+	if res.picker == nil {
+		t.Fatal("newLoginChat should return an arrow picker for provider selection")
 	}
+	if len(res.picker.items) != len(loginProviders) {
+		t.Errorf("picker should have %d items, got %d", len(loginProviders), len(res.picker.items))
+	}
+	if res.picker.items[0].key != "anthropic" {
+		t.Errorf("first picker item should be anthropic, got %q", res.picker.items[0].key)
+	}
+	if !strings.Contains(res.out, "/login") {
+		t.Errorf("greeting should announce /login, got: %q", res.out)
+	}
+}
+
+// TestLoginChat_NumberSelection drives Step with a numeric input and
+// confirms the conversation advances to the key-prompt step. Number
+// selection is retained as a typed fallback for terminals where the
+// arrow picker can't render (NO_COLOR, dumb TTYs, etc.).
+func TestLoginChat_NumberSelection(t *testing.T) {
+	chat, _ := newLoginChat()
 	res := chat.Step("2")
 	if res.done {
 		t.Error("step 0 with valid number should not be done")
@@ -24,8 +41,8 @@ func TestLoginChat_NumberSelection(t *testing.T) {
 	}
 }
 
-// TestLoginChat_NameSelection drives the picker with a provider name
-// and confirms it resolves to the same advance state.
+// TestLoginChat_NameSelection drives Step with a provider name and
+// confirms it resolves to the same advance state.
 func TestLoginChat_NameSelection(t *testing.T) {
 	chat, _ := newLoginChat()
 	res := chat.Step("google")

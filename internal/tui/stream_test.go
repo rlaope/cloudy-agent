@@ -33,8 +33,8 @@ func TestStreamModel_ToolBeginEmitsTick(t *testing.T) {
 	if out.pendingTool == nil {
 		t.Fatal("pendingTool should be set after streamToolBeginMsg")
 	}
-	if !strings.Contains(out.content.String(), "[00:00]") {
-		t.Errorf("initial header should contain [00:00], got %q", out.content.String())
+	if !strings.Contains(out.content.String(), "(00:00)") {
+		t.Errorf("initial header should contain (00:00), got %q", out.content.String())
 	}
 }
 
@@ -49,10 +49,10 @@ func TestStreamModel_TickUpdatesElapsedHeader(t *testing.T) {
 		t.Fatal("tick while tool in flight should re-issue tickCmd")
 	}
 	body := s3.content.String()
-	if strings.Contains(body, "[00:00]") {
-		t.Errorf("old [00:00] header should have been replaced: %q", body)
+	if strings.Contains(body, "(00:00)") {
+		t.Errorf("old (00:00) header should have been replaced: %q", body)
 	}
-	if !strings.Contains(body, "[00:05]") && !strings.Contains(body, "[00:06]") {
+	if !strings.Contains(body, "(00:05)") && !strings.Contains(body, "(00:06)") {
 		t.Errorf("header should reflect ~5s elapsed: %q", body)
 	}
 }
