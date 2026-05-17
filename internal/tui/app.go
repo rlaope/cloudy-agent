@@ -259,7 +259,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.splashFrame++
 		if time.Since(m.splashStart) >= splashDuration {
 			m.splashDone = true
-			return m, nil
+			// Seed the stream with the welcome banner so it scrolls up
+			// naturally as the operator starts chatting instead of
+			// disappearing on the first input.
+			var sCmd tea.Cmd
+			m.stream, sCmd = m.stream.Update(streamTokenMsg(m.welcome.View() + "\n\n"))
+			return m, sCmd
 		}
 		return m, splashTickCmd()
 
@@ -385,7 +390,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if val == "/setup" || strings.HasPrefix(val, "/setup ") {
 			return m, m.enterSetup()
 		}
-		return m, m.runAgent(val)
+		// Echo the user's question into the stream so it scrolls up
+		// alongside the agent's answer; otherwise the operator only
+		// sees the response and loses track of what was asked.
+		echo := userEchoStyle.Render("> "+val) + "\n"
+		var sCmd tea.Cmd
+		m.stream, sCmd = m.stream.Update(streamTokenMsg("\n" + echo))
+		return m, tea.Batch(sCmd, m.runAgent(val))
 
 	case paletteActionMsg:
 		return m, m.handlePaletteAction(msg)
@@ -481,6 +492,11 @@ func (m Model) View() string {
 	// rendered height from the terminal height. lipgloss.Height counts rows
 	// correctly even when content wraps, so this stays correct in narrow
 	// split panes.
+	//
+	// chromeBottomPad reserves two extra rows below the footer: one as
+	// breathing room between the prompt and the footer, one as bottom
+	// padding so the TUI doesn't sit flush against the terminal edge.
+	const chromeBottomPad = 2
 	headerH := lipgloss.Height(header)
 	promptH := lipgloss.Height(prompt)
 	paletteH := lipgloss.Height(paletteView)
@@ -489,7 +505,7 @@ func (m Model) View() string {
 	if banner != "" {
 		bannerH = lipgloss.Height(banner)
 	}
-	bodyH := m.height - headerH - promptH - paletteH - footerH - bannerH
+	bodyH := m.height - headerH - promptH - paletteH - footerH - bannerH - chromeBottomPad
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -501,9 +517,9 @@ func (m Model) View() string {
 	}
 
 	// Composed bottom-up: header → body (stream/welcome) → optional approval
-	// banner → prompt → optional palette suggestions → status footer. The
-	// footer sits at the very bottom (Claude-style) so version + setup state
-	// + active model are always visible without scrolling.
+	// banner → prompt → optional palette suggestions → blank separator →
+	// status footer → blank bottom padding. The trailing blank lifts the
+	// footer off the terminal edge so the chrome doesn't feel cramped.
 	parts := []string{header, body}
 	if banner != "" {
 		parts = append(parts, banner)
@@ -512,7 +528,7 @@ func (m Model) View() string {
 	if paletteView != "" {
 		parts = append(parts, paletteView)
 	}
-	parts = append(parts, footer)
+	parts = append(parts, "", footer, "")
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
@@ -773,6 +789,12 @@ func (m *Model) exitSetup() {
 // trailer. Kept at package scope so the splash tick (120ms) does not
 // rebuild the style on every frame.
 var splashDotsStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("153"))
+
+// userEchoStyle renders the "> <input>" line that mirrors the operator's
+// last submitted prompt back into the stream. Bright white + bold so it
+// stands out from the dim tool blocks and the obs body around it.
+var userEchoStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("15")).Bold(true)
 
 // renderSplash returns the boot splash frame: the welcome banner with an
 // animated "initialising…" trailer driven by splashFrame. Padded with a
