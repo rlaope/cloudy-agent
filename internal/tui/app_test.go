@@ -482,38 +482,29 @@ func TestWelcome_VisibleOnEmptyStream(t *testing.T) {
 	}
 }
 
-// TestSetupMode_Toggle drives the model through a /setup submit, confirms
-// it enters modeSetup, then simulates the wizard finishing and confirms the
-// model returns to modeMain.
-func TestSetupMode_Toggle(t *testing.T) {
+// TestSetupSubmit_EntersInlineChat drives the model through a /setup
+// submit and confirms either the inline conversation starts (when a
+// kubeconfig is available) or the no-kubeconfig error is written to the
+// stream. Both paths are valid for environments where the test runs.
+func TestSetupSubmit_EntersInlineChat(t *testing.T) {
 	m := NewModel(makeDeps())
 	next, _ := m.Update(windowMsg())
 	m = next.(Model)
 
-	// Submit "/setup" as if the user pressed Enter on the slash command.
 	next, cmd := m.Update(submitMsg("/setup"))
 	m = next.(Model)
 	if cmd != nil {
 		cmd()
 	}
 
-	if m.mode != modeSetup {
-		t.Fatalf("after /setup submit, mode = %v, want modeSetup", m.mode)
+	out := m.stream.content.String()
+	hasGreeting := strings.Contains(out, "--- /setup")
+	hasNoKubeconfig := strings.Contains(out, "no kubeconfig contexts")
+	if !hasGreeting && !hasNoKubeconfig {
+		t.Errorf("/setup should emit a greeting or no-kubeconfig error, got: %q", out)
 	}
-	if m.setupWiz == nil {
-		t.Fatal("after /setup submit, setupWiz should be non-nil")
-	}
-
-	// Simulate the wizard reporting Done by forcing it to a terminal state.
-	// We can't poke the unexported wizard state directly, so instead we
-	// trigger the exit path manually and confirm the mode flips back.
-	m.exitSetup()
-
-	if m.mode != modeMain {
-		t.Errorf("after exitSetup, mode = %v, want modeMain", m.mode)
-	}
-	if m.setupWiz != nil {
-		t.Errorf("after exitSetup, setupWiz should be nil")
+	if hasGreeting && m.setupChat == nil {
+		t.Error("greeting was emitted but setupChat is nil")
 	}
 }
 
@@ -529,11 +520,9 @@ func TestSetupPaletteAction_EntersSetup(t *testing.T) {
 		cmd()
 	}
 
-	if m.mode != modeSetup {
-		t.Errorf("after palette setup action, mode = %v, want modeSetup", m.mode)
-	}
-	if m.setupWiz == nil {
-		t.Error("after palette setup action, setupWiz should be non-nil")
+	out := m.stream.content.String()
+	if !strings.Contains(out, "--- /setup") && !strings.Contains(out, "no kubeconfig contexts") {
+		t.Errorf("palette setup action should emit a greeting or no-kubeconfig error, got: %q", out)
 	}
 }
 
@@ -621,7 +610,8 @@ func TestPaletteAction_SetUpAlias_EntersSetup(t *testing.T) {
 		cmd()
 	}
 
-	if m.mode != modeSetup {
-		t.Errorf("set-up alias should enter modeSetup, got %v", m.mode)
+	out := m.stream.content.String()
+	if !strings.Contains(out, "--- /setup") && !strings.Contains(out, "no kubeconfig contexts") {
+		t.Errorf("set-up alias should emit a greeting or no-kubeconfig error, got: %q", out)
 	}
 }

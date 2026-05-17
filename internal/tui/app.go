@@ -205,6 +205,7 @@ type Model struct {
 	// of these is non-nil at a time. submitMsg routes to whichever is
 	// active before falling through to the agent.
 	loginChat *loginChat
+	setupChat *setupChat
 }
 
 // NewModel constructs the root TUI model.
@@ -409,9 +410,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case submitMsg:
 		val := string(msg)
 
-		// Inline conversations (e.g. /login) capture every plain submit
-		// until they signal done. Slash commands still resolve through
-		// the palette path below, so the operator can /cancel a login
+		// Inline conversations (e.g. /login, /setup) capture every plain
+		// submit until they signal done. Slash commands still resolve
+		// through the palette path below, so the operator can /cancel a
 		// flow with /quit or similar without typing into the prompt.
 		if m.loginChat != nil && !strings.HasPrefix(val, "/") {
 			res := m.loginChat.Step(val)
@@ -419,6 +420,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loginChat = nil
 			}
 			return m, m.writeStream(res.out)
+		}
+		if m.setupChat != nil && !strings.HasPrefix(val, "/") {
+			res := m.setupChat.Step(val)
+			if res.done {
+				m.setupChat = nil
+			}
+			cmds := []tea.Cmd{m.writeStream(res.out)}
+			if res.cmd != nil {
+				cmds = append(cmds, res.cmd)
+			}
+			return m, tea.Batch(cmds...)
 		}
 
 		if strings.HasPrefix(val, "/scope ") {
@@ -483,6 +495,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentEventMsg:
 		evt := AgentEvent(msg)
 		return m, m.applyAgentEvent(evt)
+
+	case setupScanDoneMsg, setupSaveDoneMsg:
+		if m.setupChat == nil {
+			return m, nil
+		}
+		res := m.setupChat.Apply(msg)
+		if res.done {
+			m.setupChat = nil
+		}
+		cmds := []tea.Cmd{m.writeStream(res.out)}
+		if res.cmd != nil {
+			cmds = append(cmds, res.cmd)
+		}
+		return m, tea.Batch(cmds...)
 
 	case agentDoneMsg:
 		m.running = false
@@ -818,22 +844,21 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 	return nil
 }
 
-// enterSetup transitions the model into modeSetup, constructs a fresh wizard
-// bound to a cancellable context, and returns the wizard's Init command.
+// enterSetup starts the stream-inline /setup conversation. The legacy
+// full-screen wizard (modeSetup + setup.NewWizardModel) is no longer
+// used from the TUI — the CLI `cloudy setup` entry point in cmd/main.go
+// still drives setup.Run directly for non-interactive bootstrap.
 func (m *Model) enterSetup() tea.Cmd {
 	m.setupCtx, m.setupCancel = context.WithCancel(context.Background())
-	m.setupWiz = setup.NewWizardModel(m.setupCtx, setup.WizardOptions{
-		ConfigPath:  config.Path(),
-		ProfilePath: config.ProfilePath(),
-	})
-	m.mode = modeSetup
+	chat, greeting := newSetupChat(m.setupCtx, "", config.Path(), config.ProfilePath())
 	m.prompt.SetValue("")
-	if m.setupWiz == nil {
-		// Defensive: if the wizard could not be created, fall back to main.
-		m.exitSetup()
-		return nil
+	if chat == nil {
+		// No kubeconfig contexts found: write the greeting (which is
+		// the error message in that branch) and don't enter chat mode.
+		return m.writeStream(greeting)
 	}
-	return m.setupWiz.Init()
+	m.setupChat = chat
+	return m.writeStream(greeting)
 }
 
 // exitSetup returns the model to modeMain, cancels the wizard context, writes
