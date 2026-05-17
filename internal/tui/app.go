@@ -206,6 +206,11 @@ type Model struct {
 	// active before falling through to the agent.
 	loginChat *loginChat
 	setupChat *setupChat
+
+	// Active arrow-key picker, set by chats that want a Claude-style
+	// HITL menu instead of free-text input. While non-nil the parent
+	// routes ↑/↓/Enter/Esc to the picker and swallows other keys.
+	arrowPicker *arrowPicker
 }
 
 // NewModel constructs the root TUI model.
@@ -294,6 +299,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, thinkingTickCmd()
 
 	case tea.KeyMsg:
+		// Arrow picker takes the screen first: while a Claude-style HITL
+		// menu is open, ↑/↓/Enter/Esc are routed to the picker and all
+		// other keys are swallowed so the operator cannot accidentally
+		// drift past the decision. Ctrl+C still escalates so the global
+		// cancel/quit shortcut keeps working.
+		if m.arrowPicker != nil {
+			switch msg.String() {
+			case "up", "k":
+				m.arrowPicker.MoveUp()
+				return m, nil
+			case "down", "j":
+				m.arrowPicker.MoveDown()
+				return m, nil
+			case "enter":
+				sel := m.arrowPicker.Selected()
+				return m, arrowPickerResolveCmd(sel.key, false)
+			case "esc":
+				return m, arrowPickerResolveCmd("", true)
+			case "ctrl+c":
+				// Cancel the picker first, then fall through to the
+				// standard ctrl+c handler below.
+				m.arrowPicker = nil
+			default:
+				return m, nil
+			}
+		}
+
 		// Palette is active. Nav keys go to the palette; text keys flow into
 		// the prompt so the user can keep typing past the '/', and the
 		// palette then refilters against the new prompt value.
@@ -473,6 +505,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, tea.Batch(sCmd, m.runAgent(val), thinkingTickCmd())
 
+	case arrowPickerResolveMsg:
+		// Picker has fired its decision. Route the answer to whichever
+		// inline chat is active; if none, just drop the picker.
+		m.arrowPicker = nil
+		input := msg.key
+		if msg.cancelled {
+			input = "cancel"
+		}
+		if m.loginChat != nil {
+			res := m.loginChat.Step(input)
+			if res.done {
+				m.loginChat = nil
+			}
+			if res.picker != nil {
+				m.arrowPicker = res.picker
+			}
+			return m, m.writeStream(res.out)
+		}
+		return m, nil
+
 	case paletteActionMsg:
 		return m, m.handlePaletteAction(msg)
 
@@ -569,6 +621,10 @@ func (m Model) View() string {
 	paletteView := m.palette.View()
 	footer := m.footer.View()
 	thinking := m.renderThinkingRow()
+	pickerView := ""
+	if m.arrowPicker != nil {
+		pickerView = m.arrowPicker.View()
+	}
 
 	// Approval banner sits directly above the prompt (Claude-style) so the
 	// operator cannot miss it. Composed at View time so the agent goroutine
@@ -600,7 +656,11 @@ func (m Model) View() string {
 	if thinking != "" {
 		thinkingH = lipgloss.Height(thinking)
 	}
-	bodyH := m.height - headerH - promptH - paletteH - footerH - bannerH - thinkingH - chromeBottomPad
+	pickerH := 0
+	if pickerView != "" {
+		pickerH = lipgloss.Height(pickerView)
+	}
+	bodyH := m.height - headerH - promptH - paletteH - footerH - bannerH - thinkingH - pickerH - chromeBottomPad
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -622,6 +682,9 @@ func (m Model) View() string {
 	}
 	if thinking != "" {
 		parts = append(parts, thinking)
+	}
+	if pickerView != "" {
+		parts = append(parts, pickerView)
 	}
 	parts = append(parts, prompt)
 	if paletteView != "" {
@@ -835,9 +898,12 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 
 	case "login":
 		m.prompt.SetValue("")
-		chat, greeting := newLoginChat()
+		chat, res := newLoginChat()
 		m.loginChat = chat
-		return m.writeStream(greeting)
+		if res.picker != nil {
+			m.arrowPicker = res.picker
+		}
+		return m.writeStream(res.out)
 	}
 
 	m.prompt.SetValue("")
