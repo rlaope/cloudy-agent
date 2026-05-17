@@ -134,6 +134,7 @@ type Model struct {
 	stream  StreamModel
 	prompt  PromptModel
 	palette PaletteModel
+	footer  FooterModel
 
 	deps        Deps
 	keys        keyMap
@@ -177,11 +178,17 @@ func NewModel(deps Deps) Model {
 	keys := defaultKeys()
 	noColor := false
 
+	state := "set-up done"
+	if deps.FirstRun {
+		state = "no set-up"
+	}
+
 	return Model{
 		header:  newHeaderModel(deps.InitialCtx, deps.InitialNS, deps.Model),
 		stream:  newStreamModel(noColor),
 		prompt:  newPromptModel(keys),
 		palette: newPaletteModel(),
+		footer:  NewFooterModel(state, deps.Model),
 		deps:    deps,
 		keys:    keys,
 		cancel:  func() {},
@@ -222,6 +229,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stream, sCmd = m.stream.Update(msg)
 		m.prompt, prCmd = m.prompt.Update(msg)
 		m.palette, paCmd = m.palette.Update(msg)
+		m.footer.SetWidth(msg.Width)
+		m.welcome.SetWidth(msg.Width)
 		return m, tea.Batch(hCmd, sCmd, prCmd, paCmd)
 
 	case tea.KeyMsg:
@@ -419,6 +428,7 @@ func (m Model) View() string {
 	header := m.header.View()
 	prompt := m.prompt.View()
 	paletteView := m.palette.View()
+	footer := m.footer.View()
 
 	// Approval banner sits directly above the prompt (Claude-style) so the
 	// operator cannot miss it. Composed at View time so the agent goroutine
@@ -436,11 +446,12 @@ func (m Model) View() string {
 	headerH := lipgloss.Height(header)
 	promptH := lipgloss.Height(prompt)
 	paletteH := lipgloss.Height(paletteView)
+	footerH := lipgloss.Height(footer)
 	bannerH := 0
 	if banner != "" {
 		bannerH = lipgloss.Height(banner)
 	}
-	bodyH := m.height - headerH - promptH - paletteH - bannerH
+	bodyH := m.height - headerH - promptH - paletteH - footerH - bannerH
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -452,8 +463,9 @@ func (m Model) View() string {
 	}
 
 	// Composed bottom-up: header → body (stream/welcome) → optional approval
-	// banner → prompt → optional palette suggestions. Palette below prompt
-	// matches Claude's slash-menu placement and frees the body area above.
+	// banner → prompt → optional palette suggestions → status footer. The
+	// footer sits at the very bottom (Claude-style) so version + setup state
+	// + active model are always visible without scrolling.
 	parts := []string{header, body}
 	if banner != "" {
 		parts = append(parts, banner)
@@ -462,6 +474,7 @@ func (m Model) View() string {
 	if paletteView != "" {
 		parts = append(parts, paletteView)
 	}
+	parts = append(parts, footer)
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
@@ -650,6 +663,7 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 			return sCmd
 		}
 		m.deps.Model = action.arg
+		m.footer.SetModel(action.arg)
 		var hCmd tea.Cmd
 		m.header, hCmd = m.header.Update(headerStateMsg{model: action.arg})
 		m.prompt.SetValue("")
@@ -726,6 +740,7 @@ func (m *Model) exitSetup() {
 		line = "[setup aborted]\n"
 	default:
 		line = "[setup complete]\n"
+		m.footer.SetState("set-up done")
 	}
 	var sCmd tea.Cmd
 	m.stream, sCmd = m.stream.Update(streamTokenMsg(line))
@@ -733,6 +748,7 @@ func (m *Model) exitSetup() {
 
 	// After /setup the user has been here before — drop the full banner.
 	m.welcome = NewWelcomeModel(false, m.deps.InitialCtx)
+	m.welcome.SetWidth(m.width)
 }
 
 // renderUpdateInstructions returns a self-update guide rather than running git
