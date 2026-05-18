@@ -366,10 +366,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, sCmd
 
 		case "esc":
-			m.cancel()
-			m.cancel = func() {}
-			m.running = false
-			return m, nil
+			return m, m.handleEscape()
 
 		case "tab":
 			// Open palette with current prompt content.
@@ -801,6 +798,43 @@ func (m *Model) dismissOpenOverlays() {
 		m.palette.Close()
 	}
 	m.arrowPicker = nil
+}
+
+// handleEscape resolves Esc from any baseline state and returns the
+// operator to a clean prompt. The palette / picker / approval-gate
+// branches catch Esc before we get here; this is the catch-all for
+// inline conversations and in-flight agent runs, plus a "clear the
+// prompt" fallback so a plain Esc never feels inert.
+//
+// Order matters: cancel the conversation that owns the prompt before
+// touching the agent, so a /login or /setup mid-flow ends cleanly
+// instead of leaving an orphan chat pointer behind.
+func (m *Model) handleEscape() tea.Cmd {
+	if m.loginChat != nil {
+		res := m.loginChat.Step("cancel")
+		m.loginChat = nil
+		m.dismissOpenOverlays()
+		return m.writeStream(res.out)
+	}
+	if m.setupChat != nil {
+		res := m.setupChat.Step("cancel")
+		m.setupChat = nil
+		m.dismissOpenOverlays()
+		return m.writeStream(res.out)
+	}
+	if m.running {
+		m.cancel()
+		m.cancel = func() {}
+		m.running = false
+		m.thinking.streaming = false
+		return nil
+	}
+	// Nothing to cancel — clear the prompt so Esc always feels like
+	// it did something instead of silently no-op'ing.
+	if m.prompt.Value() != "" {
+		m.prompt.SetValue("")
+	}
+	return nil
 }
 
 // handlePaletteAction dispatches a palette selection.
