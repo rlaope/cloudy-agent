@@ -26,7 +26,7 @@ cloudy never mutates infrastructure. Every call is `GET` / `LIST` /
 
 You type:
 
-> 결제 서비스 p99가 어제 새벽에 왜 튀었어?
+> Why did checkout-service p99 spike around 2am yesterday?
 
 cloudy plans the investigation, runs the relevant read-only probes
 (metrics, logs, traces, profiles), and explains what it found. The
@@ -66,13 +66,13 @@ The TUI opens. Two commands get you to the first question:
 Then ask:
 
 ```
- > 왜 payments-api pod가 자꾸 OOMKill 나?
+ > Why does the payments-api pod keep getting OOMKilled?
 ```
 
 Headless / CI usage:
 
 ```sh
-cloudy ask "왜 결제 서비스 응답시간이 느려?"   # one-shot
+cloudy ask "Why is the checkout service slow right now?"   # one-shot
 cloudy setup                                # non-interactive setup
 cloudy profile use payments-sre             # activate a permission profile
 cloudy profile cluster                      # show RBAC for current context
