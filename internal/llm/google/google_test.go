@@ -119,6 +119,7 @@ func TestStream_ToolCallNormalization(t *testing.T) {
 }
 
 func TestStream_MissingAPIKey(t *testing.T) {
+	t.Setenv("GOOGLE_API_KEY", "") // defeat the lazy env-fallback in resolveKey
 	p := redirectProvider("", "http://localhost")
 	_, err := p.Stream(context.Background(), llm.Request{Model: "gemini-1.5-pro"})
 	if err == nil {

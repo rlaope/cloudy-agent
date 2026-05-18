@@ -45,10 +45,13 @@ func init() {
 	llm.Register(New())
 }
 
-// New returns an Anthropic provider reading credentials from environment variables.
+// New returns an Anthropic provider. The API key is intentionally NOT
+// captured at construction time — registration happens in init() before
+// /login can run, so a captured key would always be empty for fresh
+// users. The key is read lazily from ANTHROPIC_API_KEY on every Stream
+// call so a post-startup secrets.Add takes effect on the next turn.
 func New() llm.Provider {
 	return &provider{
-		apiKey: os.Getenv("ANTHROPIC_API_KEY"),
 		client: &http.Client{Transport: llmTransport},
 	}
 }
@@ -56,9 +59,19 @@ func New() llm.Provider {
 // Name implements llm.Provider.
 func (p *provider) Name() string { return "anthropic" }
 
+// resolveKey returns the API key for this call. Test-injection field wins;
+// production leaves it empty and falls through to the env var.
+func (p *provider) resolveKey() string {
+	if p.apiKey != "" {
+		return p.apiKey
+	}
+	return os.Getenv("ANTHROPIC_API_KEY")
+}
+
 // Stream implements llm.Provider using Anthropic's streaming Messages API.
 func (p *provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Chunk, error) {
-	if p.apiKey == "" {
+	apiKey := p.resolveKey()
+	if apiKey == "" {
 		return nil, fmt.Errorf("%w: ANTHROPIC_API_KEY not set", llm.ErrMissingAPIKey)
 	}
 
@@ -73,7 +86,7 @@ func (p *provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Chun
 		return nil, fmt.Errorf("anthropic: new request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", p.apiKey)
+	httpReq.Header.Set("x-api-key", apiKey)
 	httpReq.Header.Set("anthropic-version", anthropicVer)
 	httpReq.Header.Set("Accept", "text/event-stream")
 
