@@ -67,12 +67,15 @@ var loginProviders = []loginProvider{
 }
 
 // loginResult is what every Step returns: stream output to print, an
-// optional arrow-picker the parent should activate, and a done flag
-// the parent uses to clear the active chat.
+// optional arrow-picker the parent should activate, a done flag the
+// parent uses to clear the active chat, and an optional swapToModel
+// the parent feeds into Deps.SwapModel so the just-saved provider
+// becomes active for the next turn without restarting cloudy.
 type loginResult struct {
-	out    string
-	picker *arrowPicker
-	done   bool
+	out         string
+	picker      *arrowPicker
+	done        bool
+	swapToModel string
 }
 
 // newLoginChat starts a fresh login conversation. The greeting is one
@@ -131,9 +134,9 @@ func (l *loginChat) Step(input string) loginResult {
 		}
 		out := fmt.Sprintf("✓ Saved as %s\n", p.envVar)
 		if p.suggested != "" {
-			out += fmt.Sprintf("  Next: /model %s (or pick another id from your provider)\n", p.suggested)
+			out += fmt.Sprintf("  → activating %s (use /model <id> to switch)\n", p.suggested)
 		}
-		return loginResult{out: out, done: true}
+		return loginResult{out: out, done: true, swapToModel: p.suggested}
 	}
 
 	return loginResult{out: "[login state confused; aborting]\n", done: true}

@@ -76,6 +76,11 @@ type Deps struct {
 	// Injected by run.go so that tests can stub it. cancel is closed by the
 	// TUI when the user cancels the in-flight request.
 	AgentRunner func(cancel <-chan struct{}, input string, emit func(AgentEvent))
+	// SwapModel hot-swaps the active LLM provider+model at runtime. /login
+	// calls it after persisting the API key so the just-saved provider
+	// becomes active for the next turn; /model <id> calls it directly.
+	// Injected by run.go; tests may stub it with a recorder.
+	SwapModel func(modelID string) error
 }
 
 // AgentEvent is a discriminated union of events emitted by the agent runner.
@@ -405,10 +410,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// flow with /quit or similar without typing into the prompt.
 		if m.loginChat != nil && !strings.HasPrefix(val, "/") {
 			res := m.loginChat.Step(val)
-			if res.done {
-				m.loginChat = nil
-			}
-			return m, m.writeStream(res.out)
+			return m, m.applyLoginResult(res)
 		}
 		if m.setupChat != nil && !strings.HasPrefix(val, "/") {
 			res := m.setupChat.Step(val)
@@ -436,10 +438,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamTokenMsg("\n" + echo))
 
-		// Setup gate: refuse to dispatch when no provider/model is
-		// configured. The agent goroutine would otherwise silently
-		// finish with no output, leaving the operator confused.
-		if m.deps.Provider == nil || m.deps.Model == "" {
+		// Setup gate: refuse to dispatch when no model has been picked.
+		// We deliberately don't gate on m.deps.Provider — that field is a
+		// stale snapshot from startup. The live provider lives inside the
+		// agent runner's providerRef, swapped via /login or /model; m.deps.Model
+		// is the only field updated by those swaps, so it's the truth here.
+		if m.deps.Model == "" {
 			warn := setupRequiredStyle.Render(
 				"⚠ cloudy is not configured. Run /setup to discover your clusters "+
 					"and pick a model, or /login to save an API key.",
@@ -465,13 +469,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.loginChat != nil {
 			res := m.loginChat.Step(input)
-			if res.done {
-				m.loginChat = nil
-			}
-			if res.picker != nil {
-				m.arrowPicker = res.picker
-			}
-			return m, m.writeStream(res.out)
+			return m, m.applyLoginResult(res)
 		}
 		return m, nil
 
@@ -781,6 +779,34 @@ func (m *Model) writeStream(s string) tea.Cmd {
 	return c
 }
 
+// applyLoginResult drains a loginResult into the TUI: writes the chat
+// output, activates a picker if present, clears the chat on done, and
+// — the part the operator actually cares about — hot-swaps the active
+// LLM provider when the chat asks for one. Without the swap, /login
+// would save the key to disk but the next question would still hit
+// whatever provider was wired at startup (usually Anthropic by default).
+func (m *Model) applyLoginResult(res loginResult) tea.Cmd {
+	cmds := []tea.Cmd{m.writeStream(res.out)}
+	if res.picker != nil {
+		m.arrowPicker = res.picker
+	}
+	if res.done {
+		m.loginChat = nil
+	}
+	if res.swapToModel != "" && m.deps.SwapModel != nil {
+		if err := m.deps.SwapModel(res.swapToModel); err != nil {
+			cmds = append(cmds, m.writeStream(agentError("swap", err)))
+		} else {
+			m.deps.Model = res.swapToModel
+			m.footer.SetModel(res.swapToModel)
+			var hCmd tea.Cmd
+			m.header, hCmd = m.header.Update(headerStateMsg{model: res.swapToModel})
+			cmds = append(cmds, hCmd)
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
 // agentError formats an in-stream diagnostic line for the operator.
 // All error surfaces in the TUI (scope, scan, save, agent, …) route
 // through this so the bracket convention stays uniform and a future
@@ -890,12 +916,17 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		if action.arg == "" {
 			return m.writeStream("usage: /model <id>\n")
 		}
+		m.prompt.SetValue("")
+		if m.deps.SwapModel != nil {
+			if err := m.deps.SwapModel(action.arg); err != nil {
+				return m.writeStream(agentError("model", err))
+			}
+		}
 		m.deps.Model = action.arg
 		m.footer.SetModel(action.arg)
 		var hCmd tea.Cmd
 		m.header, hCmd = m.header.Update(headerStateMsg{model: action.arg})
-		m.prompt.SetValue("")
-		return hCmd
+		return tea.Batch(hCmd, m.writeStream(fmt.Sprintf("✓ active model: %s\n", action.arg)))
 
 	case "scope":
 		// Insert prefix into prompt so user fills in the argument.
