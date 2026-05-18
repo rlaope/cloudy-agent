@@ -103,6 +103,7 @@ func TestStream_ToolCallNormalization(t *testing.T) {
 }
 
 func TestStream_MissingAPIKey(t *testing.T) {
+	t.Setenv("MOONSHOT_API_KEY", "") // defeat the lazy env-fallback in resolveKey
 	p := makeProvider("http://localhost", "")
 	_, err := p.Stream(context.Background(), llm.Request{Model: "moonshot-v1-8k"})
 	if err == nil {

@@ -42,10 +42,14 @@ func init() {
 	llm.Register(New())
 }
 
-// New returns a Google provider reading credentials from environment variables.
+// New returns a Google provider. The API key is intentionally NOT captured
+// at construction time — registration happens in init() before /login can
+// run, so a captured key would always be empty for fresh users. Instead,
+// the key is read lazily from GOOGLE_API_KEY on every Stream call so a
+// post-startup secrets.Add (called by the /login chat) takes effect on
+// the very next turn without rebuilding the singleton.
 func New() llm.Provider {
 	return &provider{
-		apiKey: os.Getenv("GOOGLE_API_KEY"),
 		client: &http.Client{Transport: llmTransport},
 	}
 }
@@ -53,9 +57,21 @@ func New() llm.Provider {
 // Name implements llm.Provider.
 func (p *provider) Name() string { return "google" }
 
+// resolveKey returns the API key for this call. The test-injection field
+// wins so unit tests can drive the provider against an httptest server
+// with a fixed key; production leaves the field empty and falls through
+// to the env var (kept fresh by secrets.Load / secrets.Add).
+func (p *provider) resolveKey() string {
+	if p.apiKey != "" {
+		return p.apiKey
+	}
+	return os.Getenv("GOOGLE_API_KEY")
+}
+
 // Stream implements llm.Provider using Gemini's streamGenerateContent endpoint.
 func (p *provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Chunk, error) {
-	if p.apiKey == "" {
+	apiKey := p.resolveKey()
+	if apiKey == "" {
 		return nil, fmt.Errorf("%w: GOOGLE_API_KEY not set", llm.ErrMissingAPIKey)
 	}
 
@@ -65,7 +81,7 @@ func (p *provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Chun
 	}
 
 	url := fmt.Sprintf("%s/%s:streamGenerateContent?key=%s&alt=sse",
-		baseURL, req.Model, p.apiKey)
+		baseURL, req.Model, apiKey)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {

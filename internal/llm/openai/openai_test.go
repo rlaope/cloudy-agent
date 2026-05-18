@@ -117,6 +117,7 @@ func jsonStr(s string) string {
 }
 
 func TestStream_MissingAPIKey(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "") // defeat the lazy env-fallback in resolveKey
 	p := makeProvider("http://localhost", "")
 	_, err := p.Stream(context.Background(), llm.Request{Model: "gpt-4o"})
 	if err == nil {

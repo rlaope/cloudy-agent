@@ -161,6 +161,7 @@ func TestStream_ToolCallNormalization(t *testing.T) {
 }
 
 func TestStream_MissingAPIKey(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "") // defeat the lazy env-fallback in resolveKey
 	p := redirectProvider("", "http://localhost")
 	_, err := p.Stream(context.Background(), llm.Request{Model: "claude-3-5-sonnet-20241022"})
 	if err == nil {
