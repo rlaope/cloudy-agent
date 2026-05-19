@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -17,6 +19,15 @@ type sessionCmd struct{}
 func (sessionCmd) Name() string  { return "session" }
 func (sessionCmd) Short() string { return `list / show / replay session logs` }
 
+// sessionOptions exists so each subcommand can route through parseInto and get
+// `--help` / `--no-color` handling for free. Without it, `cloudy session show
+// --help` used to be treated as an id and tried to open `--help.jsonl`.
+type sessionOptions struct {
+	base baseFlags
+}
+
+func (o *sessionOptions) bind(fs *flagSet) { o.base.bind(fs.FlagSet) }
+
 func (sessionCmd) Run(_ context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errf("usage: cloudy session <list|show|replay> [id]")
@@ -24,10 +35,16 @@ func (sessionCmd) Run(_ context.Context, args []string, stdout, stderr io.Writer
 	dir := filepath.Join(filepath.Dir(config.Path()), "logs")
 	sub := args[0]
 	rest := args[1:]
-	_ = stderr
 
 	switch sub {
 	case "list":
+		var opts sessionOptions
+		if _, err := parseInto(&opts, "session list", rest, stderr); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+			return err
+		}
 		metas, err := session.List(dir)
 		if err != nil {
 			return errf("session list: %w", err)
@@ -40,10 +57,18 @@ func (sessionCmd) Run(_ context.Context, args []string, stdout, stderr io.Writer
 		return nil
 
 	case "show", "replay":
-		if len(rest) < 1 {
+		var opts sessionOptions
+		parsed, err := parseInto(&opts, "session "+sub, rest, stderr)
+		if err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+			return err
+		}
+		if len(parsed) < 1 {
 			return errf("usage: cloudy session %s <id>", sub)
 		}
-		path := filepath.Join(dir, rest[0]+".jsonl")
+		path := filepath.Join(dir, parsed[0]+".jsonl")
 		r, err := session.Open(path)
 		if err != nil {
 			return errf("session %s: %w", sub, err)
