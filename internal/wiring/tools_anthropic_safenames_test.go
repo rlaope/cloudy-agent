@@ -107,7 +107,9 @@ type stubTool struct {
 	name string
 }
 
-func (s stubTool) Name() string                                            { return s.name }
-func (s stubTool) Description() string                                     { return "stub" }
-func (s stubTool) Schema() json.RawMessage                                 { return json.RawMessage(`{"type":"object"}`) }
-func (s stubTool) Run(context.Context, json.RawMessage) (tools.Observation, error) { return tools.Observation{}, nil }
+func (s stubTool) Name() string            { return s.name }
+func (s stubTool) Description() string     { return "stub" }
+func (s stubTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (s stubTool) Run(context.Context, json.RawMessage) (tools.Observation, error) {
+	return tools.Observation{}, nil
+}
