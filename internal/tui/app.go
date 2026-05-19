@@ -194,6 +194,12 @@ type Model struct {
 	// HITL menu instead of free-text input. While non-nil the parent
 	// routes ↑/↓/Enter/Esc to the picker and swallows other keys.
 	arrowPicker *arrowPicker
+
+	// modelPickerActive is true while the operator is choosing a new
+	// model via `/model` (with no argument). The picker's resolve
+	// message is routed to Deps.SwapModel instead of a chat. Reset by
+	// the resolve handler whether the operator confirmed or cancelled.
+	modelPickerActive bool
 }
 
 // NewModel constructs the root TUI model.
@@ -475,8 +481,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(sCmd, m.runAgent(val), thinkingTickCmd())
 
 	case arrowPickerResolveMsg:
-		// Single-select picker (e.g. /login provider). Route the answer
-		// to whichever inline chat is active; if none, just drop the picker.
+		// Single-select picker — could be /login (provider OR model step),
+		// or the standalone /model picker. Route by which mode is active.
 		m.arrowPicker = nil
 		input := msg.key
 		if msg.cancelled {
@@ -485,6 +491,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.loginChat != nil {
 			res := m.loginChat.Step(input)
 			return m, m.applyLoginResult(res)
+		}
+		if m.modelPickerActive {
+			m.modelPickerActive = false
+			if msg.cancelled {
+				return m, m.writeStream("[model swap cancelled]\n")
+			}
+			return m, m.applyModelSwap(input)
 		}
 		return m, nil
 
@@ -819,6 +832,46 @@ func (m *Model) applySetupResult(res setupResult) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// applyModelSwap is the shared "switch active model to id" path used
+// by both `/model <id>` (explicit) and the `/model` picker resolution.
+// Calls Deps.SwapModel, updates the cached deps.Model + footer/header,
+// and surfaces a confirmation or error line in the stream. Centralising
+// keeps the two entry points from drifting (older code had two copies
+// of the SwapModel-then-update-footer dance).
+func (m *Model) applyModelSwap(id string) tea.Cmd {
+	if m.deps.SwapModel != nil {
+		if err := m.deps.SwapModel(id); err != nil {
+			return m.writeStream(agentError("model", err))
+		}
+	}
+	m.deps.Model = id
+	m.footer.SetModel(id)
+	var hCmd tea.Cmd
+	m.header, hCmd = m.header.Update(headerStateMsg{model: id})
+	return tea.Batch(hCmd, m.writeStream(fmt.Sprintf("✓ active model: %s\n", id)))
+}
+
+// buildAllModelsPicker materialises the `/model` (no-arg) picker —
+// one row per curated model across every provider in loginProviders.
+// The hint column shows the provider name + the model's description
+// so the operator sees what they're picking without having to know
+// the prefix-to-provider mapping. Order matches loginProviders →
+// each provider's models in declared order; Anthropic appears first
+// because that's the order the registry was built in.
+func buildAllModelsPicker() *arrowPicker {
+	var items []arrowPickerItem
+	for _, p := range loginProviders {
+		for _, mdl := range p.models {
+			items = append(items, arrowPickerItem{
+				label: mdl.id,
+				hint:  fmt.Sprintf("%s — %s", p.key, mdl.hint),
+				key:   mdl.id,
+			})
+		}
+	}
+	return newArrowPicker("Pick a model:", items)
+}
+
 // applyLoginResult drains a loginResult into the TUI: writes the chat
 // output, activates a picker if present, clears the chat on done, and
 // — the part the operator actually cares about — hot-swaps the active
@@ -953,20 +1006,18 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		return hCmd
 
 	case "model":
-		if action.arg == "" {
-			return m.writeStream("usage: /model <id>\n")
-		}
 		m.prompt.SetValue("")
-		if m.deps.SwapModel != nil {
-			if err := m.deps.SwapModel(action.arg); err != nil {
-				return m.writeStream(agentError("model", err))
-			}
+		if action.arg == "" {
+			// No id → open the cross-provider picker, mirroring /login
+			// step 3 but spanning every curated provider. The operator
+			// arrows + Enters; resolve routes to applyModelSwap via the
+			// arrowPickerResolveMsg handler. /model <id> still works for
+			// power-users / scripts.
+			m.modelPickerActive = true
+			m.arrowPicker = buildAllModelsPicker()
+			return m.writeStream("\nPick a model (any provider you have a key for):\n")
 		}
-		m.deps.Model = action.arg
-		m.footer.SetModel(action.arg)
-		var hCmd tea.Cmd
-		m.header, hCmd = m.header.Update(headerStateMsg{model: action.arg})
-		return tea.Batch(hCmd, m.writeStream(fmt.Sprintf("✓ active model: %s\n", action.arg)))
+		return m.applyModelSwap(action.arg)
 
 	case "scope":
 		// Insert prefix into prompt so user fills in the argument.
