@@ -128,6 +128,16 @@ func New(id string) (*Session, error) {
 		f:    f,
 	}
 	s.enc = json.NewEncoder(f)
+
+	// Write a header event so the file has a Started timestamp even when
+	// the operator opens the TUI and closes it without asking anything.
+	// Without this, readMeta sees zero events and leaves Meta.Started at
+	// time.Time{}, which prints as "0001-01-01 00:00:00" in `session list`.
+	// Header is best-effort: an I/O error here is reported but does not
+	// abort the session — the rest of the file would still be writable.
+	if err := s.Append(Event{Kind: KindSystem, Name: "session", Text: "opened"}); err != nil {
+		return nil, fmt.Errorf("session: write opening header: %w", err)
+	}
 	return s, nil
 }
 
@@ -192,6 +202,15 @@ func List(dir string) ([]Meta, error) {
 
 		m, err := readMeta(id, path, fi.ModTime())
 		if err != nil {
+			continue
+		}
+		// Skip files with no events at all. session.New writes an opening
+		// header on creation, so a zero-event file is always a leftover
+		// from a pre-header-contract cloudy build or an interrupted New
+		// (e.g. disk full). Listing them with a zero-value Started just
+		// confuses the operator; the raw files stay on disk and remain
+		// removable with rm if anyone wants them gone.
+		if m.EventCount == 0 {
 			continue
 		}
 		metas = append(metas, m)

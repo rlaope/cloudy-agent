@@ -25,11 +25,15 @@ type skillsOptions struct {
 func (o *skillsOptions) bind(fs *flagSet) { o.base.bind(fs.FlagSet) }
 
 func (skillsCmd) Run(_ context.Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		return errf("usage: cloudy skills <list|show> [name]")
+	// No subcommand → default to `list` so `cloudy skills` Just Works.
+	// The full usage is still discoverable via `cloudy skills --help` and
+	// the unknown-subcommand branch below.
+	sub := "list"
+	var rest []string
+	if len(args) > 0 {
+		sub = args[0]
+		rest = args[1:]
 	}
-	sub := args[0]
-	rest := args[1:]
 
 	reg, err := wiring.BuildSkillRegistry()
 	if err != nil {

@@ -49,14 +49,46 @@ func TestNew_AppendClose_Replay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if len(r.Events) != n {
-		t.Errorf("event count: got %d, want %d", len(r.Events), n)
+	// session.New writes a header event so /session list always has a
+	// Started timestamp even for sessions that record nothing else.
+	// Account for it: index 0 is the header, indices 1..n carry the
+	// 50 appended user events.
+	if len(r.Events) != n+1 {
+		t.Errorf("event count: got %d, want %d (50 user + 1 header)", len(r.Events), n+1)
 	}
-	if r.Events[0].Text != "message 0" {
-		t.Errorf("first event text = %q, want %q", r.Events[0].Text, "message 0")
+	if r.Events[1].Text != "message 0" {
+		t.Errorf("first user event text = %q, want %q", r.Events[1].Text, "message 0")
 	}
-	if r.Events[n-1].Text != fmt.Sprintf("message %d", n-1) {
-		t.Errorf("last event text = %q", r.Events[n-1].Text)
+	if r.Events[n].Text != fmt.Sprintf("message %d", n-1) {
+		t.Errorf("last event text = %q", r.Events[n].Text)
+	}
+}
+
+// TestNew_WritesOpeningHeader locks in the contract that session.New
+// emits a "session opened" system event so empty TUI launches still
+// produce a non-zero Started time in `cloudy session list`. Without
+// this, readMeta sees zero events and leaves Meta.Started at the
+// time.Time{} zero value, which prints as "0001-01-01 00:00:00".
+func TestNew_WritesOpeningHeader(t *testing.T) {
+	dir := t.TempDir()
+	s := openSessionInDir(t, dir)
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	r, err := session.Open(s.Path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if len(r.Events) != 1 {
+		t.Fatalf("brand-new session should have exactly the header event, got %d", len(r.Events))
+	}
+	h := r.Events[0]
+	if h.Kind != session.KindSystem || h.Name != "session" || h.Text != "opened" {
+		t.Errorf("header event = %+v, want {Kind: system, Name: session, Text: opened}", h)
+	}
+	if h.Time.IsZero() {
+		t.Error("header event must carry a non-zero timestamp — that's the whole point")
 	}
 }
 
@@ -86,10 +118,13 @@ func TestSession_EventTimestampSet(t *testing.T) {
 	s.Close()
 
 	r, _ := session.Open(s.Path)
-	if len(r.Events) == 0 {
-		t.Fatal("no events")
+	if len(r.Events) < 2 {
+		t.Fatalf("expected header + appended event, got %d", len(r.Events))
 	}
-	ts := r.Events[0].Time
+	// r.Events[0] is the session-opened header; the "init" we just
+	// appended is at index 1. Verify its timestamp landed inside the
+	// before/after window.
+	ts := r.Events[1].Time
 	if ts.Before(before) || ts.After(after) {
 		t.Errorf("timestamp %v outside window [%v, %v]", ts, before, after)
 	}
