@@ -19,8 +19,11 @@ func TestDefault(t *testing.T) {
 	if cfg.Safety.MaxProfileSeconds != 60 {
 		t.Errorf("Default: MaxProfileSeconds = %d, want 60", cfg.Safety.MaxProfileSeconds)
 	}
-	if cfg.DefaultModel == "" {
-		t.Error("Default: DefaultModel should not be empty")
+	// DefaultModel is intentionally empty — see the package comment on
+	// Default(). The /login conversation owns model selection now;
+	// hard-coding a specific id here was a deprecation-time-bomb.
+	if cfg.DefaultModel != "" {
+		t.Errorf("Default: DefaultModel must be empty (model picked via /login), got %q", cfg.DefaultModel)
 	}
 }
 

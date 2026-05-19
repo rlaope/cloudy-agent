@@ -21,18 +21,28 @@ func TestLoginChat_KeySave_ReturnsSwapToModel(t *testing.T) {
 		t.Fatalf("provider pick should not finish chat: %q", res.out)
 	}
 	// Step 1: paste a key. secrets.Add will succeed because CLOUDY_HOME is
-	// a fresh tmpdir we own.
+	// a fresh tmpdir we own. With the three-step flow, key save no longer
+	// finishes the chat — it advances to the model picker.
 	res := chat.Step("AIzaTESTKEY")
-	if !res.done {
-		t.Fatalf("key paste should finish chat, got: %q", res.out)
+	if res.done {
+		t.Fatalf("key paste should advance to model picker, not finish: %q", res.out)
 	}
-	wantModel := "gemini-2.5-flash"
-	if res.swapToModel != wantModel {
-		t.Errorf("swapToModel = %q, want %q (the suggested id for google)",
-			res.swapToModel, wantModel)
+	if res.picker == nil {
+		t.Fatal("key paste must return the model picker for step 3")
 	}
 	if !strings.Contains(res.out, "GOOGLE_API_KEY") {
-		t.Errorf("success message should mention env var, got: %q", res.out)
+		t.Errorf("save line should mention env var, got: %q", res.out)
+	}
+
+	// Step 2: pick a model from the curated list. The id must round-trip
+	// into swapToModel so the parent can call Deps.SwapModel.
+	res = chat.Step("gemini-2.5-pro")
+	if !res.done {
+		t.Fatalf("model pick should finish chat, got: %q", res.out)
+	}
+	if res.swapToModel != "gemini-2.5-pro" {
+		t.Errorf("swapToModel = %q, want %q (the picked model id)",
+			res.swapToModel, "gemini-2.5-pro")
 	}
 }
 
