@@ -77,16 +77,36 @@ func TestRegistry_List_StableOrder(t *testing.T) {
 
 func TestRegistry_ToolsFor(t *testing.T) {
 	t.Parallel()
-	r := tools.New()
-	r.MustRegister(stubTool{name: "k8s.list_pods"})
 
-	llmTools := r.ToolsFor("anthropic")
-	if len(llmTools) != 1 {
-		t.Fatalf("expected 1 llm.Tool, got %d", len(llmTools))
-	}
-	if llmTools[0].Name != "k8s.list_pods" {
-		t.Errorf("unexpected tool name %q", llmTools[0].Name)
-	}
+	t.Run("anthropic sanitizes dots to underscores", func(t *testing.T) {
+		r := tools.New()
+		r.MustRegister(stubTool{name: "k8s.list_pods"})
+
+		llmTools := r.ToolsFor("anthropic")
+		if len(llmTools) != 1 {
+			t.Fatalf("expected 1 llm.Tool, got %d", len(llmTools))
+		}
+		if llmTools[0].Name != "k8s_list_pods" {
+			t.Errorf("anthropic requires ^[a-zA-Z0-9_-]+$ — name should be sanitized, got %q",
+				llmTools[0].Name)
+		}
+		// And Get must resolve the sanitized name back to the real tool
+		// so the agent's dispatch path keeps working unchanged.
+		if _, ok := r.Get("k8s_list_pods"); !ok {
+			t.Error("Get must resolve the LLM-safe alias back to the registered tool")
+		}
+	})
+
+	t.Run("openai_compat leaves dots intact", func(t *testing.T) {
+		r := tools.New()
+		r.MustRegister(stubTool{name: "k8s.list_pods"})
+
+		llmTools := r.ToolsFor("openai_compat")
+		if llmTools[0].Name != "k8s.list_pods" {
+			t.Errorf("openai_compat passes through to user backends; dots should "+
+				"survive, got %q", llmTools[0].Name)
+		}
+	})
 }
 
 func TestRegistry_InventoryMixesRegisteredAndSkipped(t *testing.T) {

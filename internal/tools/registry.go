@@ -74,13 +74,24 @@ type Registry struct {
 
 	skippedMu sync.RWMutex
 	skipped   map[string]string // group → reason
+
+	// llmAliasMu guards llmAlias.
+	llmAliasMu sync.RWMutex
+	// llmAlias maps a sanitized (LLM-safe) tool name back to its original
+	// dotted form. Populated by ToolsFor when a provider's tool-name regex
+	// rejects '.' (Anthropic / OpenAI / Google / Moonshot all do — they
+	// require ^[a-zA-Z0-9_-]{1,64}$). The agent's Get() consults this map
+	// as a fallback so tool_use calls from the model resolve back to the
+	// real tool regardless of which spelling the wire carried.
+	llmAlias map[string]string
 }
 
 // New returns an empty, ready-to-use Registry.
 func New() *Registry {
 	return &Registry{
-		items:   registry.New[Tool](func(t Tool) string { return t.Name() }),
-		skipped: map[string]string{},
+		items:    registry.New[Tool](func(t Tool) string { return t.Name() }),
+		skipped:  map[string]string{},
+		llmAlias: map[string]string{},
 	}
 }
 
@@ -99,8 +110,24 @@ func (r *Registry) MustRegister(ts ...Tool) {
 }
 
 // Get returns the tool with the given name and a boolean indicating whether
-// it was found.
-func (r *Registry) Get(name string) (Tool, bool) { return r.items.Get(name) }
+// it was found. The name lookup is two-stage: first the original (dotted)
+// form as registered, then the LLM-safe alias form populated by ToolsFor.
+// This lets the agent call Get(tc.Name) with whichever spelling the model
+// sent back — providers that don't allow '.' in tool names will receive
+// (and echo back) the underscore form, while skill files and operator-
+// facing surfaces continue to use the canonical dotted form.
+func (r *Registry) Get(name string) (Tool, bool) {
+	if t, ok := r.items.Get(name); ok {
+		return t, true
+	}
+	r.llmAliasMu.RLock()
+	orig, hit := r.llmAlias[name]
+	r.llmAliasMu.RUnlock()
+	if !hit {
+		return nil, false
+	}
+	return r.items.Get(orig)
+}
 
 // List returns all registered tools in stable alphabetical order by name.
 func (r *Registry) List() []Tool { return r.items.All() }
@@ -192,19 +219,60 @@ func groupOf(name string) string {
 }
 
 // ToolsFor converts the registry contents to llm.Tool descriptors suitable
-// for inclusion in an llm.Request. The provider parameter is reserved for
-// future per-provider quirks; v1 returns the same list for all providers.
-func (r *Registry) ToolsFor(_ string) []llm.Tool {
+// for inclusion in an llm.Request. When the provider requires LLM-safe
+// names (currently all four hosted adapters — anthropic, openai, google,
+// moonshot — enforce ^[a-zA-Z0-9_-]{1,64}$), '.' in the canonical tool
+// name is rewritten to '_' for the wire and a reverse alias is recorded
+// so the agent's Get() resolves the tool_use echo back to the real tool.
+//
+// openai_compat and any "" provider name keep the original spelling
+// (Ollama / vLLM may forward to a model that tolerates dots).
+func (r *Registry) ToolsFor(provider string) []llm.Tool {
 	list := r.List()
+	sanitize := providerNeedsSafeNames(provider)
 	out := make([]llm.Tool, len(list))
+	var aliases map[string]string
+	if sanitize {
+		aliases = make(map[string]string, len(list))
+	}
 	for i, t := range list {
+		name := t.Name()
+		if sanitize {
+			safe := strings.ReplaceAll(name, ".", "_")
+			if safe != name {
+				aliases[safe] = name
+			}
+			name = safe
+		}
 		out[i] = llm.Tool{
-			Name:        t.Name(),
+			Name:        name,
 			Description: t.Description(),
 			Schema:      t.Schema(),
 		}
 	}
+	if sanitize {
+		r.llmAliasMu.Lock()
+		// Merge — earlier ToolsFor calls (e.g. before a provider swap)
+		// may have populated entries we still want for in-flight lookups.
+		for k, v := range aliases {
+			r.llmAlias[k] = v
+		}
+		r.llmAliasMu.Unlock()
+	}
 	return out
+}
+
+// providerNeedsSafeNames reports whether the named LLM provider requires
+// tool names to match ^[a-zA-Z0-9_-]+$ (no '.'). All four hosted adapters
+// do; openai_compat passes through to user-controlled backends so we
+// leave names alone there.
+func providerNeedsSafeNames(provider string) bool {
+	switch provider {
+	case "anthropic", "openai", "google", "moonshot":
+		return true
+	default:
+		return false
+	}
 }
 
 // matchesAny reports whether name matches any pattern in patterns.
