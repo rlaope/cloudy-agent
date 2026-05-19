@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -62,21 +61,29 @@ type setupSaveDoneMsg struct {
 }
 
 // setupResult mirrors loginResult: text to write to the stream, an
-// optional async command to dispatch, and a done-flag.
+// optional async command to dispatch, a done-flag, and an optional
+// arrow picker the parent should activate. When picker is non-nil the
+// parent installs it on the Model and routes ↑/↓/Space/Enter/Esc to
+// it until it fires its resolve message; until then no fresh /setup
+// step is invoked.
 type setupResult struct {
-	out  string
-	cmd  tea.Cmd
-	done bool
+	out    string
+	cmd    tea.Cmd
+	done   bool
+	picker *arrowPicker
 }
 
-// newSetupChat lists kubeconfig contexts and emits the first prompt.
-// Returns nil when no contexts can be enumerated — caller writes an
-// error to the stream and aborts entry.
-func newSetupChat(ctx context.Context, kubeconfigPath, cfgPath, profPath string) (*setupChat, string) {
+// newSetupChat lists kubeconfig contexts and emits the first prompt
+// together with a Claude-style multi-select picker. When no contexts
+// can be enumerated the chat itself is nil and the returned result
+// carries an error string for the parent to write inline.
+func newSetupChat(ctx context.Context, kubeconfigPath, cfgPath, profPath string) (*setupChat, setupResult) {
 	contexts, _ := setup.ListKubeconfigContexts(kubeconfigPath)
 	if len(contexts) == 0 {
-		return nil, "[/setup] no kubeconfig contexts found. " +
-			"Set KUBECONFIG or place a config at ~/.kube/config, then run /setup again.\n"
+		return nil, setupResult{
+			out: "[/setup] no kubeconfig contexts found. " +
+				"Set KUBECONFIG or place a config at ~/.kube/config, then run /setup again.\n",
+		}
 	}
 	builtin, _ := skills.LoadBuiltin()
 
@@ -90,10 +97,96 @@ func newSetupChat(ctx context.Context, kubeconfigPath, cfgPath, profPath string)
 		contexts:      contexts,
 		selectedKinds: map[string]bool{},
 	}
-	return s, s.promptContexts()
+	return s, setupResult{
+		out:    s.promptContexts(),
+		picker: s.buildContextPicker(),
+	}
 }
 
-// Step processes the operator's typed answer for the current step.
+// buildContextPicker materialises step 1 as a checkbox picker. The
+// first context is pre-ticked so a single-context setup is one Enter
+// away; multi-context operators tab through and space-toggle the
+// extras they want.
+func (s *setupChat) buildContextPicker() *arrowPicker {
+	items := make([]arrowPickerItem, 0, len(s.contexts))
+	for _, c := range s.contexts {
+		items = append(items, arrowPickerItem{label: c, key: c})
+	}
+	preselect := []string{}
+	if len(s.contexts) > 0 {
+		preselect = append(preselect, s.contexts[0])
+	}
+	return newMultiArrowPicker("Pick one or more kubeconfig contexts:", items, preselect)
+}
+
+// buildFindingsPicker materialises step 2 (post-scan) as a checkbox
+// picker over discovered backend kinds. Every detected kind is
+// pre-ticked because /setup's default has always been "enable
+// everything found" — the operator un-ticks anything they want to
+// leave out.
+func (s *setupChat) buildFindingsPicker() *arrowPicker {
+	items := make([]arrowPickerItem, 0, len(s.groupKinds))
+	for _, k := range s.groupKinds {
+		count := 0
+		for _, f := range s.findings {
+			if f.Kind == k {
+				count++
+			}
+		}
+		items = append(items, arrowPickerItem{
+			label: k,
+			hint:  fmt.Sprintf("%d candidate(s)", count),
+			key:   k,
+		})
+	}
+	return newMultiArrowPicker("Pick which backends to enable:", items, s.groupKinds)
+}
+
+// ApplyMulti advances the chat off an arrow-picker multi-select
+// confirmation. Step 0 → contexts chosen, kick off the scan.
+// Step 2 → backend kinds chosen, kick off the save.
+func (s *setupChat) ApplyMulti(keys []string, cancelled bool) setupResult {
+	if cancelled {
+		return setupResult{out: "[setup cancelled]\n", done: true}
+	}
+	switch s.step {
+	case setupStepCtx:
+		if len(keys) == 0 {
+			return setupResult{
+				out:    "(no context picked) — tick at least one, or Esc to cancel:\n",
+				picker: s.buildContextPicker(),
+			}
+		}
+		s.selected = keys
+		s.step = setupStepScanning
+		return setupResult{
+			out: fmt.Sprintf("Scanning %d context(s) for prometheus / loki / postgres / pprof / …\n",
+				len(keys)),
+			cmd: s.runScan(),
+		}
+	case setupStepFindings:
+		s.selectedKinds = map[string]bool{}
+		for _, k := range keys {
+			s.selectedKinds[k] = true
+		}
+		s.step = setupStepDone
+		summary := "Saving cluster + RBAC configuration …\n"
+		if len(keys) > 0 {
+			summary = "Saving cluster + RBAC + selected backends …\n"
+		}
+		return setupResult{
+			out: summary,
+			cmd: s.runSave(),
+		}
+	}
+	return setupResult{out: "[setup state confused; aborting]\n", done: true}
+}
+
+// Step is the text-input fallback for /setup. The pick steps are
+// arrow-picker driven (see ApplyMulti), so the only typed input the
+// operator routinely sends is "cancel". Anything else during a
+// picker-driven step is a hint that the parent dropped the picker
+// somehow; reply with a gentle nudge instead of crashing.
 func (s *setupChat) Step(input string) setupResult {
 	input = strings.TrimSpace(input)
 	if strings.EqualFold(input, "cancel") {
@@ -101,56 +194,26 @@ func (s *setupChat) Step(input string) setupResult {
 	}
 
 	switch s.step {
-	case setupStepCtx:
-		picked, err := pickByIndexOrAll(input, s.contexts)
-		if err != nil {
-			return setupResult{out: fmt.Sprintf("(%v) — try again or 'cancel':\n", err)}
-		}
-		s.selected = picked
-		s.step = setupStepScanning
-		return setupResult{
-			out: fmt.Sprintf("Scanning %d context(s) for prometheus / loki / postgres / pprof / …\n",
-				len(picked)),
-			cmd: s.runScan(),
-		}
-
 	case setupStepScanning:
-		// Operator typed while a scan was running; remind them to wait.
 		return setupResult{out: "(still scanning; hold tight…)\n"}
-
-	case setupStepFindings:
-		if len(s.findings) == 0 {
-			// Nothing discovered — operator's enter saves the K8s-only
-			// configuration and finishes setup.
-			s.step = setupStepDone
-			return setupResult{
-				out: "Saving cluster + RBAC configuration …\n",
-				cmd: s.runSave(),
-			}
-		}
-		if !strings.EqualFold(input, "skip") && !strings.EqualFold(input, "none") {
-			picked, err := pickByIndexOrAll(input, s.groupKinds)
-			if err != nil {
-				return setupResult{out: fmt.Sprintf("(%v) — try again, 'skip', or 'cancel':\n", err)}
-			}
-			s.selectedKinds = map[string]bool{}
-			for _, k := range picked {
-				s.selectedKinds[k] = true
-			}
-		} else {
-			s.selectedKinds = map[string]bool{}
-		}
-		s.step = setupStepDone
+	case setupStepCtx:
 		return setupResult{
-			out: "Saving cluster + RBAC + selected backends …\n",
-			cmd: s.runSave(),
+			out:    "(use the picker — ↑↓ Space Enter — or type 'cancel'):\n",
+			picker: s.buildContextPicker(),
+		}
+	case setupStepFindings:
+		return setupResult{
+			out:    "(use the picker — ↑↓ Space Enter — or type 'cancel'):\n",
+			picker: s.buildFindingsPicker(),
 		}
 	}
-
 	return setupResult{out: "[setup state confused; aborting]\n", done: true}
 }
 
-// Apply receives async messages (scan, save) and advances state.
+// Apply receives async messages (scan, save) and advances state. The
+// scan-done branch returns a multi-select picker so the operator picks
+// backend kinds with arrow keys instead of typing a comma-separated
+// number list; if nothing was discovered it skips straight to the save.
 func (s *setupChat) Apply(msg tea.Msg) setupResult {
 	switch m := msg.(type) {
 	case setupScanDoneMsg:
@@ -164,7 +227,18 @@ func (s *setupChat) Apply(msg tea.Msg) setupResult {
 			s.selectedKinds[k] = true
 		}
 		s.step = setupStepFindings
-		return setupResult{out: s.promptFindings(m.note)}
+		if len(s.groupKinds) == 0 {
+			// Nothing discovered — skip the picker, just save K8s.
+			s.step = setupStepDone
+			return setupResult{
+				out: s.promptFindings(m.note) + "Saving cluster + RBAC configuration …\n",
+				cmd: s.runSave(),
+			}
+		}
+		return setupResult{
+			out:    s.promptFindings(m.note),
+			picker: s.buildFindingsPicker(),
+		}
 
 	case setupSaveDoneMsg:
 		if m.err != nil {
@@ -181,11 +255,6 @@ func (s *setupChat) promptContexts() string {
 	var b strings.Builder
 	b.WriteString("\n--- /setup — analyse infrastructure & establish access ---\n")
 	b.WriteString("(use /login separately to connect an LLM provider)\n\n")
-	b.WriteString("Available kubeconfig contexts:\n")
-	for i, c := range s.contexts {
-		fmt.Fprintf(&b, "  %d. %s\n", i+1, c)
-	}
-	b.WriteString("\nType a number, comma-separated list (e.g. 1,2), 'all', or 'cancel':\n")
 	return b.String()
 }
 
@@ -196,21 +265,8 @@ func (s *setupChat) promptFindings(note string) string {
 	}
 	if len(s.groupKinds) == 0 {
 		b.WriteString("Discovered backends: (none)\n")
-		b.WriteString("Press Enter to continue with K8s tools only.\n")
 		return b.String()
 	}
-	b.WriteString("Discovered backends:\n")
-	for i, k := range s.groupKinds {
-		count := 0
-		for _, f := range s.findings {
-			if f.Kind == k {
-				count++
-			}
-		}
-		fmt.Fprintf(&b, "  %d. %-12s (%d candidates)\n", i+1, k, count)
-	}
-	b.WriteString("Type numbers (e.g. 1,2), 'all', 'skip', or 'cancel'. " +
-		"Default: all detected backends.\n")
 	return b.String()
 }
 
@@ -340,27 +396,5 @@ func uniqueKinds(fs []discovery.Finding) []string {
 	return out
 }
 
-// pickByIndexOrAll parses "1", "1,3", or "all" against a candidate list
-// and returns the picked subset. Returns an error for empty input or
-// any out-of-range index.
-func pickByIndexOrAll(input string, candidates []string) ([]string, error) {
-	if input == "" {
-		return nil, fmt.Errorf("empty input")
-	}
-	if strings.EqualFold(input, "all") {
-		return append([]string(nil), candidates...), nil
-	}
-	parts := strings.Split(input, ",")
-	picked := make([]string, 0, len(parts))
-	for _, p := range parts {
-		n, err := strconv.Atoi(strings.TrimSpace(p))
-		if err != nil {
-			return nil, fmt.Errorf("not a number: %q", p)
-		}
-		if n < 1 || n > len(candidates) {
-			return nil, fmt.Errorf("index %d out of range (1..%d)", n, len(candidates))
-		}
-		picked = append(picked, candidates[n-1])
-	}
-	return picked, nil
-}
+// Picker-driven pick steps replaced the obsolete pickByIndexOrAll
+// helper; see ApplyMulti and the arrowPicker resolve path in app.go.
