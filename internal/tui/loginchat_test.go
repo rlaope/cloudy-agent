@@ -152,3 +152,89 @@ func TestLoginChat_FullThreeStepFlow(t *testing.T) {
 		t.Errorf("swapToModel = %q, want claude-opus-4-7", r3.swapToModel)
 	}
 }
+
+// TestLoginProviders_AllHaveModels guards against a future drive-by
+// edit accidentally shipping a provider entry with an empty model
+// list — that would leave the step-3 picker with zero rows and the
+// operator with no way to finish /login except cancel.
+func TestLoginProviders_AllHaveModels(t *testing.T) {
+	if len(loginProviders) == 0 {
+		t.Fatal("loginProviders is empty — no providers wired up")
+	}
+	for _, p := range loginProviders {
+		if len(p.models) == 0 {
+			t.Errorf("provider %q has no curated models — picker would be empty", p.key)
+			continue
+		}
+		if p.envVar == "" {
+			t.Errorf("provider %q has no envVar — secrets.Add would fail", p.key)
+		}
+		seen := map[string]bool{}
+		for _, m := range p.models {
+			if m.id == "" {
+				t.Errorf("provider %q has an empty model id", p.key)
+			}
+			if seen[m.id] {
+				t.Errorf("provider %q has duplicate model id %q", p.key, m.id)
+			}
+			seen[m.id] = true
+		}
+	}
+}
+
+// TestLoginChat_FullFlow_AllProviders is the table-driven counterpart
+// to TestLoginChat_FullThreeStepFlow — runs the same provider → key
+// → first-model walk for every provider in loginProviders. Catches
+// per-provider regressions that an anthropic-only test would miss
+// (e.g. google's first-suggested id getting deprecated, or moonshot's
+// envVar drifting).
+//
+// API roundtrip is not exercised — that's intentional: real LLM calls
+// from CI would burn money and leak the test runner's outbound IP.
+// The wire-format sanitization regression for all four providers is
+// covered separately in internal/wiring/tools_anthropic_safenames_test.go.
+func TestLoginChat_FullFlow_AllProviders(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+
+	for _, p := range loginProviders {
+		t.Run(p.key, func(t *testing.T) {
+			chat, _ := newLoginChat()
+
+			// Step 1 → provider pick advances to key prompt.
+			r1 := chat.Step(p.key)
+			if r1.done {
+				t.Fatalf("provider pick should not finish chat: %q", r1.out)
+			}
+			if !strings.Contains(r1.out, p.envVar) {
+				t.Errorf("key prompt should mention env var %s, got: %q", p.envVar, r1.out)
+			}
+
+			// Step 2 → key save advances to model picker.
+			r2 := chat.Step("sk-fake-" + p.key)
+			if r2.done {
+				t.Fatalf("key save should not finish chat: %q", r2.out)
+			}
+			if r2.picker == nil {
+				t.Fatal("key save must return the model picker")
+			}
+			wantFirst := p.models[0].id
+			if r2.picker.items[0].key != wantFirst {
+				t.Errorf("model picker first row = %q, want %q (curated default)",
+					r2.picker.items[0].key, wantFirst)
+			}
+			if len(r2.picker.items) != len(p.models) {
+				t.Errorf("model picker has %d items, want %d (matches curated list)",
+					len(r2.picker.items), len(p.models))
+			}
+
+			// Step 3 → picking the default finishes with swapToModel set.
+			r3 := chat.Step(wantFirst)
+			if !r3.done {
+				t.Errorf("model pick should finish, got: %q", r3.out)
+			}
+			if r3.swapToModel != wantFirst {
+				t.Errorf("swapToModel = %q, want %q", r3.swapToModel, wantFirst)
+			}
+		})
+	}
+}
