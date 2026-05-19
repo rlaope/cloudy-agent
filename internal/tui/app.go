@@ -458,8 +458,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// is the only field updated by those swaps, so it's the truth here.
 		if m.deps.Model == "" {
 			warn := setupRequiredStyle.Render(
-				"⚠ cloudy is not configured. Run /setup to discover your clusters "+
-					"and pick a model, or /login to save an API key.",
+				"⚠ no LLM model selected. Run /login to pick a provider, paste "+
+					"an API key, and choose a model — chat works without /setup; "+
+					"/setup only adds read-only infrastructure probes (k8s, prom, "+
+					"loki, …) so cloudy can investigate questions about your clusters.",
 			) + "\n"
 			var wCmd tea.Cmd
 			m.stream, wCmd = m.stream.Update(streamTokenMsg(warn))

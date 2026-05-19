@@ -185,9 +185,19 @@ type RoutingConfig struct {
 }
 
 // Default returns a Config populated with conservative, ready-to-use defaults.
+// DefaultModel is intentionally empty: hard-coding a specific model id here
+// has bitten us before — model ids deprecate (claude-3-5-sonnet-20241022 now
+// 404s on the Anthropic API) and operators end up with stale defaults written
+// to disk before they have a chance to /login. The /login conversation owns
+// model selection end-to-end; until the operator picks one, cloudy refuses
+// to dispatch (see the setup gate in internal/tui/app.go).
+//
+// Routing.CheapModel / StrongModel are likewise empty until the operator
+// configures their own routing tiers — picking these per provider would
+// just multiply the stale-default problem.
 func Default() Config {
 	return Config{
-		DefaultModel: "claude-3-5-sonnet-20241022",
+		DefaultModel: "",
 		Providers:    map[string]ProviderConfig{},
 		Safety: SafetyConfig{
 			AllowSecrets:        false,
@@ -195,10 +205,7 @@ func Default() Config {
 			MaxProfileSeconds:   60,
 			MaxLogResponseBytes: 64 * 1024,
 		},
-		Routing: RoutingConfig{
-			CheapModel:  "claude-3-5-haiku-20241022",
-			StrongModel: "claude-3-5-sonnet-20241022",
-		},
+		Routing: RoutingConfig{},
 	}
 }
 
