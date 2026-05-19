@@ -21,14 +21,77 @@ type arrowPickerItem struct {
 // arrow keys to navigate, Enter to confirm, Esc to abort. It does not
 // own its own goroutine or focus state; the parent Model gates input
 // to the picker by checking arrowPicker != nil in the key handler.
+//
+// When multiSelect is true the picker behaves like Claude's checkbox
+// list: Space toggles the row under the cursor, Enter confirms ALL
+// currently-selected rows (sending an arrowPickerMultiResolveMsg),
+// Esc cancels. The View renders `[x]` / `[ ]` glyphs in place of the
+// usual cursor arrow so the operator sees what's about to be committed
+// before pressing Enter.
 type arrowPicker struct {
-	title  string
-	items  []arrowPickerItem
-	cursor int
+	title       string
+	items       []arrowPickerItem
+	cursor      int
+	multiSelect bool
+	selected    map[int]bool
 }
 
 func newArrowPicker(title string, items []arrowPickerItem) *arrowPicker {
 	return &arrowPicker{title: title, items: items}
+}
+
+// newMultiArrowPicker builds a checkbox-style picker. preselected lists
+// the keys that should start in the selected state — typically "all"
+// when /setup wants to default-include every detected backend so the
+// operator only has to un-tick the ones they don't want.
+func newMultiArrowPicker(title string, items []arrowPickerItem, preselected []string) *arrowPicker {
+	p := &arrowPicker{
+		title:       title,
+		items:       items,
+		multiSelect: true,
+		selected:    make(map[int]bool, len(items)),
+	}
+	if len(preselected) > 0 {
+		want := make(map[string]bool, len(preselected))
+		for _, k := range preselected {
+			want[k] = true
+		}
+		for i, it := range items {
+			if want[it.key] {
+				p.selected[i] = true
+			}
+		}
+	}
+	return p
+}
+
+// Toggle flips the selected state of the row under the cursor. No-op
+// for single-select pickers.
+func (p *arrowPicker) Toggle() {
+	if !p.multiSelect || len(p.items) == 0 {
+		return
+	}
+	if p.selected == nil {
+		p.selected = map[int]bool{}
+	}
+	p.selected[p.cursor] = !p.selected[p.cursor]
+}
+
+// SelectedKeys returns the keys of every currently-ticked item in the
+// order they appear in items. Empty slice when nothing is ticked.
+// Single-select pickers always return the empty slice; use Selected()
+// for those.
+func (p *arrowPicker) SelectedKeys() []string {
+	if !p.multiSelect {
+		return nil
+	}
+	out := make([]string, 0, len(p.selected))
+	for i, it := range p.items {
+		if p.selected[i] {
+			out = append(out, it.key)
+		}
+	}
+	return out
 }
 
 // MoveUp wraps the cursor.
@@ -87,22 +150,44 @@ func (p *arrowPicker) View() string {
 			cursor = pickerCursorStyle.Render("▸ ")
 			label = pickerLabelStyle.Render(it.label)
 		}
-		row := cursor + label
+		row := cursor
+		if p.multiSelect {
+			if p.selected[i] {
+				row += pickerCursorStyle.Render("[x] ")
+			} else {
+				row += pickerHintStyle.Render("[ ] ")
+			}
+		}
+		row += label
 		if it.hint != "" {
 			row += "  " + pickerHintStyle.Render(it.hint)
 		}
 		b.WriteString(row)
 		b.WriteString("\n")
 	}
-	b.WriteString(pickerHintStyle.Render("  ↑↓ to move · Enter to select · Esc to cancel"))
+	hint := "  ↑↓ to move · Enter to select · Esc to cancel"
+	if p.multiSelect {
+		hint = "  ↑↓ to move · Space to toggle · Enter to confirm · Esc to cancel"
+	}
+	b.WriteString(pickerHintStyle.Render(hint))
 	return b.String()
 }
 
-// arrowPickerResolveMsg is the bubbletea message dispatched by the
-// picker when the operator hits Enter (key is the selected item's key
-// field) or Esc (cancelled is true; key is empty).
+// arrowPickerResolveMsg is the bubbletea message dispatched by a
+// single-select picker when the operator hits Enter (key is the
+// selected item's key field) or Esc (cancelled is true; key is empty).
 type arrowPickerResolveMsg struct {
 	key       string
+	cancelled bool
+}
+
+// arrowPickerMultiResolveMsg is the multi-select counterpart. keys
+// carries every currently-ticked row in display order, possibly empty
+// when the operator confirmed with nothing ticked. cancelled fires on
+// Esc and leaves keys nil so the receiver can distinguish "operator
+// said: I want none" from "operator backed out".
+type arrowPickerMultiResolveMsg struct {
+	keys      []string
 	cancelled bool
 }
 
@@ -111,6 +196,12 @@ type arrowPickerResolveMsg struct {
 // strictly message-driven, the same shape as every other event.
 func arrowPickerResolveCmd(key string, cancelled bool) tea.Cmd {
 	msg := arrowPickerResolveMsg{key: key, cancelled: cancelled}
+	return func() tea.Msg { return msg }
+}
+
+// arrowPickerMultiResolveCmd fires the multi-select counterpart.
+func arrowPickerMultiResolveCmd(keys []string, cancelled bool) tea.Cmd {
+	msg := arrowPickerMultiResolveMsg{keys: keys, cancelled: cancelled}
 	return func() tea.Msg { return msg }
 }
 

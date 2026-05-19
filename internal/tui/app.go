@@ -277,10 +277,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "down", "j":
 				m.arrowPicker.MoveDown()
 				return m, nil
+			case " ":
+				// Space is the multi-select toggle. No-op on single-select
+				// pickers (Toggle short-circuits), so this is always safe
+				// to route through unconditionally.
+				m.arrowPicker.Toggle()
+				return m, nil
 			case "enter":
+				if m.arrowPicker.multiSelect {
+					keys := m.arrowPicker.SelectedKeys()
+					return m, arrowPickerMultiResolveCmd(keys, false)
+				}
 				sel := m.arrowPicker.Selected()
 				return m, arrowPickerResolveCmd(sel.key, false)
 			case "esc":
+				if m.arrowPicker.multiSelect {
+					return m, arrowPickerMultiResolveCmd(nil, true)
+				}
 				return m, arrowPickerResolveCmd("", true)
 			case "ctrl+c":
 				// Cancel the picker first, then fall through to the
@@ -460,8 +473,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(sCmd, m.runAgent(val), thinkingTickCmd())
 
 	case arrowPickerResolveMsg:
-		// Picker has fired its decision. Route the answer to whichever
-		// inline chat is active; if none, just drop the picker.
+		// Single-select picker (e.g. /login provider). Route the answer
+		// to whichever inline chat is active; if none, just drop the picker.
 		m.arrowPicker = nil
 		input := msg.key
 		if msg.cancelled {
@@ -470,6 +483,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.loginChat != nil {
 			res := m.loginChat.Step(input)
 			return m, m.applyLoginResult(res)
+		}
+		return m, nil
+
+	case arrowPickerMultiResolveMsg:
+		// Multi-select picker (e.g. /setup contexts + backend kinds).
+		// Only setupChat consumes these today; other chats fall through.
+		m.arrowPicker = nil
+		if m.setupChat != nil {
+			res := m.setupChat.ApplyMulti(msg.keys, msg.cancelled)
+			return m, m.applySetupResult(res)
 		}
 		return m, nil
 
@@ -500,15 +523,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.setupChat == nil {
 			return m, nil
 		}
-		res := m.setupChat.Apply(msg)
-		if res.done {
-			m.setupChat = nil
-		}
-		cmds := []tea.Cmd{m.writeStream(res.out)}
-		if res.cmd != nil {
-			cmds = append(cmds, res.cmd)
-		}
-		return m, tea.Batch(cmds...)
+		// Apply returns a setupResult that may carry the findings picker
+		// (when backends were discovered) or kick straight to save (when
+		// none were). applySetupResult handles both shapes uniformly.
+		return m, m.applySetupResult(m.setupChat.Apply(msg))
 
 	case setupSaveDoneMsg:
 		if m.setupChat == nil {
@@ -779,6 +797,26 @@ func (m *Model) writeStream(s string) tea.Cmd {
 	return c
 }
 
+// applySetupResult drains a setupResult into the TUI: writes the chat
+// output, installs the picker if present, kicks off any async command
+// (scan / save), and clears the chat on done. The split between
+// res.out (synchronous prose) and res.cmd (async work) is preserved
+// so the existing scan/save flow keeps its responsive "Scanning…"
+// banner while the goroutine runs.
+func (m *Model) applySetupResult(res setupResult) tea.Cmd {
+	cmds := []tea.Cmd{m.writeStream(res.out)}
+	if res.picker != nil {
+		m.arrowPicker = res.picker
+	}
+	if res.cmd != nil {
+		cmds = append(cmds, res.cmd)
+	}
+	if res.done {
+		m.setupChat = nil
+	}
+	return tea.Batch(cmds...)
+}
+
 // applyLoginResult drains a loginResult into the TUI: writes the chat
 // output, activates a picker if present, clears the chat on done, and
 // — the part the operator actually cares about — hot-swaps the active
@@ -966,15 +1004,15 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 // enough and avoids the leak that the deleted exitSetup helper used to clean
 // up.
 func (m *Model) enterSetup() tea.Cmd {
-	chat, greeting := newSetupChat(context.Background(), "", config.Path(), config.ProfilePath())
+	chat, res := newSetupChat(context.Background(), "", config.Path(), config.ProfilePath())
 	m.prompt.SetValue("")
 	if chat == nil {
-		// No kubeconfig contexts found: the greeting is the error message;
-		// just write it without installing the conversation.
-		return m.writeStream(greeting)
+		// No kubeconfig contexts found: result carries the error string;
+		// nothing else to install.
+		return m.writeStream(res.out)
 	}
 	m.setupChat = chat
-	return m.writeStream(greeting)
+	return m.applySetupResult(res)
 }
 
 // splashDotsStyle is the lighter sky-blue colour used by the splash
