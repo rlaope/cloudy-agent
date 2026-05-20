@@ -200,6 +200,15 @@ type Model struct {
 	// message is routed to Deps.SwapModel instead of a chat. Reset by
 	// the resolve handler whether the operator confirmed or cancelled.
 	modelPickerActive bool
+
+	// agentCh is the channel the in-flight agent goroutine emits
+	// AgentEvent values on. The Update loop reads it one event at a
+	// time via pumpAgentCmd — after each event is applied to sub-
+	// models, applyAgentEvent re-issues the pump so the next event
+	// is delivered. Without this re-pump tokens 2..N would sit in
+	// the buffered channel forever and the user would see the
+	// thinking timer tick but no actual response text.
+	agentCh chan agentEventMsg
 }
 
 // NewModel constructs the root TUI model.
@@ -531,8 +540,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.Update(msg.key)
 
 	case agentEventMsg:
+		// Apply this event to the sub-models, AND re-arm the channel
+		// pump so the next event is delivered. Without the pump cmd
+		// here the channel would block after the first token and the
+		// operator would see the thinking timer tick forever with no
+		// actual response text.
 		evt := AgentEvent(msg)
-		return m, m.applyAgentEvent(evt)
+		return m, tea.Batch(m.applyAgentEvent(evt), m.pumpAgentCmd())
 
 	case setupScanDoneMsg:
 		if m.setupChat == nil {
@@ -565,6 +579,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentDoneMsg:
 		m.running = false
 		m.thinking.streaming = false
+		// Release the channel so a stray late pump-cmd from the previous
+		// event doesn't keep this goroutine alive or block on a closed
+		// channel. Subsequent runAgent calls install a fresh ch.
+		m.agentCh = nil
 		if msg.err != nil {
 			return m, m.writeStream("\n" + agentError("error", msg.err))
 		}
@@ -717,6 +735,7 @@ func (m *Model) runAgent(input string) tea.Cmd {
 	}
 
 	ch := make(chan agentEventMsg, 64)
+	m.agentCh = ch
 
 	go func() {
 		defer close(ch)
@@ -729,6 +748,20 @@ func (m *Model) runAgent(input string) tea.Cmd {
 		ch <- agentEventMsg{Done: true}
 	}()
 
+	return m.pumpAgentCmd()
+}
+
+// pumpAgentCmd returns a tea.Cmd that reads ONE event from m.agentCh
+// and dispatches it as the next tea.Msg. Bubbletea Cmds fire once, so
+// to drain the agent goroutine's stream we re-issue this command after
+// every applied event (see applyAgentEvent). The Done sentinel converts
+// into agentDoneMsg so the parent flow can finalise without a separate
+// channel-closed check.
+func (m *Model) pumpAgentCmd() tea.Cmd {
+	ch := m.agentCh
+	if ch == nil {
+		return nil
+	}
 	return func() tea.Msg {
 		evt, ok := <-ch
 		if !ok {
