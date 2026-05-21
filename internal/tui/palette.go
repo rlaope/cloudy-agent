@@ -49,7 +49,7 @@ var builtinItems = []paletteItem{
 	{title: "tools", usage: "/tools        — list registered tool groups"},
 	{title: "replay", usage: "/replay <id>  — replay a session file"},
 	{title: "clear", usage: "/clear        — clear stream output"},
-	{title: "update", usage: "/update       — show install commands for the latest cloudy"},
+	{title: "update", usage: "/update       — upgrade cloudy to the latest GitHub release"},
 	{title: "help", usage: "/help         — show help text"},
 	{title: "version", usage: "/version      — print build version"},
 	{title: "exit", usage: "/exit         — quit cloudy (alias of /quit)"},
