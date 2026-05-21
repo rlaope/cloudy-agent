@@ -36,7 +36,26 @@ perf, eBPF — based on the question, not on a fixed script.
 
 ## Install
 
-Pre-1.0. Build from source.
+**One-liner (macOS, Linux — amd64 + arm64):**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy/master/install.sh | sh
+```
+
+Drops the latest GitHub release into `~/.local/bin/cloudy`, sets the
+executable bit, and prints a PATH-setup hint if needed. Re-run the
+same line anytime to upgrade — the installer always pulls whatever
+GitHub marks as `latest`.
+
+Override the install location with `CLOUDY_INSTALL_DIR`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy/master/install.sh \
+  | CLOUDY_INSTALL_DIR=/usr/local/bin sh
+```
+
+**Build from source** (Windows, contributors, anything off the
+release matrix):
 
 ```sh
 git clone https://github.com/rlaope/cloudy.git
@@ -44,6 +63,9 @@ cd cloudy
 make build
 ./cloudy --version
 ```
+
+Either path leaves the binary discoverable as `cloudy` once the
+install directory is on your `PATH`.
 
 ## First run
 
