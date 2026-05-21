@@ -33,9 +33,14 @@ type paletteItem struct {
 
 // builtinItems is the canonical list of slash commands, in display order.
 // The same slice powers the suggestion view and the registration tests.
+//
+// `/set-up` is still accepted by the dispatcher (handlePaletteAction)
+// as a typo-tolerant alias, but it is no longer surfaced in the
+// suggestion list — two near-identical rows just added noise without
+// adding affordance. Operators who type `/set-up` will still hit the
+// same code path.
 var builtinItems = []paletteItem{
 	{title: "setup", usage: "/setup        — run the discovery wizard"},
-	{title: "set-up", usage: "/set-up       — alias of /setup; re-analyse the cluster"},
 	{title: "login", usage: "/login        — save an LLM provider API key inline"},
 	{title: "skill", usage: "/skill <name> — switch active skill"},
 	{title: "use", usage: "/use <ctx>    — switch kubeconfig context"},
