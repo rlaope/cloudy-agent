@@ -19,6 +19,15 @@ var promptBorderStyle = lipgloss.NewStyle().
 	Border(lipgloss.NormalBorder(), true, false, true, false).
 	BorderForeground(lipgloss.Color("15"))
 
+// promptBorderInFlightStyle is the same border drawn in the brand
+// sky-blue so the operator gets an at-a-glance "the system is working"
+// cue without having to look up at the thinking row. Toggled by
+// PromptModel.inFlight, which the parent flips on submitMsg / clears
+// on agentDoneMsg / cancel.
+var promptBorderInFlightStyle = lipgloss.NewStyle().
+	Border(lipgloss.NormalBorder(), true, false, true, false).
+	BorderForeground(lipgloss.Color("117"))
+
 // promptBorderHeight is the number of extra terminal rows the border adds
 // (top rule + bottom rule = 2). Used by the parent Model for layout math.
 // Hard-coded to 2 because promptBorderStyle uses lipgloss.NormalBorder()
@@ -40,6 +49,11 @@ type PromptModel struct {
 	searchBuf  string
 	searchIdx  int
 	searchHits []string
+
+	// inFlight toggles the prompt's border color while an agent run is
+	// in progress. Driven by the parent Model via SetInFlight on
+	// submitMsg / agentDoneMsg / cancel paths.
+	inFlight bool
 
 	keys keyMap
 }
@@ -262,6 +276,11 @@ func (p *PromptModel) Focus() tea.Cmd {
 	return p.ta.Focus()
 }
 
+// SetInFlight toggles the prompt border color so the operator gets a
+// peripheral cue that the system is working. The parent calls this on
+// submitMsg (true), agentDoneMsg (false), and on Esc/Ctrl+C cancel.
+func (p *PromptModel) SetInFlight(v bool) { p.inFlight = v }
+
 func (p PromptModel) View() string {
 	var inner string
 	if p.inSearch {
@@ -269,7 +288,11 @@ func (p PromptModel) View() string {
 	} else {
 		inner = p.ta.View()
 	}
-	return promptBorderStyle.Render(inner)
+	style := promptBorderStyle
+	if p.inFlight {
+		style = promptBorderInFlightStyle
+	}
+	return style.Render(inner)
 }
 
 // Height returns the prompt's full rendered height in terminal rows, including

@@ -14,12 +14,43 @@ import (
 // with an updated elapsed-seconds counter.
 const tickInterval = time.Second
 
+// streamFlushInterval is the upper bound on how often pending tokens are
+// flushed into the viewport. 16ms ≈ one 60Hz frame: tokens that arrive
+// within the same frame coalesce into a single viewport reflow, which is
+// what eliminates the "툭툭" stutter the user reported. Without this,
+// every Anthropic SSE chunk (typically 1–3 chars) triggered its own
+// vp.SetContent + GotoBottom + View pass, and on long replies the per-
+// token cost grew linearly because SetContent rebuilds line state from a
+// fresh copy of the whole accumulated buffer.
+const streamFlushInterval = 16 * time.Millisecond
+
 // streamToolTickMsg is delivered once per tickInterval while a tool call is
 // in flight, prompting the stream model to refresh the header's [MM:SS] suffix.
 type streamToolTickMsg struct{}
 
-// streamTokenMsg carries a text fragment to append to the stream viewport.
+// streamFlushTickMsg fires once after streamFlushInterval whenever there
+// are pending tokens to flush. The stream model self-arms it on the
+// first token write; subsequent tokens that arrive while a flush is
+// already scheduled just append to the buffer without rescheduling.
+type streamFlushTickMsg struct{}
+
+// streamTokenMsg carries an LLM-streamed text fragment that the stream
+// model intentionally batches via streamFlushTickMsg. Use this ONLY for
+// the agent's flowing prose where dozens of tiny chunks per second would
+// otherwise reflow the viewport on every token. UI chrome (echoes,
+// error lines, command output) uses streamWriteMsg instead so it lands
+// synchronously and tests can observe it without having to drive the
+// flush tick.
 type streamTokenMsg string
+
+// streamWriteMsg is the immediate-write counterpart. Any pending agent
+// tokens are drained first so writes stay in the order they were issued;
+// then the payload is appended directly to the content buffer and the
+// viewport is refreshed in the same Update. The split keeps the test
+// suite straightforward (no need to pump a flush tick to read chrome
+// output) and keeps user-facing diagnostics from being delayed by a
+// frame.
+type streamWriteMsg string
 
 // streamToolBeginMsg signals the start of a tool call block.
 type streamToolBeginMsg struct {
@@ -52,10 +83,19 @@ type toolBlock struct {
 // panics if a non-zero strings.Builder is copied. Holding the Builder
 // behind a pointer means the copy carries only the pointer and every
 // receiver writes to the same underlying buffer.
+//
+// pendingTokens and flushScheduled implement the frame-rate batching that
+// fixes the streaming stutter: streamTokenMsg only appends to the buffer
+// and schedules ONE streamFlushTickMsg if none is pending; the flush
+// handler then drains the buffer in a single viewport SetContent + maybe
+// GotoBottom pass. Same pointer rationale as content above.
 type StreamModel struct {
 	vp      viewport.Model
 	content *strings.Builder
 	ready   bool
+
+	pendingTokens  *strings.Builder
+	flushScheduled bool
 
 	// pending tool block being assembled
 	pendingTool *toolBlock
@@ -113,14 +153,49 @@ func tickToolCmd() tea.Cmd {
 	return tea.Tick(tickInterval, func(time.Time) tea.Msg { return streamToolTickMsg{} })
 }
 
+// streamFlushTickCmd schedules one streamFlushTickMsg ~one frame from
+// now. Re-armed by the flush handler only when more tokens arrived
+// during the window so an idle stream does not keep ticking.
+func streamFlushTickCmd() tea.Cmd {
+	return tea.Tick(streamFlushInterval, func(time.Time) tea.Msg { return streamFlushTickMsg{} })
+}
+
 func newStreamModel(noColor bool) StreamModel {
-	s := StreamModel{noColor: noColor, content: &strings.Builder{}}
+	s := StreamModel{
+		noColor:       noColor,
+		content:       &strings.Builder{},
+		pendingTokens: &strings.Builder{},
+	}
 	if !noColor {
 		s.toolStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 		s.obsStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 		s.errStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	}
 	return s
+}
+
+// drainPending flushes any batched tokens into the live content buffer
+// and refreshes the viewport once. Returns true when at least one byte
+// was committed (callers use this to decide whether to GotoBottom).
+//
+// The "was at bottom" decision is captured BEFORE the new bytes land:
+// the viewport's AtBottom() compares YOffset against the line count, so
+// after SetContent the same offset would no longer be at the bottom and
+// the heuristic would always return false on a previously-bottom stream.
+func (s *StreamModel) drainPending() bool {
+	if s.pendingTokens.Len() == 0 {
+		return false
+	}
+	wasAtBottom := !s.ready || s.vp.AtBottom()
+	s.content.WriteString(s.pendingTokens.String())
+	s.pendingTokens.Reset()
+	if s.ready {
+		s.vp.SetContent(s.content.String())
+		if wasAtBottom {
+			s.vp.GotoBottom()
+		}
+	}
+	return true
 }
 
 func (s StreamModel) Init() tea.Cmd { return nil }
@@ -145,13 +220,46 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 		}
 
 	case streamTokenMsg:
+		// Append-only: defer the viewport reflow to the next flush tick
+		// so a burst of SSE chunks coalesces into one render. Schedule
+		// the tick exactly once until the flush handler runs.
+		s.pendingTokens.WriteString(string(m))
+		if !s.flushScheduled {
+			s.flushScheduled = true
+			cmds = append(cmds, streamFlushTickCmd())
+		}
+
+	case streamFlushTickMsg:
+		s.flushScheduled = false
+		s.drainPending()
+
+	case streamWriteMsg:
+		// Synchronous write path for UI chrome (echoes, errors, command
+		// output). Drain pending agent tokens first so the chrome line
+		// follows whatever streaming text preceded it in submit order.
+		// wasAtBottom is captured AFTER drainPending so it reflects the
+		// viewport position once any pending text has landed but before
+		// this chrome write extends content further. Operator-initiated
+		// scrollback survives chrome events the same way it survives
+		// streaming tokens.
+		s.drainPending()
+		wasAtBottom := !s.ready || s.vp.AtBottom()
 		s.content.WriteString(string(m))
 		if s.ready {
 			s.vp.SetContent(s.content.String())
-			s.vp.GotoBottom()
+			if wasAtBottom {
+				s.vp.GotoBottom()
+			}
 		}
 
 	case streamToolBeginMsg:
+		// Flush queued text before injecting structural markup so the
+		// tool header lands strictly after the assistant prose that
+		// preceded it, not interleaved with a half-rendered token batch.
+		// Same scroll-position rule as streamWriteMsg — capture after
+		// the drain so the operator's scrollback survives tool calls.
+		s.drainPending()
+		wasAtBottom := !s.ready || s.vp.AtBottom()
 		s.pendingTool = &toolBlock{name: m.name, args: m.args}
 		s.pendingStart = time.Now()
 		s.pendingHeaderRaw = renderToolHeader(m.name, m.args, 0)
@@ -162,7 +270,9 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 		s.content.WriteString("\n" + header + "\n")
 		if s.ready {
 			s.vp.SetContent(s.content.String())
-			s.vp.GotoBottom()
+			if wasAtBottom {
+				s.vp.GotoBottom()
+			}
 		}
 		// Start the elapsed-counter tick loop.
 		cmds = append(cmds, tickToolCmd())
@@ -186,13 +296,25 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 			s.content.WriteString(cur)
 			s.pendingHeaderRaw = newRaw
 			if s.ready {
+				// Header refresh is an in-place swap, not new content,
+				// so respect the operator's scroll position the same
+				// way the other write paths do.
+				wasAtBottom := s.vp.AtBottom()
 				s.vp.SetContent(cur)
-				s.vp.GotoBottom()
+				if wasAtBottom {
+					s.vp.GotoBottom()
+				}
 			}
 		}
 		cmds = append(cmds, tickToolCmd())
 
 	case streamToolEndMsg:
+		// Same drain+capture pattern as streamToolBeginMsg / streamWriteMsg:
+		// scroll-to-bottom is conditional on the operator already being
+		// at the bottom, so a tool that finishes while the operator is
+		// reading earlier output does not yank the viewport away.
+		s.drainPending()
+		wasAtBottom := !s.ready || s.vp.AtBottom()
 		if s.pendingTool != nil {
 			s.pendingTool.observation = m.observation
 			s.pendingTool.err = m.err
@@ -214,11 +336,15 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 		}
 		if s.ready {
 			s.vp.SetContent(s.content.String())
-			s.vp.GotoBottom()
+			if wasAtBottom {
+				s.vp.GotoBottom()
+			}
 		}
 
 	case streamClearMsg:
 		s.content.Reset()
+		s.pendingTokens.Reset()
+		s.flushScheduled = false
 		s.pendingTool = nil
 		if s.ready {
 			s.vp.SetContent("")
@@ -264,8 +390,16 @@ func (s *StreamModel) SetViewportSize(width, height int) {
 
 // Empty reports whether the stream has no content yet. Used by the parent
 // Model to decide whether to render the welcome banner above the empty body.
+// Pending (batched-but-not-yet-flushed) tokens count too so the banner
+// vanishes on the very first user input even if the flush tick hasn't
+// fired yet — otherwise the operator would briefly see the welcome
+// banner re-appear over the in-flight assistant prefix.
+//
+// pendingTokens is always initialised by newStreamModel, so a nil check
+// here would be dead defensive code — every constructed StreamModel has
+// a non-nil pointer.
 func (s StreamModel) Empty() bool {
-	return s.content.Len() == 0
+	return s.content.Len() == 0 && s.pendingTokens.Len() == 0
 }
 
 // indentObs renders a tool observation block in Claude's continuation

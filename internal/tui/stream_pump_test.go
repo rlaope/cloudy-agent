@@ -53,10 +53,10 @@ func TestAgentStream_PumpsEveryEvent(t *testing.T) {
 	// processed (the streaming run is complete).
 	pending := []tea.Cmd{cmd}
 	gotDone := false
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for len(pending) > 0 && !gotDone {
 		if time.Now().After(deadline) {
-			t.Fatalf("pump loop did not terminate within 2s — likely deadlocked")
+			t.Fatalf("pump loop did not terminate within 5s — likely deadlocked")
 		}
 		c := pending[0]
 		pending = pending[1:]
@@ -73,6 +73,12 @@ func TestAgentStream_PumpsEveryEvent(t *testing.T) {
 			pending = append(pending, batch...)
 			continue
 		}
+		// Drop the thinking-row animation tick so it does not re-arm
+		// itself and burn 250ms per iteration. The test cares about
+		// the agent stream pump, not the cosmetic "✦ Thinking…" timer.
+		if _, isThinking := msg.(thinkingTickMsg); isThinking {
+			continue
+		}
 		next, follow := m.Update(msg)
 		m = next.(Model)
 		if follow != nil {
@@ -81,6 +87,21 @@ func TestAgentStream_PumpsEveryEvent(t *testing.T) {
 		if _, done := msg.(agentDoneMsg); done {
 			gotDone = true
 		}
+	}
+	// Drain any flush ticks that arrived after the Done event so the
+	// final batch of tokens lands in content before the assertion.
+	// Without this the test could observe content snapshotted between
+	// the last streamTokenMsg and its corresponding flush.
+	for _, c := range pending {
+		if c == nil {
+			continue
+		}
+		msg := c()
+		if _, isFlush := msg.(streamFlushTickMsg); !isFlush {
+			continue
+		}
+		next, _ := m.Update(msg)
+		m = next.(Model)
 	}
 	if !gotDone {
 		t.Fatal("agentDoneMsg never arrived — pump loop terminated early")

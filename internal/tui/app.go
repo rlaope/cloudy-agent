@@ -209,6 +209,14 @@ type Model struct {
 	// the buffered channel forever and the user would see the
 	// thinking timer tick but no actual response text.
 	agentCh chan agentEventMsg
+
+	// assistantTurnStarted flips to true on the first Token event of
+	// the current turn so applyAgentEvent can prepend the "● "
+	// assistant glyph exactly once per response. Reset on each new
+	// submitMsg and on agentDoneMsg so the next turn re-emits the
+	// affordance — without that anchor the agent text materialises
+	// right against the "> <user>" echo with no visual separation.
+	assistantTurnStarted bool
 }
 
 // NewModel constructs the root TUI model.
@@ -263,9 +271,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.splash.done = true
 			// Seed the stream with the welcome banner so it scrolls up
 			// naturally as the operator starts chatting instead of
-			// disappearing on the first input.
+			// disappearing on the first input. Synchronous write so
+			// the banner is visible the moment the splash dismisses.
 			var sCmd tea.Cmd
-			m.stream, sCmd = m.stream.Update(streamTokenMsg(m.welcome.View() + "\n\n"))
+			m.stream, sCmd = m.stream.Update(streamWriteMsg(m.welcome.View() + "\n\n"))
 			return m, sCmd
 		}
 		return m, splashTickCmd()
@@ -381,9 +390,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancel()
 			m.cancel = func() {}
 			m.running = false
+			m.thinking.streaming = false
+			m.prompt.SetInFlight(false)
+			m.assistantTurnStarted = false
 			return m, nil
 
 		case "ctrl+l":
+			// Reset the assistant-turn anchor so the next agent token
+			// after a clear gets a fresh "● " bullet. Otherwise the
+			// post-clear reply materialises with no visual start.
+			m.assistantTurnStarted = false
 			var sCmd tea.Cmd
 			m.stream, sCmd = m.stream.Update(streamClearMsg{})
 			return m, sCmd
@@ -461,10 +477,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Echo the user's question into the stream so it scrolls up
 		// alongside the agent's answer; otherwise the operator only
-		// sees the response and loses track of what was asked.
+		// sees the response and loses track of what was asked. Use
+		// streamWriteMsg so the echo lands immediately rather than
+		// waiting for the next agent-token flush tick.
 		echo := userEchoStyle.Render("> "+val) + "\n"
 		var sCmd tea.Cmd
-		m.stream, sCmd = m.stream.Update(streamTokenMsg("\n" + echo))
+		m.stream, sCmd = m.stream.Update(streamWriteMsg("\n" + echo))
 
 		// Setup gate: refuse to dispatch when no model has been picked.
 		// We deliberately don't gate on m.deps.Provider — that field is a
@@ -479,13 +497,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					"loki, …) so cloudy can investigate questions about your clusters.",
 			) + "\n"
 			var wCmd tea.Cmd
-			m.stream, wCmd = m.stream.Update(streamTokenMsg(warn))
+			m.stream, wCmd = m.stream.Update(streamWriteMsg(warn))
 			return m, tea.Batch(sCmd, wCmd)
 		}
 
 		// Start the in-flight thinking animation. Reset seeds a new
 		// verb and zeroes the streaming counters.
 		m.thinking.reset()
+		// New turn — re-arm the "first token gets ● " hook so the
+		// upcoming response is properly anchored.
+		m.assistantTurnStarted = false
+		// Visual feedback that the system is working: the prompt
+		// border switches to the brand sky-blue while a request is
+		// in flight. Cleared in agentDoneMsg and on Esc/Ctrl+C cancel.
+		m.prompt.SetInFlight(true)
 
 		return m, tea.Batch(sCmd, m.runAgent(val), thinkingTickCmd())
 
@@ -579,6 +604,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentDoneMsg:
 		m.running = false
 		m.thinking.streaming = false
+		m.prompt.SetInFlight(false)
+		// Reset so the next turn re-emits the "● " bullet on its first
+		// token. Without this the second turn's response would inline
+		// against the previous one with no visual break.
+		m.assistantTurnStarted = false
 		// Release the channel so a stray late pump-cmd from the previous
 		// event doesn't keep this goroutine alive or block on a closed
 		// channel. Subsequent runAgent calls install a fresh ch.
@@ -663,10 +693,12 @@ func (m Model) View() string {
 	if banner != "" {
 		bannerH = lipgloss.Height(banner)
 	}
-	thinkingH := 0
-	if thinking != "" {
-		thinkingH = lipgloss.Height(thinking)
-	}
+	// renderThinkingRow always returns content (`· ready` when idle,
+	// the live `✦ …` form while running), so the row is part of the
+	// layout unconditionally. Dropping the `if thinking != ""` guard
+	// here keeps the slot reserved even if a future edit accidentally
+	// returns "" — preserving the "no prompt jump per turn" promise.
+	thinkingH := lipgloss.Height(thinking)
 	pickerH := 0
 	if pickerView != "" {
 		pickerH = lipgloss.Height(pickerView)
@@ -691,9 +723,10 @@ func (m Model) View() string {
 	if banner != "" {
 		parts = append(parts, banner)
 	}
-	if thinking != "" {
-		parts = append(parts, thinking)
-	}
+	// Same reasoning as the thinkingH calculation above — unconditional
+	// inclusion guards the layout slot against accidental empty-string
+	// regressions in renderThinkingRow.
+	parts = append(parts, thinking)
 	if pickerView != "" {
 		parts = append(parts, pickerView)
 	}
@@ -784,8 +817,19 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 		// until evt.Usage from the provider gives us a true token count.
 		m.thinking.streaming = true
 		m.thinking.tokens += approxTokens(evt.Token)
+		token := evt.Token
+		if !m.assistantTurnStarted {
+			// Anchor the response with a styled bullet — same affordance
+			// Claude's CLI uses — so the first token never looks like it
+			// materialised mid-air against the user echo. Prepending here
+			// (rather than as a separate message) keeps the prefix in
+			// the same batched flush as the first chunk, so the bullet
+			// and the first words appear together rather than flickering.
+			token = "\n" + assistantPrefixStyle.Render("●") + " " + token
+			m.assistantTurnStarted = true
+		}
 		var sCmd tea.Cmd
-		m.stream, sCmd = m.stream.Update(streamTokenMsg(evt.Token))
+		m.stream, sCmd = m.stream.Update(streamTokenMsg(token))
 		cmds = append(cmds, sCmd)
 	}
 	if evt.ToolBegin != nil {
@@ -838,9 +882,13 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 // and append text to the stream output. Extracted because the same three
 // lines appeared in 11 branches of handlePaletteAction; collapsing them
 // makes the dispatcher scannable.
+//
+// Uses streamWriteMsg so the chrome line lands synchronously instead of
+// going through the agent-token batching path — chat diagnostics need
+// to be visible on the same Update tick they were issued on.
 func (m *Model) writeStream(s string) tea.Cmd {
 	var c tea.Cmd
-	m.stream, c = m.stream.Update(streamTokenMsg(s))
+	m.stream, c = m.stream.Update(streamWriteMsg(s))
 	m.prompt.SetValue("")
 	return c
 }
@@ -979,6 +1027,8 @@ func (m *Model) handleEscape() tea.Cmd {
 		m.cancel = func() {}
 		m.running = false
 		m.thinking.streaming = false
+		m.prompt.SetInFlight(false)
+		m.assistantTurnStarted = false
 		return nil
 	}
 	// Nothing to cancel — clear the prompt so Esc always feels like
@@ -997,6 +1047,9 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		return nil
 
 	case "clear":
+		// Same bullet-anchor reset as the Ctrl+L path so a fresh
+		// "● " leads the next response.
+		m.assistantTurnStarted = false
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamClearMsg{})
 		m.prompt.SetValue("")
@@ -1134,14 +1187,18 @@ func formatThinkingElapsed(d time.Duration) string {
 	}
 }
 
-// renderThinkingRow returns the in-flight agent status row, or an
-// empty string when no run is active. Format:
+// renderThinkingRow returns the row that sits directly above the prompt.
+// It is rendered unconditionally from app start so the prompt position
+// never jumps when an agent run begins or ends — earlier versions
+// returned "" while idle, which made every Enter and every agentDoneMsg
+// shove the prompt up/down by a row. Three states:
 //
-//	✦ Synthesizing… (3s · 240 tokens)
-//	✦ Streaming   (1m12s · 1240 tokens)
+//	· ready                                  -- idle, between turns
+//	✦ Synthesizing… (3s · 240 tokens)        -- thinking, no bytes yet
+//	✦ Streaming    (1m12s · 1240 tokens)     -- bytes arriving
 func (m Model) renderThinkingRow() string {
 	if !m.running {
-		return ""
+		return thinkingIdleStyle.Render("· ready")
 	}
 	elapsed := formatThinkingElapsed(time.Since(m.thinking.start))
 	verb := "Streaming"
@@ -1172,6 +1229,19 @@ var setupRequiredStyle = lipgloss.NewStyle().
 // row ("✦ Synthesizing… (3s · 240 tokens)") that sits above the prompt.
 var thinkingStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("153"))
+
+// thinkingIdleStyle is the dim grey used by the persistent "· ready"
+// row that holds the layout slot while no agent run is in flight. The
+// muted shade keeps the eye on the prompt where input belongs.
+var thinkingIdleStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("240"))
+
+// assistantPrefixStyle styles the "●" bullet that anchors every agent
+// response. Same brand sky-blue as the welcome banner so the cue feels
+// of-a-piece with the rest of cloudy's chrome instead of an ad-hoc
+// glyph dropped in front of the text.
+var assistantPrefixStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("117")).Bold(true)
 
 // thinkingVerbs cycle as the agent works so the screen never looks
 // frozen during a long generation. Phrasing borrows from Claude's CLI
