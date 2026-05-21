@@ -31,6 +31,38 @@ const splashDuration = 350 * time.Millisecond
 // splashTickInterval drives the dots animation while the splash is visible.
 const splashTickInterval = 90 * time.Millisecond
 
+// playbackTickInterval is the cadence at which the typewriter playback
+// pops runes off the buffer. 16ms ≈ one 60Hz frame; pairing this with
+// playbackRunesPerTick gives a perceived char-rate of ~250/s — fast
+// enough that long replies do not feel slow, smooth enough that the
+// burstiness of Anthropic SSE chunks (1–3 chars at arbitrary times)
+// is invisible to the operator.
+const playbackTickInterval = 16 * time.Millisecond
+
+// playbackRunesPerTick is the maximum number of runes emitted per
+// playbackTickMsg. The buffer drains at this fixed rate even when the
+// upstream LLM has finished generating — operators reported the raw
+// SSE flow felt "툭툭" / choppy, and pacing the output to a constant
+// human-readable speed (rather than mirroring the network burst
+// pattern) is the textbook fix.
+const playbackRunesPerTick = 4
+
+// playbackToolFlushChunk caps the runes emitted in a single
+// streamWriteMsg when a ToolBegin event forces an early drain.
+// Splitting the drain into chunks rather than one giant write keeps
+// terminal redraw cost bounded for very long buffered prefixes.
+const playbackToolFlushChunk = 4096
+
+// playbackTickMsg fires once per playbackTickInterval while the
+// playback buffer has bytes to drain.
+type playbackTickMsg struct{}
+
+// playbackTickCmd schedules one playbackTickMsg. The handler re-arms
+// it only when more runes remain — an empty buffer lets the loop die.
+func playbackTickCmd() tea.Cmd {
+	return tea.Tick(playbackTickInterval, func(time.Time) tea.Msg { return playbackTickMsg{} })
+}
+
 // splashTickMsg fires once per splashTickInterval until splashDuration elapses.
 type splashTickMsg struct{}
 
@@ -219,6 +251,21 @@ type Model struct {
 	// affordance — without that anchor the agent text materialises
 	// right against the "> <user>" echo with no visual separation.
 	assistantTurnStarted bool
+
+	// playbackBuf accumulates assistant runes (after indent
+	// transformation) that have not yet been emitted to the stream.
+	// The playbackTick ticker pops a bounded number of runes per
+	// frame and writes them via streamWriteMsg, producing a steady
+	// "typewriter" cadence regardless of how bursty the upstream
+	// LLM stream is. Stored as []rune so multi-byte characters
+	// (Korean, emoji, etc.) never get cut mid-rune at the slice
+	// boundary, which would emit invalid UTF-8 to the terminal.
+	playbackBuf []rune
+
+	// playbackActive is true while a playbackTickMsg loop is in
+	// flight. Guards against scheduling duplicate ticks when several
+	// token events arrive in the same frame.
+	playbackActive bool
 }
 
 // NewModel constructs the root TUI model.
@@ -282,12 +329,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, splashTickCmd()
 
 	case thinkingTickMsg:
-		if !m.running {
-			// Agent finished or was cancelled; let the tick loop die.
+		if !m.running && !m.playbackActive {
+			// Agent finished AND playback fully drained; let the
+			// tick loop die. We keep ticking through playback so the
+			// elapsed counter on the status row stays live even
+			// after the LLM has stopped emitting tokens.
 			return m, nil
 		}
 		m.thinking.tick()
 		return m, thinkingTickCmd()
+
+	case playbackTickMsg:
+		// Pop a fixed number of runes from the buffer and write
+		// them via the synchronous chrome path. Re-arms only when
+		// more runes remain; an empty buffer lets the loop die so
+		// idle sessions don't keep ticking.
+		out := m.popPlaybackRunes(playbackRunesPerTick)
+		if out == "" {
+			m.playbackActive = false
+			// Buffer empty AND LLM finished → release the "Typing"
+			// indicator on the next View pass and reset the per-turn
+			// bullet anchor so the next reply gets a fresh "● ".
+			if !m.running {
+				m.thinking.streaming = false
+				m.assistantTurnStarted = false
+			}
+			return m, nil
+		}
+		var sCmd tea.Cmd
+		m.stream, sCmd = m.stream.Update(streamWriteMsg(out))
+		return m, tea.Batch(sCmd, playbackTickCmd())
 
 	case tea.KeyMsg:
 		// Splash key-skip: an eager typist who hits Enter / starts a
@@ -401,20 +472,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.ctrlCCount >= 2 {
 				return m, tea.Quit
 			}
-			// Single Ctrl+C: cancel in-flight request.
+			// Single Ctrl+C: cancel in-flight request. Discard any
+			// buffered playback runes — the operator wants out, not a
+			// drawn-out typewriter drain of work they just abandoned.
 			m.cancel()
 			m.cancel = func() {}
 			m.running = false
 			m.thinking.streaming = false
 			m.prompt.SetInFlight(false)
 			m.assistantTurnStarted = false
+			m.playbackBuf = m.playbackBuf[:0]
+			m.playbackActive = false
 			return m, nil
 
 		case "ctrl+l":
 			// Reset the assistant-turn anchor so the next agent token
-			// after a clear gets a fresh "● " bullet. Otherwise the
-			// post-clear reply materialises with no visual start.
+			// after a clear gets a fresh "● " bullet, and drop any
+			// playback runes still in flight — the operator just
+			// wiped the screen on purpose; keep-typing-the-old-reply
+			// would defeat that intent.
 			m.assistantTurnStarted = false
+			m.playbackBuf = m.playbackBuf[:0]
+			m.playbackActive = false
 			var sCmd tea.Cmd
 			m.stream, sCmd = m.stream.Update(streamClearMsg{})
 			return m, sCmd
@@ -618,19 +697,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentDoneMsg:
 		m.running = false
-		m.thinking.streaming = false
 		m.prompt.SetInFlight(false)
-		// Reset so the next turn re-emits the "● " bullet on its first
-		// token. Without this the second turn's response would inline
-		// against the previous one with no visual break.
-		m.assistantTurnStarted = false
 		// Release the channel so a stray late pump-cmd from the previous
 		// event doesn't keep this goroutine alive or block on a closed
 		// channel. Subsequent runAgent calls install a fresh ch.
 		m.agentCh = nil
 		if msg.err != nil {
+			// Errors short-circuit playback: dump any buffered tokens
+			// first so they aren't lost, then surface the error so
+			// the operator sees the full prose + the diagnostic
+			// rather than half a sentence cut off by a red banner.
+			drain := m.drainPlaybackBuffer()
+			m.playbackActive = false
+			m.thinking.streaming = false
+			m.assistantTurnStarted = false
+			if drain != "" {
+				var sCmd tea.Cmd
+				m.stream, sCmd = m.stream.Update(streamWriteMsg(drain))
+				return m, tea.Batch(sCmd, m.writeStream("\n"+agentError("error", msg.err)))
+			}
 			return m, m.writeStream("\n" + agentError("error", msg.err))
 		}
+		// Happy path: leave playback running so the operator sees the
+		// remaining buffer drain at typewriter pace. The playback tick
+		// handler clears thinking.streaming + assistantTurnStarted
+		// itself once the buffer empties.
 		return m, nil
 
 	case agentUsageMsg:
@@ -829,27 +920,46 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 	var cmds []tea.Cmd
 
 	if evt.Token != "" {
-		// Switch the thinking row from verb-cycling to "Streaming" once
-		// real bytes arrive. tokens is a coarse char-rate stand-in
-		// until evt.Usage from the provider gives us a true token count.
+		// Switch the thinking row from verb-cycling to "Typing" once
+		// real bytes have entered the playback pipeline. tokens is a
+		// coarse char-rate stand-in until evt.Usage from the provider
+		// gives us a true token count.
 		m.thinking.streaming = true
 		m.thinking.tokens += approxTokens(evt.Token)
-		token := evt.Token
+		// First token of a turn: emit the styled "●  " bullet via
+		// the synchronous chrome path so the lipgloss-generated ANSI
+		// escape sequences land atomically. If we let those sequences
+		// flow through the rune-by-rune playback tick they could
+		// split mid-escape ("\x1b[3" + "8;5;1" + …), breaking the
+		// terminal's render of every byte that followed.
 		if !m.assistantTurnStarted {
-			// Anchor the response with a styled bullet — same affordance
-			// Claude's CLI uses — so the first token never looks like it
-			// materialised mid-air against the user echo. Prepending here
-			// (rather than as a separate message) keeps the prefix in
-			// the same batched flush as the first chunk, so the bullet
-			// and the first words appear together rather than flickering.
-			token = "\n" + assistantPrefixStyle.Render("●") + " " + token
 			m.assistantTurnStarted = true
+			prefix := "\n" + assistantPrefixStyle.Render("●") + " "
+			var prefixCmd tea.Cmd
+			m.stream, prefixCmd = m.stream.Update(streamWriteMsg(prefix))
+			cmds = append(cmds, prefixCmd)
 		}
-		var sCmd tea.Cmd
-		m.stream, sCmd = m.stream.Update(streamTokenMsg(token))
-		cmds = append(cmds, sCmd)
+		// Buffer the actual prose runes for typewriter playback. The
+		// playback tick drains the buffer at a steady ~250 chars/s
+		// so the visible output flows like typing rather than
+		// mirroring the upstream SSE burst pattern.
+		m.bufferAssistantToken(evt.Token)
+		if !m.playbackActive && len(m.playbackBuf) > 0 {
+			m.playbackActive = true
+			cmds = append(cmds, playbackTickCmd())
+		}
 	}
 	if evt.ToolBegin != nil {
+		// Flush any buffered assistant text *now* so the tool block
+		// does not visually leapfrog the prose that introduced it.
+		// We use streamWriteMsg (synchronous, immediate) rather than
+		// the typewriter so the tool can dispatch without waiting on
+		// the playback pace.
+		if drain := m.drainPlaybackBuffer(); drain != "" {
+			var sCmd tea.Cmd
+			m.stream, sCmd = m.stream.Update(streamWriteMsg(drain))
+			cmds = append(cmds, sCmd)
+		}
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamToolBeginMsg{
 			name: evt.ToolBegin.name,
@@ -894,6 +1004,66 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 
 	return tea.Batch(cmds...)
 }
+
+// bufferAssistantToken queues the prose half of an LLM token for
+// typewriter playback. Two contracts:
+//
+//  1. Every `\n` is followed by a fixed continuation indent
+//     (assistantContIndent) so wrapped paragraphs read as a single
+//     block, aligned under the bullet rather than flush left.
+//  2. Runes are appended as []rune (not bytes) so the playback tick
+//     pops a fixed number of *characters* per frame without ever
+//     splitting a multi-byte UTF-8 sequence — Korean and emoji
+//     survive intact.
+//
+// The styled "●  " bullet is NOT buffered here — it is emitted
+// directly via streamWriteMsg by the caller so its ANSI escape
+// sequences land atomically.
+func (m *Model) bufferAssistantToken(token string) {
+	for _, r := range token {
+		m.playbackBuf = append(m.playbackBuf, r)
+		if r == '\n' {
+			m.playbackBuf = append(m.playbackBuf, []rune(assistantContIndent)...)
+		}
+	}
+}
+
+// drainPlaybackBuffer empties the entire playback buffer at once and
+// returns the resulting string. Used by ToolBegin (where we don't
+// want the tool block jumping ahead of the prose that intro'd it)
+// and by hard-reset paths (cancel, clear, agentDoneMsg with error).
+// Caller is responsible for writing the returned text to the stream.
+func (m *Model) drainPlaybackBuffer() string {
+	if len(m.playbackBuf) == 0 {
+		return ""
+	}
+	out := string(m.playbackBuf)
+	m.playbackBuf = m.playbackBuf[:0]
+	return out
+}
+
+// popPlaybackRunes removes up to n runes from the front of the
+// playback buffer and returns them as a string. Returns the empty
+// string when the buffer is empty; safe to call when n exceeds
+// buffer length (returns whatever was there).
+func (m *Model) popPlaybackRunes(n int) string {
+	if len(m.playbackBuf) == 0 {
+		return ""
+	}
+	if n > len(m.playbackBuf) {
+		n = len(m.playbackBuf)
+	}
+	head := string(m.playbackBuf[:n])
+	m.playbackBuf = m.playbackBuf[n:]
+	return head
+}
+
+// assistantContIndent is the continuation prefix injected after every
+// newline inside an assistant response. Three spaces aligns the wrapped
+// text with the column where the first character followed the "●  "
+// bullet on the opening line — same visual rhythm as the "⎿  " /
+// "   " pattern indentObs uses for tool observations.
+const assistantContIndent = "   "
 
 // writeStream is the every-other-palette-action shape: clear the prompt
 // and append text to the stream output. Extracted because the same three
@@ -1040,12 +1210,17 @@ func (m *Model) handleEscape() tea.Cmd {
 		return m.writeStream(res.out)
 	}
 	if m.running {
+		// Same buffer-discard rationale as the Ctrl+C path: Esc means
+		// "stop, return me to the prompt", not "keep typing the half
+		// of the response I haven't read yet at typewriter pace".
 		m.cancel()
 		m.cancel = func() {}
 		m.running = false
 		m.thinking.streaming = false
 		m.prompt.SetInFlight(false)
 		m.assistantTurnStarted = false
+		m.playbackBuf = m.playbackBuf[:0]
+		m.playbackActive = false
 		return nil
 	}
 	// Nothing to cancel — clear the prompt so Esc always feels like
@@ -1064,9 +1239,12 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		return nil
 
 	case "clear":
-		// Same bullet-anchor reset as the Ctrl+L path so a fresh
-		// "● " leads the next response.
+		// Same bullet-anchor reset and playback-buffer drop as the
+		// Ctrl+L path so a fresh "● " leads the next response and
+		// no half-played reply spills onto the cleared screen.
 		m.assistantTurnStarted = false
+		m.playbackBuf = m.playbackBuf[:0]
+		m.playbackActive = false
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamClearMsg{})
 		m.prompt.SetValue("")
@@ -1208,17 +1386,21 @@ func formatThinkingElapsed(d time.Duration) string {
 // It is rendered unconditionally from app start so the prompt position
 // never jumps when an agent run begins or ends — earlier versions
 // returned "" while idle, which made every Enter and every agentDoneMsg
-// shove the prompt up/down by a row. Three states:
+// shove the prompt up/down by a row. Four states:
 //
 //	· ready                                  -- idle, between turns
 //	✦ Synthesizing… (3s · 240 tokens)        -- thinking, no bytes yet
-//	✦ Streaming    (1m12s · 1240 tokens)     -- bytes arriving
+//	✦ Typing       (1m12s · 1240 tokens)     -- playback in progress
+//
+// "Typing" stays up while playback drains, even after the LLM itself
+// has finished, so the status row honestly reflects what the operator
+// is watching: characters still landing on the screen.
 func (m Model) renderThinkingRow() string {
-	if !m.running {
+	if !m.running && !m.playbackActive {
 		return thinkingIdleStyle.Render("· ready")
 	}
 	elapsed := formatThinkingElapsed(time.Since(m.thinking.start))
-	verb := "Streaming"
+	verb := "Typing"
 	if !m.thinking.streaming {
 		verb = thinkingVerbs[m.thinking.verbIdx] + "…"
 	}
