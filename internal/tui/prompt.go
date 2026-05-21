@@ -248,6 +248,12 @@ func (p PromptModel) Update(msg tea.Msg) (PromptModel, tea.Cmd) {
 // syncHeight resizes the textarea to match the current line count, bounded
 // by [1, maxPromptLines]. Called after every Update so the input box grows
 // (and shrinks) with the operator's typing — matching Claude's prompt UX.
+//
+// Also syncs the placeholder so a returning operator who has typed at
+// least one prompt this session sees "ask cloudy… (↑ for history)" —
+// surfacing the up-arrow recall affordance that was previously
+// invisible. Without this, new users had no way to discover history
+// navigation short of reading /help.
 func (p *PromptModel) syncHeight() {
 	lines := strings.Count(p.ta.Value(), "\n") + 1
 	if lines < 1 {
@@ -258,6 +264,14 @@ func (p *PromptModel) syncHeight() {
 	}
 	if p.ta.Height() != lines {
 		p.ta.SetHeight(lines)
+	}
+
+	want := "ask cloudy…"
+	if len(p.history) > 0 {
+		want = "ask cloudy…   ↑ for history"
+	}
+	if p.ta.Placeholder != want {
+		p.ta.Placeholder = want
 	}
 }
 
