@@ -579,27 +579,24 @@ func TestPaletteAction_Exit_Quits(t *testing.T) {
 	}
 }
 
-// TestPaletteAction_Update_WritesInstructions confirms /update prints a
-// guide rather than attempting to rewrite the running binary.
-func TestPaletteAction_Update_WritesInstructions(t *testing.T) {
+// TestPaletteAction_Update_KicksSelfUpdate confirms /update writes the
+// "checking for cloudy update…" intro line synchronously AND returns a
+// non-nil cmd that will fan out to the selfupdate goroutine. We do NOT
+// execute the returned cmd: that would hit the real GitHub API and is
+// not appropriate for a unit test.
+func TestPaletteAction_Update_KicksSelfUpdate(t *testing.T) {
 	m := NewModel(makeDeps())
 	next, _ := m.Update(windowMsg())
 	m = next.(Model)
 
 	cmd := m.handlePaletteAction(paletteActionMsg{cmd: "update"})
-	if cmd != nil {
-		cmd()
-	}
 
 	out := m.stream.content.String()
-	if !strings.Contains(out, "cloudy update") {
-		t.Errorf("update action should write the update guide header, got %q", out)
+	if !strings.Contains(out, "checking for cloudy update") {
+		t.Errorf("update action should write the intro line synchronously; got %q", out)
 	}
-	if !strings.Contains(out, "make build") {
-		t.Errorf("update action should mention 'make build', got %q", out)
-	}
-	if !strings.Contains(out, "/exit") {
-		t.Errorf("update action should reference /exit, got %q", out)
+	if cmd == nil {
+		t.Error("update action should return a non-nil cmd that kicks the selfupdate goroutine")
 	}
 }
 

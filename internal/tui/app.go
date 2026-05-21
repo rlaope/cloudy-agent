@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"strings"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/rlaope/cloudy/internal/buildinfo"
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/llm"
+	"github.com/rlaope/cloudy/internal/selfupdate"
 	"github.com/rlaope/cloudy/internal/session"
 	"github.com/rlaope/cloudy/internal/skills"
 	"github.com/rlaope/cloudy/internal/tools"
@@ -52,6 +52,36 @@ const playbackRunesPerTick = 4
 // Splitting the drain into chunks rather than one giant write keeps
 // terminal redraw cost bounded for very long buffered prefixes.
 const playbackToolFlushChunk = 4096
+
+// selfUpdateDoneMsg carries the result of an in-process /update run.
+// The captured log (every line selfupdate.Run wrote to its writer) is
+// dumped into the stream so the operator sees the same blow-by-blow
+// they would have seen at the CLI; the result + err drive the final
+// status line.
+type selfUpdateDoneMsg struct {
+	log    string
+	result selfupdate.Result
+	err    error
+}
+
+// selfUpdateCmd runs the self-update in a tea.Cmd goroutine so the
+// TUI stays responsive during the GitHub API roundtrip + binary
+// download (~5–15s on a reasonable connection). All progress
+// messages are captured into a buffer and replayed into the stream
+// when the cmd resolves — interleaving them live would require a
+// channel-pump similar to the agent stream, which is overkill for a
+// rarely-invoked maintenance command.
+func selfUpdateCmd() tea.Cmd {
+	return func() tea.Msg {
+		var buf strings.Builder
+		res, err := selfupdate.Run(context.Background(), &buf)
+		return selfUpdateDoneMsg{
+			log:    buf.String(),
+			result: res,
+			err:    err,
+		}
+	}
+}
 
 // playbackTickMsg fires once per playbackTickInterval while the
 // playback buffer has bytes to drain.
@@ -724,6 +754,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// itself once the buffer empties.
 		return m, nil
 
+	case selfUpdateDoneMsg:
+		// Dump the captured progress log first so the operator sees
+		// the same trace they would have seen at the CLI, then a
+		// terse summary line. On success we also remind them to
+		// restart — Unix lets us atomically swap the binary while
+		// it is running, but the current process keeps the OLD
+		// inode mapped until it exits.
+		var b strings.Builder
+		if msg.log != "" {
+			b.WriteString(msg.log)
+		}
+		if msg.err != nil {
+			b.WriteString("\n")
+			b.WriteString(agentError("update", msg.err))
+		} else if msg.result.Replaced {
+			fmt.Fprintf(&b, "\n✓ updated %s → %s — restart cloudy (Ctrl+C twice or /exit) to use it.\n",
+				msg.result.PreviousVersion, msg.result.LatestVersion)
+		}
+		return m, m.writeStream(b.String())
+
 	case agentUsageMsg:
 		m.usage.Input += msg.Input
 		m.usage.Output += msg.Output
@@ -1254,7 +1304,15 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		return tea.Quit
 
 	case "update":
-		return m.writeStream(renderUpdateInstructions())
+		// Kick the self-update in a tea.Cmd goroutine. While the
+		// download runs (~5–15s) the TUI stays responsive; the final
+		// selfUpdateDoneMsg dumps the captured progress log plus the
+		// outcome into the stream. We surface a short "starting…"
+		// line synchronously so the operator gets immediate feedback.
+		return tea.Batch(
+			m.writeStream("→ checking for cloudy update…\n"),
+			selfUpdateCmd(),
+		)
 
 	case "help":
 		return m.writeStream(helpText())
@@ -1536,27 +1594,6 @@ func (m Model) renderSplash() string {
 	return banner + "\n\n" + trailer
 }
 
-// renderUpdateInstructions returns a self-update guide rather than running
-// the installer from inside the agent process: a long-running binary cannot
-// safely overwrite itself on disk, and silently triggering a download while
-// the user is mid-session would be surprising. Print the one-liner instead
-// and let the operator decide when to apply it.
-func renderUpdateInstructions() string {
-	var b strings.Builder
-	b.WriteString("\n--- cloudy update ---\n")
-	fmt.Fprintf(&b, "  current : %s  (%s/%s)\n", buildinfo.Version, runtime.GOOS, runtime.GOARCH)
-	b.WriteString("  latest  : https://github.com/rlaope/cloudy/releases/latest\n\n")
-	b.WriteString("Exit cloudy first (Ctrl+C twice or /exit), then run:\n\n")
-	b.WriteString("  curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy/master/install.sh | sh\n\n")
-	b.WriteString("The installer pulls whatever GitHub marks as `latest`, drops the\n")
-	b.WriteString("binary in ~/.local/bin/cloudy (or $CLOUDY_INSTALL_DIR), and prints a\n")
-	b.WriteString("PATH-setup hint if needed. Re-run the same line later to upgrade.\n\n")
-	b.WriteString("Contributors / off-matrix platforms can still build from source:\n\n")
-	b.WriteString("  cd <your cloudy clone>\n")
-	b.WriteString("  git pull && make build\n")
-	return b.String()
-}
-
 // handleScopeCmd parses and applies a /scope argument, emitting confirmation.
 func (m *Model) handleScopeCmd(arg string) tea.Cmd {
 	sc, err := parseScope(arg)
@@ -1614,7 +1651,7 @@ commands (type / to open suggestions; arrow keys to pick):
   /tools              list registered tool groups + skip reasons
   /replay <session>   replay session
   /clear              clear output
-  /update             show install commands for the latest cloudy release
+  /update             upgrade cloudy to the latest GitHub release
   /help               show this text
   /version            print version
   /quit               exit cloudy (alias: /exit)
