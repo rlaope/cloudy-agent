@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -40,17 +41,61 @@ func TestFoldLongObservation_LongCollapsesToHeadTail(t *testing.T) {
 	if !strings.Contains(folded, "row 9999") {
 		t.Errorf("tail should keep the latest rows; got %q", folded)
 	}
-	// Hidden marker present.
-	wantMarker := "more lines hidden"
+	// Hidden marker present AND reports the exact count. The earlier
+	// "any number is fine" wording let a trailing-newline off-by-one
+	// slip through unnoticed; pin the integer so the regression is
+	// caught either direction.
+	hidden := totalLines - (foldObsHeadTail * 2)
+	wantMarker := fmt.Sprintf("[… %d more lines hidden …]", hidden)
 	if !strings.Contains(folded, wantMarker) {
-		t.Errorf("folded output should carry the hidden-line marker %q; got %q", wantMarker, folded)
+		t.Errorf("folded output should carry exact marker %q; got %q", wantMarker, folded)
 	}
-	// Marker must report a number greater than zero so the operator
-	// can tell something was suppressed. Exact count depends on
-	// trailing-newline behaviour of the input, which is irrelevant to
-	// the contract.
-	if !strings.Contains(folded, "more lines hidden") {
-		t.Errorf("hidden-line marker must include line count; got %q", folded)
+}
+
+// TestFoldLongObservation_TrailingNewline pins the contract that
+// `text` ending in "\n" (the common case for log dumps / file reads)
+// does NOT inflate the hidden-line count. Before the normalisation
+// step, strings.Split turned the terminator into a phantom empty
+// entry which then bumped the marker by 1 and pushed an extra blank
+// row into the rendered tail.
+func TestFoldLongObservation_TrailingNewline(t *testing.T) {
+	const realLines = 40
+	var b strings.Builder
+	for i := 0; i < realLines; i++ {
+		b.WriteString("row\n")
+	}
+
+	folded := foldLongObservation(b.String())
+	hidden := realLines - (foldObsHeadTail * 2)
+	wantMarker := fmt.Sprintf("[… %d more lines hidden …]", hidden)
+	if !strings.Contains(folded, wantMarker) {
+		t.Errorf("trailing-newline input must report exact hidden count %d; got %q",
+			hidden, folded)
+	}
+	// And the output should still terminate with a single trailing
+	// newline (preserving the input shape).
+	if !strings.HasSuffix(folded, "\n") {
+		t.Error("trailing-newline input should produce trailing-newline output")
+	}
+	if strings.HasSuffix(folded, "\n\n") {
+		t.Errorf("output must not have a double trailing newline (extra blank row); got tail %q",
+			folded[len(folded)-4:])
+	}
+}
+
+// TestFoldLongObservation_BoundaryExactLimit nails the inclusive/
+// exclusive boundary of foldObsLineLimit: exactly the limit must NOT
+// fold (last value that passes through), exactly limit+1 MUST fold
+// (first value that triggers). Without this boundary test, future
+// drift of the constant could silently shift the threshold by one.
+func TestFoldLongObservation_BoundaryExactLimit(t *testing.T) {
+	at := strings.Repeat("x\n", foldObsLineLimit)
+	if got := foldLongObservation(at); strings.Contains(got, "hidden") {
+		t.Errorf("input of exactly foldObsLineLimit lines must NOT fold; got %q", got)
+	}
+	over := strings.Repeat("x\n", foldObsLineLimit+1)
+	if got := foldLongObservation(over); !strings.Contains(got, "hidden") {
+		t.Errorf("input of foldObsLineLimit+1 lines MUST fold; got %q", got)
 	}
 }
 
