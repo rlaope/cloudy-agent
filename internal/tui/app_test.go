@@ -542,10 +542,15 @@ func TestPaletteIncludes_Setup(t *testing.T) {
 }
 
 // TestPaletteIncludes_NewCommands verifies the new v0.4-UX commands
-// (/exit, /set-up, /update) are registered so palette tab-completion can
-// pick them up alongside the original /quit, /setup, etc.
+// (/exit, /update) are registered so palette tab-completion can pick
+// them up alongside the original /quit, /setup, etc.
+//
+// `/set-up` is intentionally NOT listed — it remains accepted by the
+// dispatcher as a typo-tolerant alias (covered by
+// TestPaletteAction_SetUpAlias_EntersSetup) but is no longer surfaced
+// in the suggestion list to keep the palette clean.
 func TestPaletteIncludes_NewCommands(t *testing.T) {
-	want := map[string]bool{"exit": false, "set-up": false, "update": false}
+	want := map[string]bool{"exit": false, "update": false}
 	for _, item := range builtinItems {
 		if _, ok := want[item.title]; ok {
 			want[item.title] = true

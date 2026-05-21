@@ -50,18 +50,17 @@ func newHeaderModel(ctx, ns, model string) HeaderModel {
 		noColor: noColor,
 	}
 	if !noColor {
+		// Background fill removed — the edge-to-edge dark block read
+		// as heavy chrome and crowded the body. A dim foreground with
+		// modest left padding lands closer to Claude's CLI status line:
+		// quiet enough to ignore, present enough to glance at.
 		h.style = lipgloss.NewStyle().
-			Background(lipgloss.Color("235")).
-			Foreground(lipgloss.Color("252")).
-			PaddingLeft(1).
-			PaddingRight(1)
+			Foreground(lipgloss.Color("245")).
+			PaddingLeft(1)
 		h.keyStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Inherit(h.style)
+			Foreground(lipgloss.Color("240"))
 		h.valStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("15")).
-			Bold(true).
-			Inherit(h.style)
+			Foreground(lipgloss.Color("252"))
 	}
 	return h
 }
@@ -118,8 +117,10 @@ func (h HeaderModel) View() string {
 	if h.noColor {
 		return content
 	}
-	s := h.style.Width(h.width)
-	return s.Render(content)
+	// No .Width(h.width) — the old full-width fill rendered a long
+	// dark band across the top; the dim-text approach reads as a
+	// status caption instead of a UI bar.
+	return h.style.Render(content)
 }
 
 // shortField returns s truncated to at most max runes, appending a single

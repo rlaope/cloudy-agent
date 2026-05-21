@@ -24,10 +24,12 @@ const ctrlCTimeout = 2 * time.Second
 // splashDuration is how long the boot splash (cloudy banner + animated dots)
 // stays on screen before the main TUI takes over. Long enough to make the
 // brand land, short enough that the operator never has to wait on it.
-const splashDuration = 700 * time.Millisecond
+// The first KeyMsg also dismisses it early so eager typists never feel
+// the brand getting in their way.
+const splashDuration = 350 * time.Millisecond
 
 // splashTickInterval drives the dots animation while the splash is visible.
-const splashTickInterval = 120 * time.Millisecond
+const splashTickInterval = 90 * time.Millisecond
 
 // splashTickMsg fires once per splashTickInterval until splashDuration elapses.
 type splashTickMsg struct{}
@@ -288,6 +290,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, thinkingTickCmd()
 
 	case tea.KeyMsg:
+		// Splash key-skip: an eager typist who hits Enter / starts a
+		// /command during the boot brand should not have to wait for
+		// the timer. Mark it done and seed the welcome banner the
+		// same way splashTickMsg would, then fall through so the
+		// keystroke itself reaches the prompt on the same frame. The
+		// returned sCmd from a streamWriteMsg is the viewport's
+		// passthrough cmd (nil for non-key/mouse messages), so it is
+		// safely discarded here.
+		if !m.splash.done {
+			m.splash.done = true
+			m.stream, _ = m.stream.Update(streamWriteMsg(m.welcome.View() + "\n\n"))
+		}
+
 		// Arrow picker takes the screen first: while a Claude-style HITL
 		// menu is open, ↑/↓/Enter/Esc are routed to the picker and all
 		// other keys are swallowed so the operator cannot accidentally
@@ -1210,15 +1225,13 @@ func (m Model) renderThinkingRow() string {
 }
 
 // userEchoStyle renders the "> <input>" line that mirrors the operator's
-// last submitted prompt back into the stream. Bright-white text on a
-// dark-grey background with a single-cell horizontal padding so the
-// echo reads as a distinct chip — matches Claude's input-replay
-// affordance and makes it impossible to confuse with agent output.
+// last submitted prompt back into the stream. The previous "chip" form
+// (bold white-on-dark-grey with padding) read as a UI badge; the
+// chevron-led plain line reads as a transcript turn, matching how
+// Claude's CLI presents prior questions and clearly distinguishable
+// from the styled "●" the agent reply now leads with.
 var userEchoStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("15")).
-	Background(lipgloss.Color("236")).
-	Bold(true).
-	Padding(0, 1)
+	Foreground(lipgloss.Color("250"))
 
 // setupRequiredStyle is the red banner shown in-stream when the operator
 // asks a question before /setup or /login has configured a model.
@@ -1244,19 +1257,15 @@ var assistantPrefixStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("117")).Bold(true)
 
 // thinkingVerbs cycle as the agent works so the screen never looks
-// frozen during a long generation. Phrasing borrows from Claude's CLI
-// for familiarity; one is picked at random per run and rotated every
-// thinkingVerbRotateTicks ticks.
+// frozen during a long generation. Trimmed from the original nine-verb
+// pool (which included "Catapulting" / "Spelunking" — fun once, off-
+// brand on a tenth incident response) to four neutral, evergreen verbs
+// that read as serious-but-alive.
 var thinkingVerbs = []string{
 	"Thinking",
-	"Hmm",
-	"Cogitating",
-	"Pondering",
+	"Working",
 	"Synthesizing",
-	"Catapulting",
-	"Spelunking",
-	"Brewing",
-	"Mulling",
+	"Pondering",
 }
 
 // thinkingTickInterval and thinkingVerbRotateTicks together pace the
@@ -1393,7 +1402,7 @@ func helpText() string {
   PageUp/Dn      scroll output
 
 commands (type / to open suggestions; arrow keys to pick):
-  /setup              run the discovery wizard (alias: /set-up)
+  /setup              run the discovery wizard
   /login              save an LLM provider API key inline
   /skill <name>       switch active skill
   /use <ctx>          switch kubeconfig context
