@@ -328,7 +328,11 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 			s.content.WriteString(errLine + "\n")
 		}
 		if m.observation != "" {
-			obs := indentObs(m.observation)
+			// Fold first so the rail glyph from indentObs is applied
+			// after the head/tail/marker shape is decided. Otherwise
+			// the "[… hidden …]" marker would land without the leading
+			// indent and visually break the continuation rail.
+			obs := indentObs(foldLongObservation(m.observation))
 			if !s.noColor {
 				obs = s.obsStyle.Render(obs)
 			}
@@ -424,4 +428,62 @@ func indentObs(text string) string {
 		lines[i] = cont + l
 	}
 	return strings.Join(lines, "\n")
+}
+
+// foldObsLineLimit is the upper bound on lines emitted for a single
+// tool observation. Beyond this the head + tail are kept and the
+// middle is replaced with a hidden-line summary. Sized to give the
+// operator a sense of the shape (first few rows, last few rows) without
+// drowning the transcript when a single prom.query returns 5,000 rows
+// or a log.tail dumps a 50 MB error log.
+const foldObsLineLimit = 24
+
+// foldObsHeadTail is the number of lines preserved from each end when
+// folding kicks in. Keeping a chunk from both ends — rather than just
+// the head — preserves the "what was the failure?" answer for long
+// stack traces and the "what's the latest?" answer for log tails.
+const foldObsHeadTail = 10
+
+// foldLongObservation collapses an observation that is taller than
+// foldObsLineLimit by retaining the head + tail and replacing the
+// middle with a "[… N more lines hidden …]" marker. Short observations
+// pass through unchanged. The marker line is intentionally unstyled
+// here — indentObs will run after this and apply the rail glyph;
+// styling happens in the parent Update.
+func foldLongObservation(text string) string {
+	lines := strings.Split(text, "\n")
+	// Trailing-newline normalisation: log dumps, stack traces, and
+	// most command output end with "\n", which strings.Split turns
+	// into a trailing empty entry. Counting it would inflate the
+	// "N more lines hidden" marker by 1 and shove a stray blank row
+	// into the rendered tail. Strip it before the count, then re-add
+	// at the end so the output preserves the input's terminator.
+	hasTrailingNewline := len(lines) > 0 && lines[len(lines)-1] == ""
+	if hasTrailingNewline {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) <= foldObsLineLimit {
+		return text
+	}
+	// Defensive guard for future re-tuning: if foldObsLineLimit ever
+	// drops below 2*foldObsHeadTail, head and tail would overlap and
+	// the fold would emit duplicated rows under a nonsense marker.
+	// Today the constants are 24 and 10 so this never triggers; keep
+	// the invariant explicit so the assumption is not silently lost.
+	if len(lines) <= foldObsHeadTail*2 {
+		return text
+	}
+	hidden := len(lines) - (foldObsHeadTail * 2)
+	head := lines[:foldObsHeadTail]
+	tail := lines[len(lines)-foldObsHeadTail:]
+	marker := fmt.Sprintf("[… %d more lines hidden …]", hidden)
+	out := make([]string, 0, foldObsHeadTail*2+1)
+	out = append(out, head...)
+	out = append(out, marker)
+	out = append(out, tail...)
+	joined := strings.Join(out, "\n")
+	if hasTrailingNewline {
+		joined += "\n"
+	}
+	return joined
 }

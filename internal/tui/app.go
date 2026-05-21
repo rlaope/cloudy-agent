@@ -687,8 +687,10 @@ func (m Model) View() string {
 	// never has to touch the stream's Builder.
 	var banner string
 	if m.pendingApproval != nil {
-		banner = fmt.Sprintf("⚠ approval required: %s(%s) — RiskHigh\n  press [y] to approve, [n] or Esc to deny",
+		line1 := fmt.Sprintf("⚠ approval required: %s(%s) — RiskHigh",
 			m.pendingApproval.Tool, m.pendingApproval.Args)
+		line2 := "  press [y] to approve, [n] or Esc to deny"
+		banner = approvalBannerStyle.Render(line1) + "\n" + approvalHintStyle.Render(line2)
 	}
 
 	// Compute the body height by subtracting every other component's actual
@@ -1255,6 +1257,23 @@ var thinkingIdleStyle = lipgloss.NewStyle().
 // glyph dropped in front of the text.
 var assistantPrefixStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("117")).Bold(true)
+
+// approvalBannerStyle paints the first row of the RiskHigh approval
+// banner. White on red, bold — impossible to scroll past while the
+// agent goroutine waits on a y/n decision. The previous plain-text
+// banner blended into the transcript during a fast tool sequence and
+// the operator could miss that the agent had paused.
+var approvalBannerStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("15")).
+	Background(lipgloss.Color("196")).
+	Bold(true).
+	Padding(0, 1)
+
+// approvalHintStyle is the muted second line ("press [y] / [n] / Esc").
+// Lower contrast on purpose so the eye lands on the warning line first
+// and treats the hint as supporting context.
+var approvalHintStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("250"))
 
 // thinkingVerbs cycle as the agent works so the screen never looks
 // frozen during a long generation. Trimmed from the original nine-verb
