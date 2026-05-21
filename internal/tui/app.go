@@ -1354,24 +1354,24 @@ func (m Model) renderSplash() string {
 	return banner + "\n\n" + trailer
 }
 
-// renderUpdateInstructions returns a self-update guide rather than running git
-// or make from inside the agent process: a long-running binary cannot safely
-// overwrite itself on disk, and silently triggering a rebuild while the user
-// is mid-session would be surprising. Print the commands instead and let the
-// operator decide when to apply them.
+// renderUpdateInstructions returns a self-update guide rather than running
+// the installer from inside the agent process: a long-running binary cannot
+// safely overwrite itself on disk, and silently triggering a download while
+// the user is mid-session would be surprising. Print the one-liner instead
+// and let the operator decide when to apply it.
 func renderUpdateInstructions() string {
 	var b strings.Builder
 	b.WriteString("\n--- cloudy update ---\n")
 	fmt.Fprintf(&b, "  current : %s  (%s/%s)\n", buildinfo.Version, runtime.GOOS, runtime.GOARCH)
 	b.WriteString("  latest  : https://github.com/rlaope/cloudy/releases/latest\n\n")
-	b.WriteString("Run from your cloudy clone (do NOT edit the running binary):\n\n")
-	b.WriteString("  git fetch --tags origin\n")
-	b.WriteString("  git checkout v0.4.0          # or the tag from the link above\n")
-	b.WriteString("  make build\n")
-	b.WriteString("  ./cloudy --version\n\n")
-	b.WriteString("If cloudy is on $PATH via a symlink (e.g. /usr/local/bin/cloudy → repo)\n")
-	b.WriteString("the rebuild propagates automatically; otherwise copy the new binary into\n")
-	b.WriteString("place after exit. Use /exit to leave this session first.\n")
+	b.WriteString("Exit cloudy first (Ctrl+C twice or /exit), then run:\n\n")
+	b.WriteString("  curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy/master/install.sh | sh\n\n")
+	b.WriteString("The installer pulls whatever GitHub marks as `latest`, drops the\n")
+	b.WriteString("binary in ~/.local/bin/cloudy (or $CLOUDY_INSTALL_DIR), and prints a\n")
+	b.WriteString("PATH-setup hint if needed. Re-run the same line later to upgrade.\n\n")
+	b.WriteString("Contributors / off-matrix platforms can still build from source:\n\n")
+	b.WriteString("  cd <your cloudy clone>\n")
+	b.WriteString("  git pull && make build\n")
 	return b.String()
 }
 
