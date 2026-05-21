@@ -396,6 +396,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "ctrl+l":
+			// Reset the assistant-turn anchor so the next agent token
+			// after a clear gets a fresh "● " bullet. Otherwise the
+			// post-clear reply materialises with no visual start.
+			m.assistantTurnStarted = false
 			var sCmd tea.Cmd
 			m.stream, sCmd = m.stream.Update(streamClearMsg{})
 			return m, sCmd
@@ -689,10 +693,12 @@ func (m Model) View() string {
 	if banner != "" {
 		bannerH = lipgloss.Height(banner)
 	}
-	thinkingH := 0
-	if thinking != "" {
-		thinkingH = lipgloss.Height(thinking)
-	}
+	// renderThinkingRow always returns content (`· ready` when idle,
+	// the live `✦ …` form while running), so the row is part of the
+	// layout unconditionally. Dropping the `if thinking != ""` guard
+	// here keeps the slot reserved even if a future edit accidentally
+	// returns "" — preserving the "no prompt jump per turn" promise.
+	thinkingH := lipgloss.Height(thinking)
 	pickerH := 0
 	if pickerView != "" {
 		pickerH = lipgloss.Height(pickerView)
@@ -717,9 +723,10 @@ func (m Model) View() string {
 	if banner != "" {
 		parts = append(parts, banner)
 	}
-	if thinking != "" {
-		parts = append(parts, thinking)
-	}
+	// Same reasoning as the thinkingH calculation above — unconditional
+	// inclusion guards the layout slot against accidental empty-string
+	// regressions in renderThinkingRow.
+	parts = append(parts, thinking)
 	if pickerView != "" {
 		parts = append(parts, pickerView)
 	}
@@ -1040,6 +1047,9 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		return nil
 
 	case "clear":
+		// Same bullet-anchor reset as the Ctrl+L path so a fresh
+		// "● " leads the next response.
+		m.assistantTurnStarted = false
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamClearMsg{})
 		m.prompt.SetValue("")

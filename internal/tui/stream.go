@@ -237,18 +237,29 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 		// Synchronous write path for UI chrome (echoes, errors, command
 		// output). Drain pending agent tokens first so the chrome line
 		// follows whatever streaming text preceded it in submit order.
+		// wasAtBottom is captured AFTER drainPending so it reflects the
+		// viewport position once any pending text has landed but before
+		// this chrome write extends content further. Operator-initiated
+		// scrollback survives chrome events the same way it survives
+		// streaming tokens.
 		s.drainPending()
+		wasAtBottom := !s.ready || s.vp.AtBottom()
 		s.content.WriteString(string(m))
 		if s.ready {
 			s.vp.SetContent(s.content.String())
-			s.vp.GotoBottom()
+			if wasAtBottom {
+				s.vp.GotoBottom()
+			}
 		}
 
 	case streamToolBeginMsg:
 		// Flush queued text before injecting structural markup so the
 		// tool header lands strictly after the assistant prose that
 		// preceded it, not interleaved with a half-rendered token batch.
+		// Same scroll-position rule as streamWriteMsg — capture after
+		// the drain so the operator's scrollback survives tool calls.
 		s.drainPending()
+		wasAtBottom := !s.ready || s.vp.AtBottom()
 		s.pendingTool = &toolBlock{name: m.name, args: m.args}
 		s.pendingStart = time.Now()
 		s.pendingHeaderRaw = renderToolHeader(m.name, m.args, 0)
@@ -259,7 +270,9 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 		s.content.WriteString("\n" + header + "\n")
 		if s.ready {
 			s.vp.SetContent(s.content.String())
-			s.vp.GotoBottom()
+			if wasAtBottom {
+				s.vp.GotoBottom()
+			}
 		}
 		// Start the elapsed-counter tick loop.
 		cmds = append(cmds, tickToolCmd())
@@ -283,14 +296,25 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 			s.content.WriteString(cur)
 			s.pendingHeaderRaw = newRaw
 			if s.ready {
+				// Header refresh is an in-place swap, not new content,
+				// so respect the operator's scroll position the same
+				// way the other write paths do.
+				wasAtBottom := s.vp.AtBottom()
 				s.vp.SetContent(cur)
-				s.vp.GotoBottom()
+				if wasAtBottom {
+					s.vp.GotoBottom()
+				}
 			}
 		}
 		cmds = append(cmds, tickToolCmd())
 
 	case streamToolEndMsg:
+		// Same drain+capture pattern as streamToolBeginMsg / streamWriteMsg:
+		// scroll-to-bottom is conditional on the operator already being
+		// at the bottom, so a tool that finishes while the operator is
+		// reading earlier output does not yank the viewport away.
 		s.drainPending()
+		wasAtBottom := !s.ready || s.vp.AtBottom()
 		if s.pendingTool != nil {
 			s.pendingTool.observation = m.observation
 			s.pendingTool.err = m.err
@@ -312,7 +336,9 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 		}
 		if s.ready {
 			s.vp.SetContent(s.content.String())
-			s.vp.GotoBottom()
+			if wasAtBottom {
+				s.vp.GotoBottom()
+			}
 		}
 
 	case streamClearMsg:
@@ -368,8 +394,12 @@ func (s *StreamModel) SetViewportSize(width, height int) {
 // vanishes on the very first user input even if the flush tick hasn't
 // fired yet — otherwise the operator would briefly see the welcome
 // banner re-appear over the in-flight assistant prefix.
+//
+// pendingTokens is always initialised by newStreamModel, so a nil check
+// here would be dead defensive code — every constructed StreamModel has
+// a non-nil pointer.
 func (s StreamModel) Empty() bool {
-	return s.content.Len() == 0 && (s.pendingTokens == nil || s.pendingTokens.Len() == 0)
+	return s.content.Len() == 0 && s.pendingTokens.Len() == 0
 }
 
 // indentObs renders a tool observation block in Claude's continuation
