@@ -617,7 +617,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Queue the echo as a chip above the prompt; flush into the
 		// stream on the first agent event of the turn.
-		echo := userEchoStyle.Render("> "+val)
+		echo := userEchoStyle.Render("> " + val)
 		m.pendingUserEcho = "\n" + echo + "\n"
 
 		// Setup gate: refuse to dispatch when no model has been picked.
