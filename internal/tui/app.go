@@ -297,9 +297,12 @@ type Model struct {
 	// token events arrive in the same frame.
 	playbackActive bool
 
-	// pendingUserEcho is the pre-rendered "queued" chip shown directly
-	// above the prompt between submit and the first agent event of the
-	// turn. Drained into the stream by flushPendingUserEcho.
+	// pendingUserEcho is the pre-rendered "queued chip" column shown
+	// directly above the prompt between submit and the first agent
+	// event of the turn. Multiple submits while the agent is busy
+	// stack into the same string (Claude Code lets the operator queue
+	// follow-up questions while a reply is in flight). Drained as one
+	// block into the stream by flushPendingUserEcho.
 	pendingUserEcho string
 }
 
@@ -335,6 +338,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		// Mouse wheel scrolls the stream viewport's transcript. We
+		// deliberately do NOT forward MouseMsg to the prompt (the
+		// bubbles/textarea inside it interprets wheel-as-arrow-keys
+		// and would otherwise hijack scroll-up to mean "navigate
+		// history", which is the bug this branch exists to fix).
+		var sCmd tea.Cmd
+		m.stream, sCmd = m.stream.Update(msg)
+		return m, sCmd
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -616,9 +629,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Queue the echo as a chip above the prompt; flush into the
-		// stream on the first agent event of the turn.
+		// stream on the first agent event of the turn. += (not =)
+		// so a second submit while the agent is still working stacks
+		// below the first, matching Claude Code's "you can keep
+		// typing follow-ups while a reply is in flight" behaviour.
 		echo := userEchoStyle.Render("> " + val)
-		m.pendingUserEcho = "\n" + echo + "\n"
+		m.pendingUserEcho += "\n" + echo + "\n"
 
 		// Setup gate: refuse to dispatch when no model has been picked.
 		// We deliberately don't gate on m.deps.Provider — that field is a
@@ -898,7 +914,13 @@ func (m Model) View() string {
 	if queuedEcho != "" {
 		queuedH = lipgloss.Height(queuedEcho)
 	}
-	bodyH := m.height - headerH - promptH - paletteH - footerH - bannerH - thinkingH - pickerH - queuedH - chromeBottomPad
+	// streamBottomMargin reserves one row of breathing space between
+	// the last line of the transcript and the chrome (banner / thinking
+	// row / prompt). Without it the agent's final character lands flush
+	// against the prompt border, which reads as "cloudy is stuck" even
+	// when the turn finished cleanly.
+	const streamBottomMargin = 1
+	bodyH := m.height - headerH - promptH - paletteH - footerH - bannerH - thinkingH - pickerH - queuedH - chromeBottomPad - streamBottomMargin
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -909,12 +931,14 @@ func (m Model) View() string {
 		body = m.welcome.View() + "\n" + body
 	}
 
-	// Composed bottom-up: header → body (stream/welcome) → optional
-	// approval banner → optional thinking row → prompt → optional palette
-	// suggestions → blank separator → status footer → blank bottom
-	// padding. The trailing blank lifts the footer off the terminal edge
-	// so the chrome doesn't feel cramped.
-	parts := []string{header, body}
+	// Composed bottom-up: header → body (stream/welcome) → blank margin
+	// → optional approval banner → optional thinking row → prompt →
+	// optional palette suggestions → blank separator → status footer →
+	// blank bottom padding. The trailing blank lifts the footer off the
+	// terminal edge so the chrome doesn't feel cramped; the margin
+	// between body and chrome stops the reply from butting up against
+	// the prompt.
+	parts := []string{header, body, ""}
 	if banner != "" {
 		parts = append(parts, banner)
 	}
@@ -1536,8 +1560,22 @@ func (m Model) renderThinkingRow() string {
 	if !m.thinking.streaming {
 		verb = thinkingVerbs[m.thinking.verbIdx] + "…"
 	}
-	line := fmt.Sprintf("✦ %s   (%s · %d tokens)", verb, elapsed, m.thinking.tokens)
+	// Braille spinner rotates every tick (~250ms). Using the same tick
+	// counter that drives verb rotation keeps the two animations in
+	// lockstep — when the agent is alive the spinner is unmistakably
+	// moving even during the silent gap between a tool result and the
+	// LLM's next token, which used to read as "frozen".
+	glyph := thinkingSpinnerFrames[m.thinking.tickCount%len(thinkingSpinnerFrames)]
+	line := fmt.Sprintf("%s %s   (%s · %d tokens)", glyph, verb, elapsed, m.thinking.tokens)
 	return thinkingStyle.Render(line)
+}
+
+// thinkingSpinnerFrames is the 10-step braille spinner shown at the start
+// of the live thinking row. Identical to the spinner most modern CLIs
+// (cargo, npm, gh, claude code) use, so the visual cue lands as "agent
+// is working" without requiring a legend.
+var thinkingSpinnerFrames = []string{
+	"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
 }
 
 // userEchoStyle renders the "> <input>" chip — bright text on dark grey
