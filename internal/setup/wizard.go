@@ -17,7 +17,6 @@ import (
 
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/discovery"
-	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/secrets"
 	"github.com/rlaope/cloudy/internal/skills"
@@ -1018,19 +1017,11 @@ func (m *WizardModel) persistConfig() error {
 	}
 
 	// Rebuild registry from the freshly written config + active profile.
-	activeProfile, _ := permission.LoadActive()
-	newReg, _ := wiring.BuildRegistry(wiring.Options{
+	// Orchestrator owns the BuildRegistry + Replace sequence so this site,
+	// cmd/main.go, and tui/setupchat.go cannot drift apart.
+	_, _ = wiring.Rebuild(cfg, wiring.RebuildOpts{
 		KubeconfigPath: m.opts.KubeconfigPath,
-		Contexts:       cfg.Contexts,
-		Profile:        activeProfile,
-		PromEndpoints:  cfg.Prometheus,
-		Databases:      cfg.Databases,
-		Logs:           cfg.Logs,
-		Tracing:        cfg.Tracing,
-		Pprof:          cfg.Pprof,
-		NodeInspectors: cfg.NodeInspectors,
 	})
-	wiring.Replace(newReg)
 	return nil
 }
 

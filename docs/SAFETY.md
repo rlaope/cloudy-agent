@@ -17,7 +17,6 @@ defense-in-depth means in practice.
 | Concern                                  | Guard                          | Layer          |
 |------------------------------------------|--------------------------------|----------------|
 | Outbound HTTP must be a read verb        | `transport.ReadOnlyRoundTripper` | Process       |
-| K8s API calls must be read verbs         | K8s client wrapper             | Process        |
 | ServiceAccount can only read             | `ClusterRole cloudy-readonly`  | Cluster        |
 | Bastion proxy verbs are minimal          | RBAC `services/proxy: get`     | Cluster        |
 | No mutation-named tool may register      | `tools.Registry` mutator panic | Process (boot) |
@@ -25,7 +24,15 @@ defense-in-depth means in practice.
 | Oversize log responses get summarized    | `agent.LogSummaryHook`         | Agent          |
 | Blocked calls produce a useful hint      | `transport.readOnlyAlternative`| Agent ↔ LLM   |
 
-The first four guards are the **read-only contract**: removing any one
+K8s traffic is covered by the same `ReadOnlyRoundTripper` row: the K8s
+client's `rest.Config.WrapTransport` is set to `transport.Wrap` in
+`internal/tools/k8s/client.go`, so every K8s API call flows through the
+HTTP whitelist just like Prometheus / Loki / Tempo do. There is no
+separate "K8s verb wrapper" layer — the policy table for permissible
+K8s verbs lives in `transport.AllowedKubeVerbs` for documentation and
+in the bundled `ClusterRole` for enforcement at the cluster boundary.
+
+The first three guards are the **read-only contract**: removing any one
 of them does not make mutation possible, because the others remain. The
 remaining four are **defense-in-depth and ergonomics**: they bound cost,
 shape what the LLM sees, and make rejections informative rather than
@@ -65,14 +72,7 @@ The websocket dialer used by `perf.v8_inspector_cpu_profile` reuses
 `ReadOnlyRoundTripper.DialContext`, so CDP traffic shares the same
 network stack and read-only stance.
 
-## Layer 2 — Kubernetes verb wrapper
-
-The K8s client wrapper rejects verbs other than `get` / `list` / `watch`.
-This is independent of Layer 1 — the K8s client uses its own
-construction path and would reject mutation verbs even if Layer 1 were
-removed.
-
-## Layer 3 — ClusterRole RBAC
+## Layer 2 — ClusterRole RBAC
 
 [`manifests/rbac/base/clusterrole.yaml`](../manifests/rbac/base/clusterrole.yaml)
 
@@ -88,7 +88,7 @@ Secrets are intentionally absent. cloudy never reads Secret data; if a
 specific deployment requires Secret metadata, add an overlay that
 grants only `list` on secrets (no `get`) and rely on field masking.
 
-## Layer 4 — Bastion reachability verbs
+## Layer 3 — Bastion reachability verbs
 
 For the v0.4 bastion-friendly transports cloudy adds two narrow verbs:
 
@@ -294,7 +294,6 @@ LLM picks a tool
   → LogSummaryHook compresses log.* observation
   → Masker redacts secrets in observation text
   → transport.ReadOnlyRoundTripper enforces HTTP method
-  → K8s verb wrapper enforces verb
   → ClusterRole RBAC enforces server-side
 ```
 

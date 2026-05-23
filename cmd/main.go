@@ -71,20 +71,19 @@ func bootTUI(stdout, stderr io.Writer) error {
 		// Non-fatal: continue without user skills.
 	}
 
-	activeProfile, _ := permission.LoadActive()
-
-	toolReg, warn := wiring.BuildRegistry(wiring.Options{
-		Contexts:      cfg.Contexts,
-		Profile:       activeProfile,
-		PromEndpoints: cfg.Prometheus,
-	})
+	toolReg, warn := wiring.Rebuild(cfg, wiring.RebuildOpts{})
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
 	}
+	// Re-load the active profile here even though wiring.Rebuild already
+	// loaded it internally: cfg.Safety knobs below are dampened through
+	// permission.EffectiveLogLines / EffectiveProfileSeconds, both of which
+	// need the *permission.Profile value, and a one-line stderr surface
+	// reminds the operator which profile shaped this session.
+	activeProfile, _ := permission.LoadActive()
 	if activeProfile != nil {
 		fmt.Fprintf(stderr, "cloudy: profile=%s\n", activeProfile.Name)
 	}
-	wiring.Replace(toolReg)
 
 	// Inventory banner: surface what got wired and what got silently
 	// skipped so the operator never has to type /tools just to discover

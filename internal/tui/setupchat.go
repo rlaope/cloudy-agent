@@ -11,7 +11,6 @@ import (
 
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/discovery"
-	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/setup"
 	"github.com/rlaope/cloudy/internal/skills"
 	"github.com/rlaope/cloudy/internal/wiring"
@@ -333,19 +332,9 @@ func (s *setupChat) persistAndSwap() (string, error) {
 		return "", fmt.Errorf("save cloudy.yaml: %w", err)
 	}
 
-	activeProfile, _ := permission.LoadActive()
-	newReg, _ := wiring.BuildRegistry(wiring.Options{
+	_, _ = wiring.Rebuild(cfg, wiring.RebuildOpts{
 		KubeconfigPath: s.kubeconfig,
-		Contexts:       cfg.Contexts,
-		Profile:        activeProfile,
-		PromEndpoints:  cfg.Prometheus,
-		Databases:      cfg.Databases,
-		Logs:           cfg.Logs,
-		Tracing:        cfg.Tracing,
-		Pprof:          cfg.Pprof,
-		NodeInspectors: cfg.NodeInspectors,
 	})
-	wiring.Replace(newReg)
 
 	enabled := len(pickedFindings)
 	nextStep := "ask cloudy a question, or /tools to inspect the new registry."
