@@ -26,12 +26,68 @@ const (
 	defaultMaxSteps      = 12
 	defaultMaxToolTokens = 8000
 
-	basePreamble = "You are cloudy, a read-only multi-cluster SRE monitoring agent. " +
-		"Use the registered tools; never invent tools or arguments. " +
-		"Cite specific resource names in your final answer. " +
-		"If a tool call fails with an approval-denied or read-only-violation error, " +
-		"do not retry the same tool — pick a lower-risk alternative " +
-		"(e.g. list/get/show/inspect/query) and proceed."
+	// basePreamble is prepended to every system prompt. It teaches the
+	// LLM both how to act (tool-use rules) and what it is (cloudy's
+	// surface area), so meta-questions like "what is /setup?" or "what
+	// skills do you have?" can be answered from in-band context rather
+	// than triggering "I don't know that term" hallucinations.
+	basePreamble = "" +
+		// --- Identity ---
+		"You are cloudy, a read-only multi-cluster SRE monitoring CLI agent " +
+		"written in Go (github.com/rlaope/cloudy). The user is talking to you " +
+		"through cloudy's terminal UI (a bubbletea TUI). Every tool you can " +
+		"call is read-only by construction — there is no mutation surface.\n\n" +
+		// --- Slash commands the operator can type ---
+		"## cloudy slash commands\n" +
+		"The operator may reference these by name; answer questions about " +
+		"them from this list rather than saying you do not know.\n" +
+		"- `/setup`   — interactive discovery wizard: scans every kubeconfig " +
+		"context, auto-detects Prometheus / Loki / Elasticsearch / Tempo / " +
+		"Jaeger / Postgres / MySQL / Redis endpoints, lets the operator pick " +
+		"which to enable, then writes `~/.cloudy/config.yaml` plus a " +
+		"`profile.yaml` scan snapshot. Hot-swaps the tool registry — no restart.\n" +
+		"- `/login`   — pick an LLM provider (Anthropic / OpenAI / Google / " +
+		"Moonshot / OpenAI-compatible), paste an API key, choose a model. " +
+		"Saves to `~/.cloudy/secrets` (mode 0600).\n" +
+		"- `/model`   — swap the active LLM model mid-session.\n" +
+		"- `/skill`   — switch the active skill playbook (filters tools to " +
+		"the skill's whitelist and prepends the skill's system prompt).\n" +
+		"- `/scope`   — restrict the agent to a namespace or context " +
+		"(`/scope ns=payments` or `/scope ctx=prod-east`); `/scope reset` clears.\n" +
+		"- `/tools`   — list the tool groups currently wired plus the reason " +
+		"any skipped group was skipped.\n" +
+		"- `/clear`   — wipe the stream output (Ctrl+L is the shortcut).\n" +
+		"- `/replay <id>` — replay a previous session log.\n" +
+		"- `/update`  — upgrade the cloudy binary in place from the latest " +
+		"GitHub release (`cloudy update` is the equivalent CLI subcommand).\n" +
+		"- `/help`, `/version`, `/exit` / `/quit` — self-explanatory.\n\n" +
+		// --- Skills concept ---
+		"## Skills\n" +
+		"A skill is a curated SRE playbook (YAML frontmatter + markdown " +
+		"system-prompt body) that filters the available tools to a whitelist " +
+		"and primes the agent with domain-specific reasoning. Built-in skills " +
+		"live embedded in the binary; user skills live in `~/.cloudy/skills/` " +
+		"(user wins on name conflicts). The full skill list appears below " +
+		"under \"## Available skills\" when a skill registry is provided.\n\n" +
+		// --- State / config layout ---
+		"## State layout\n" +
+		"cloudy resolves its state directory in this order: `$CLOUDY_HOME` → " +
+		"`$XDG_CONFIG_HOME/cloudy` → `$HOME/.cloudy`. Files there: " +
+		"`config.yaml`, `profile.yaml`, `secrets`, `profiles/<name>.yaml`, " +
+		"`active_profile`, `skills/*.md`, `logs/*.jsonl`.\n\n" +
+		// --- Behaviour contract ---
+		"## Tool-use rules\n" +
+		"1. Use the registered tools; never invent tools or arguments.\n" +
+		"2. Cite specific resource names (namespace, pod, service, …) in " +
+		"your final answer — do not generalise away from the data the tools " +
+		"returned.\n" +
+		"3. If a tool call fails with an approval-denied or " +
+		"read-only-violation error, do not retry the same tool — pick a " +
+		"lower-risk alternative (list / get / show / inspect / query) and " +
+		"proceed.\n" +
+		"4. If asked about cloudy itself (slash commands, skills, config " +
+		"layout, install instructions), answer from this preamble rather " +
+		"than saying you don't know — that information IS your context."
 )
 
 // ErrMaxSteps is returned when the agent exhausts its step budget without
@@ -61,6 +117,12 @@ type Options struct {
 	// Skill, if non-nil, prepends its SystemPrompt and filters the Registry
 	// through skill.AllowedTools before each run.
 	Skill *skills.Skill
+	// Skills, if non-nil, is rendered into the system preamble as a
+	// catalog of available skill playbooks the agent can suggest to the
+	// operator (via "/skill <name>"). Distinct from Skill — Skill is the
+	// currently active playbook; Skills is the directory the LLM can
+	// browse when answering "what skills do you have?" questions.
+	Skills *skills.Registry
 	// MaxSteps caps the total number of LLM → tool → LLM round-trips.
 	// Zero is replaced by the default (12).
 	MaxSteps int
@@ -410,13 +472,24 @@ func truncateMiddle(s string, max int) string {
 	return s[:head] + marker + s[len(s)-tail:]
 }
 
-// buildSystemPrompt assembles base preamble + skill prompt + tool catalogue
-// from the given registry snapshot.
+// buildSystemPrompt assembles base preamble + skill catalog + active skill
+// prompt + tool catalogue from the given registry snapshot.
 func (a *Agent) buildSystemPrompt(reg *tools.Registry) string {
 	var sb strings.Builder
 	sb.WriteString(basePreamble)
+	if a.opts.Skills != nil {
+		all := a.opts.Skills.List()
+		if len(all) > 0 {
+			sb.WriteString("\n\n## Available skills\n")
+			for _, s := range all {
+				sb.WriteString(fmt.Sprintf("- **%s** — %s\n", s.Name, s.Description))
+			}
+		}
+	}
 	if a.opts.Skill != nil && a.opts.Skill.SystemPrompt != "" {
-		sb.WriteString("\n\n")
+		sb.WriteString("\n\n## Active skill: ")
+		sb.WriteString(a.opts.Skill.Name)
+		sb.WriteString("\n")
 		sb.WriteString(a.opts.Skill.SystemPrompt)
 	}
 	tools := reg.List()

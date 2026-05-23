@@ -126,6 +126,7 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Model:                    modelID,
 		Registry:                 toolReg,
 		Skill:                    activeSkill,
+		Skills:                   skillReg,
 		MaxTokensPerSession:      cfg.Safety.MaxTokensPerSession,
 		MaxUSDPerDay:             cfg.Safety.MaxUSDPerDay,
 		MaxConversationSeconds:   cfg.Safety.MaxConversationSeconds,
