@@ -31,6 +31,10 @@ var canonicalToolNames = []string{
 	"trace.tempo_get_trace", "trace.tempo_search",
 	"trace.jaeger_services", "trace.jaeger_operations", "trace.jaeger_search_traces",
 
+	"alert.list_active", "alert.list_silences", "alert.list_rules",
+
+	"gitops.argo_list_apps", "gitops.argo_app_status", "gitops.argo_app_history",
+
 	"db.pg_version", "db.pg_stat_activity", "db.pg_stat_database",
 	"db.pg_stat_replication", "db.pg_locks", "db.pg_top_table_size",
 	"db.mysql_version", "db.mysql_processlist", "db.mysql_global_status",

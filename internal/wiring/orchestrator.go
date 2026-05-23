@@ -47,6 +47,8 @@ func Rebuild(cfg config.Config, opts RebuildOpts) (*tools.Registry, error) {
 		Tracing:        cfg.Tracing,
 		Pprof:          cfg.Pprof,
 		NodeInspectors: cfg.NodeInspectors,
+		Alertmanager:   cfg.Alertmanager,
+		ArgoCD:         cfg.ArgoCD,
 	})
 	Replace(reg)
 	return reg, warn

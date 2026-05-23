@@ -16,8 +16,10 @@ import (
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/tools"
+	"github.com/rlaope/cloudy/internal/tools/alert"
 	"github.com/rlaope/cloudy/internal/tools/db"
 	"github.com/rlaope/cloudy/internal/tools/ebpf"
+	"github.com/rlaope/cloudy/internal/tools/gitops"
 	"github.com/rlaope/cloudy/internal/tools/gpu"
 	"github.com/rlaope/cloudy/internal/tools/jvm"
 	"github.com/rlaope/cloudy/internal/tools/k8s"
@@ -56,6 +58,10 @@ type Options struct {
 	Pprof []config.HTTPEndpoint
 	// NodeInspectors is the list of Node V8 Inspector endpoints.
 	NodeInspectors []config.HTTPEndpoint
+	// Alertmanager is the list of Alertmanager v2 endpoints.
+	Alertmanager []config.AlertmanagerEndpoint
+	// ArgoCD is the list of Argo CD API endpoints.
+	ArgoCD []config.ArgoCDEndpoint
 }
 
 // KubeWarning is a non-fatal warning returned by BuildRegistry when the
@@ -100,6 +106,12 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 
 	traceClients, traceSkips := trace.BuildClients(opts.Tracing)
 	trace.RegisterAll(reg, traceClients, traceSkips)
+
+	alertClients, alertSkips := alert.BuildClients(opts.Alertmanager, opts.PromEndpoints)
+	alert.RegisterAll(reg, alertClients, alertSkips)
+
+	gitopsClients, gitopsSkips := gitops.BuildClients(opts.ArgoCD)
+	gitops.RegisterAll(reg, gitopsClients, gitopsSkips)
 
 	perfClients, perfSkips := perf.BuildClients(opts.Pprof, opts.NodeInspectors)
 	perf.RegisterAll(reg, perfClients, perfSkips)

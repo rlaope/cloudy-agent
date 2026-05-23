@@ -146,7 +146,7 @@ TCP backends via in-process SPDY port-forward. A single
 `kubectl`-reachable cluster is enough — no VPN, no per-service
 ingress.
 
-### Tool surface (55 tools across 10 groups)
+### Tool surface (61 tools across 12 groups)
 
 Every probe the agent can call is a typed tool with a JSON schema.
 Tools self-register at boot — perf, eBPF, and DB groups also gate on
@@ -159,6 +159,8 @@ wired in your environment.
 | `prom` (4) | `query`, `query_range`, `label_values`, `series` |
 | `log` (7) | `loki_query_range`, `loki_labels`, `loki_label_values`, `loki_series`, `es_search`, `es_indices`, `es_cluster_health` |
 | `trace` (5) | `tempo_get_trace`, `tempo_search`, `jaeger_services`, `jaeger_operations`, `jaeger_search_traces` |
+| `alert` (3) | `list_active`, `list_silences` *(Alertmanager v2)*, `list_rules` *(Prometheus rules API)* |
+| `gitops` (3) | `argo_list_apps`, `argo_app_status`, `argo_app_history` *(Argo CD v1 API)* |
 | `db` (18) | Postgres: `pg_version`, `pg_stat_activity`, `pg_stat_database`, `pg_stat_replication`, `pg_locks`, `pg_top_table_size`. MySQL: `mysql_version`, `mysql_processlist`, `mysql_global_status`, `mysql_global_variables`, `mysql_engine_innodb_status`, `mysql_top_table_size`. Redis: `redis_info`, `redis_dbsize`, `redis_scan`, `redis_inspect_key`, `redis_slowlog`, `redis_client_list` |
 | `perf` (4) | `rbspy_dump` (Ruby, always-on), `go_pprof_cpu`, `linux_perf_record`, `v8_inspector_cpu_profile` *(last three conditional on host binaries)* |
 | `jvm` (4) | `jstat_gc`, `jcmd_gc`, `jcmd_thread_dump`, `async_profile` |
@@ -169,7 +171,7 @@ wired in your environment.
 > **No `ruby` group.** rbspy is registered as `perf.rbspy_dump`. If
 > you are looking for Ruby profiling in `/tools`, search `perf`.
 
-### Skill playbooks (12 built-in)
+### Skill playbooks (13 built-in)
 
 Skills are curated multi-step playbooks the agent picks when a
 question matches their triggers. They live in
@@ -180,6 +182,7 @@ embedding); you can override or add by dropping a `.md` file into
 | Skill | When it fires |
 | ----- | ------------- |
 | `cluster-recon` | "What's running in my cluster right now?" topology dump. |
+| `incident-context` | "What's burning right now?" — cross-references firing alerts with recent Argo CD syncs and pod restarts. |
 | `k8s-incident` | First-pass triage for CrashLoopBackOff / Pending / OOMKilled / Eviction. |
 | `crashloop-deep-dive` | Beyond exit codes — previous-container logs, probe audit, init-container ordering, traces. |
 | `oom-killed-triage` | Container-limit vs. node-level OOM, sawtooth-vs-plateau working-set pattern, JVM heap flag check. |
