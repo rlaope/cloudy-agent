@@ -145,6 +145,7 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(
 				}
 				return deps.Tools
 			},
+			Skills:                   deps.Skills,
 			History:                  history,
 			MaxTokensPerSession:      deps.MaxTokensPerSession,
 			MaxUSDPerDay:             deps.MaxUSDPerDay,
