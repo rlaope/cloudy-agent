@@ -48,7 +48,12 @@ func Run(ctx context.Context, deps Deps) error {
 	deps.SwapModel = makeSwapModel(ref, deps.Model)
 
 	m := NewModel(deps)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	// WithMouseCellMotion captures wheel events as tea.MouseMsg so the
+	// stream viewport can scroll. Without it the alt-screen terminal
+	// emulator translates wheel into ↑/↓ key sequences, which the
+	// prompt textarea interprets as history navigation — the opposite
+	// of what the operator means when they scroll up to read history.
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
 }
