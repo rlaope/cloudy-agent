@@ -15,5 +15,15 @@ func RegisterAll(reg *tools.Registry, hub *Hub) {
 		NewLogsTool(hub),
 		NewTopPodsTool(hub),
 		NewTopNodesTool(hub),
+		NewListDeploymentsTool(hub),
+		NewListStatefulSetsTool(hub),
+		NewListDaemonSetsTool(hub),
+		NewListJobsTool(hub),
+		NewListCronJobsTool(hub),
+		NewListServicesTool(hub),
+		NewListIngressesTool(hub),
+		NewListHPATool(hub),
+		NewListPDBsTool(hub),
+		NewListNetworkPoliciesTool(hub),
 	)
 }

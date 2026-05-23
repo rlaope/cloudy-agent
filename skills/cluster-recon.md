@@ -12,6 +12,9 @@ allowed_tools:
   - k8s.list_pods
   - k8s.list_namespaces
   - k8s.list_nodes
+  - k8s.list_deployments
+  - k8s.list_services
+  - k8s.list_ingresses
   - k8s.events
   - prom.label_values
   - prom.series
