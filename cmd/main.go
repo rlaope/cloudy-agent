@@ -84,6 +84,13 @@ func bootTUI(stdout, stderr io.Writer) error {
 	}
 	wiring.Replace(toolReg)
 
+	// Warn-only: a user skill under ~/.cloudy/skills/ may legitimately
+	// reference tools not wired in the current cluster shape. Built-in
+	// refs are pinned by TestSkillToolRefsAreValid in CI.
+	if err := wiring.ValidateSkillToolRefs(skillReg, toolReg); err != nil {
+		fmt.Fprintf(stderr, "cloudy: %v\n", err)
+	}
+
 	sess, err := session.New("")
 	if err != nil {
 		fmt.Fprintf(stderr, "cloudy: session: %v\n", err)
