@@ -57,6 +57,17 @@ type Config struct {
 	// CPU/heap capture is deferred to a future release.
 	NodeInspectors []HTTPEndpoint `yaml:"node_inspectors,omitempty"`
 
+	// Alertmanager is the list of Alertmanager v2 instances cloudy may
+	// query for active alerts and silences. The Prometheus alert-rules
+	// surface is exposed via the Prometheus endpoints above — rule
+	// definitions live in Prometheus, not Alertmanager.
+	Alertmanager []AlertmanagerEndpoint `yaml:"alertmanager,omitempty"`
+
+	// ArgoCD is the list of Argo CD API servers cloudy may query for
+	// application sync state and revision history. All access is via
+	// the read-only v1 HTTP API.
+	ArgoCD []ArgoCDEndpoint `yaml:"argocd,omitempty"`
+
 	// Contexts is the explicit list of kubeconfig contexts to expose to the
 	// agent. Empty (or missing) means "use the kubeconfig current-context".
 	Contexts []string `yaml:"contexts,omitempty"`
@@ -116,6 +127,51 @@ type HTTPEndpoint struct {
 	BasicPassEnv string `yaml:"basic_pass_env,omitempty"`
 	// BearerEnv is the env var holding a Bearer token (optional).
 	BearerEnv string `yaml:"bearer_env,omitempty"`
+}
+
+// AlertmanagerEndpoint describes a single Alertmanager v2 instance. Auth
+// fields mirror PrometheusEndpoint so a stack that fronts both behind the
+// same gateway can reuse the same credential env vars.
+type AlertmanagerEndpoint struct {
+	// Name is a human-readable label used in UI and as the tool argument key.
+	Name string `yaml:"name"`
+
+	// URL is the base URL of the Alertmanager HTTP API (the path /api/v2
+	// is appended by the tool wrappers).
+	URL string `yaml:"url"`
+
+	// BasicUser is the HTTP Basic Auth username (optional).
+	BasicUser string `yaml:"basic_user,omitempty"`
+
+	// BasicPassEnv is the environment variable holding the Basic Auth password
+	// (optional; preferred over storing the password in plain text).
+	BasicPassEnv string `yaml:"basic_pass_env,omitempty"`
+
+	// BearerEnv is the environment variable holding the Bearer token (optional).
+	BearerEnv string `yaml:"bearer_env,omitempty"`
+}
+
+// ArgoCDEndpoint describes a single Argo CD API server. Argo CD ships
+// bearer-token auth by default (the API key minted under User Info →
+// Generate New) — BearerEnv is the typical config. BasicUser/BasicPassEnv
+// remain available for gateways that front Argo CD behind HTTP Basic.
+type ArgoCDEndpoint struct {
+	// Name is a human-readable label used in UI and as the tool argument key.
+	Name string `yaml:"name"`
+
+	// URL is the base URL of the Argo CD API server (the path /api/v1 is
+	// appended by the tool wrappers).
+	URL string `yaml:"url"`
+
+	// BearerEnv is the environment variable holding the Argo CD API token.
+	BearerEnv string `yaml:"bearer_env,omitempty"`
+
+	// BasicUser is the HTTP Basic Auth username (optional, for gateways).
+	BasicUser string `yaml:"basic_user,omitempty"`
+
+	// BasicPassEnv is the environment variable holding the Basic Auth
+	// password (optional, for gateways).
+	BasicPassEnv string `yaml:"basic_pass_env,omitempty"`
 }
 
 // DatabaseEndpoint describes a single read-only database the agent can
