@@ -14,7 +14,11 @@ import (
 	"path/filepath"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -195,18 +199,54 @@ func (c *Client) Services(ctx context.Context, ns string, opts metav1.ListOption
 }
 
 // Deployments lists deployments in the given namespace.
-func (c *Client) Deployments(ns string) (*appsv1.DeploymentList, error) {
-	return c.core.AppsV1().Deployments(ns).List(context.Background(), metav1.ListOptions{})
+func (c *Client) Deployments(ns string, opts metav1.ListOptions) (*appsv1.DeploymentList, error) {
+	return c.core.AppsV1().Deployments(ns).List(context.Background(), opts)
 }
 
 // StatefulSets lists stateful sets in the given namespace.
-func (c *Client) StatefulSets(ns string) (*appsv1.StatefulSetList, error) {
-	return c.core.AppsV1().StatefulSets(ns).List(context.Background(), metav1.ListOptions{})
+func (c *Client) StatefulSets(ns string, opts metav1.ListOptions) (*appsv1.StatefulSetList, error) {
+	return c.core.AppsV1().StatefulSets(ns).List(context.Background(), opts)
 }
 
 // DaemonSets lists daemon sets in the given namespace.
-func (c *Client) DaemonSets(ns string) (*appsv1.DaemonSetList, error) {
-	return c.core.AppsV1().DaemonSets(ns).List(context.Background(), metav1.ListOptions{})
+func (c *Client) DaemonSets(ns string, opts metav1.ListOptions) (*appsv1.DaemonSetList, error) {
+	return c.core.AppsV1().DaemonSets(ns).List(context.Background(), opts)
+}
+
+// Jobs lists jobs in the given namespace.
+func (c *Client) Jobs(ns string, opts metav1.ListOptions) (*batchv1.JobList, error) {
+	return c.core.BatchV1().Jobs(ns).List(context.Background(), opts)
+}
+
+// CronJobs lists cron jobs in the given namespace.
+func (c *Client) CronJobs(ns string, opts metav1.ListOptions) (*batchv1.CronJobList, error) {
+	return c.core.BatchV1().CronJobs(ns).List(context.Background(), opts)
+}
+
+// ServicesList lists services in the given namespace. Distinct from Services
+// (which takes a context) to fit the synchronous ListResourceSpec signature.
+func (c *Client) ServicesList(ns string, opts metav1.ListOptions) (*corev1.ServiceList, error) {
+	return c.core.CoreV1().Services(ns).List(context.Background(), opts)
+}
+
+// Ingresses lists ingresses in the given namespace.
+func (c *Client) Ingresses(ns string, opts metav1.ListOptions) (*networkingv1.IngressList, error) {
+	return c.core.NetworkingV1().Ingresses(ns).List(context.Background(), opts)
+}
+
+// HPAs lists horizontal pod autoscalers in the given namespace.
+func (c *Client) HPAs(ns string, opts metav1.ListOptions) (*autoscalingv2.HorizontalPodAutoscalerList, error) {
+	return c.core.AutoscalingV2().HorizontalPodAutoscalers(ns).List(context.Background(), opts)
+}
+
+// PDBs lists pod disruption budgets in the given namespace.
+func (c *Client) PDBs(ns string, opts metav1.ListOptions) (*policyv1.PodDisruptionBudgetList, error) {
+	return c.core.PolicyV1().PodDisruptionBudgets(ns).List(context.Background(), opts)
+}
+
+// NetworkPolicies lists network policies in the given namespace.
+func (c *Client) NetworkPolicies(ns string, opts metav1.ListOptions) (*networkingv1.NetworkPolicyList, error) {
+	return c.core.NetworkingV1().NetworkPolicies(ns).List(context.Background(), opts)
 }
 
 // TopPods returns per-pod CPU/memory usage. Returns ErrMetricsUnavailable if

@@ -18,6 +18,10 @@ import (
 var canonicalToolNames = []string{
 	"k8s.list_pods", "k8s.list_nodes", "k8s.list_namespaces", "k8s.describe_pod",
 	"k8s.events", "k8s.logs", "k8s.top_pods", "k8s.top_nodes",
+	"k8s.list_deployments", "k8s.list_statefulsets", "k8s.list_daemonsets",
+	"k8s.list_jobs", "k8s.list_cronjobs", "k8s.list_services",
+	"k8s.list_ingresses", "k8s.list_hpa", "k8s.list_pdbs",
+	"k8s.list_networkpolicies",
 
 	"prom.query", "prom.query_range", "prom.label_values", "prom.series",
 
