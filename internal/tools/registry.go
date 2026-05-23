@@ -137,8 +137,11 @@ func (r *Registry) List() []Tool { return r.items.All() }
 // wildcard '*', e.g. "k8s.*" matches "k8s.list_pods" but not "prom.query".
 // An exact match (no wildcard) is also supported.
 //
-// Skipped-group reasons are carried over from the source, so a skill-narrowed
-// registry still reports "k8s skipped: no kubeconfig" through Inventory.
+// Skipped-group reasons and the llmAlias map are carried over from the
+// source. Without the alias carry-over a skill-narrowed registry would
+// reject inbound tool_use events whose names were sanitized by an earlier
+// ToolsFor() call against the parent (e.g. "k8s_list_pods" never resolves
+// back to "k8s.list_pods" on the filtered side).
 func (r *Registry) Filter(allow []string) *Registry {
 	sub := New()
 	for _, t := range r.List() {
@@ -151,6 +154,11 @@ func (r *Registry) Filter(allow []string) *Registry {
 		sub.skipped[g] = reason
 	}
 	r.skippedMu.RUnlock()
+	r.llmAliasMu.RLock()
+	for safe, real := range r.llmAlias {
+		sub.llmAlias[safe] = real
+	}
+	r.llmAliasMu.RUnlock()
 	return sub
 }
 

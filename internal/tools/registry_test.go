@@ -188,3 +188,33 @@ func TestRegistry_FilterPreservesSkipped(t *testing.T) {
 		t.Errorf("filtered registry lost skipped reason for prom: %+v", skipped)
 	}
 }
+
+// TestRegistry_FilterCarriesLLMAlias pins the regression flagged by the
+// architect review: ToolsFor("anthropic") sanitizes "k8s.list_pods" to
+// "k8s_list_pods" and stores the mapping in llmAlias so an inbound
+// tool_use event with the safe form can resolve back to the real tool.
+// Pre-fix, Filter() built a fresh sub-registry with an empty llmAlias
+// map, so a Get("k8s_list_pods") on the filtered side returned (nil,
+// false) and the agent saw "tool is not available" — silently breaking
+// every skill-narrowed turn against the four providers that demand
+// sanitized names (anthropic / openai / google / moonshot).
+func TestRegistry_FilterCarriesLLMAlias(t *testing.T) {
+	t.Parallel()
+	r := tools.New()
+	r.MustRegister(stubTool{name: "k8s.list_pods"})
+
+	// Populate the alias map by asking for the anthropic-sanitized view.
+	_ = r.ToolsFor("anthropic")
+
+	// Now narrow the registry through a skill-style whitelist.
+	sub := r.Filter([]string{"k8s.*"})
+
+	// The sanitized name must still resolve on the filtered side.
+	got, ok := sub.Get("k8s_list_pods")
+	if !ok {
+		t.Fatal("filtered registry lost llmAlias: Get(\"k8s_list_pods\") returned false")
+	}
+	if got.Name() != "k8s.list_pods" {
+		t.Errorf("alias resolved to wrong tool: got %q want %q", got.Name(), "k8s.list_pods")
+	}
+}
