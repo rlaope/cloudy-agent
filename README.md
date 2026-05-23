@@ -136,6 +136,7 @@ refuse them with a clear message. See [docs/SAFETY.md](docs/SAFETY.md).
 | Traces        | Tempo, Jaeger                                      |
 | JVM           | jcmd, async-profiler (heap / cpu / alloc)          |
 | Python        | py-spy (sampling / dump-stacks)                    |
+| Ruby          | rbspy (sampling) — registered as `perf.rbspy_dump` |
 | GPU           | NVIDIA SMI, DCGM                                   |
 | Kernel        | perf, eBPF (read-only probes only)                 |
 | Databases     | Postgres / MySQL / Redis (read-only query subset)  |
@@ -144,6 +145,52 @@ HTTP backends are reached via the K8s apiserver's `services/proxy`,
 TCP backends via in-process SPDY port-forward. A single
 `kubectl`-reachable cluster is enough — no VPN, no per-service
 ingress.
+
+### Tool surface (45 tools across 10 groups)
+
+Every probe the agent can call is a typed tool with a JSON schema.
+Tools self-register at boot — perf, eBPF, and DB groups also gate on
+binary / driver presence. Type `/tools` in the TUI to see what's
+wired in your environment.
+
+| Group | Tools (count) |
+| ----- | ------------- |
+| `k8s` (8) | `list_pods`, `list_nodes`, `list_namespaces`, `describe_pod`, `events`, `logs`, `top_pods`, `top_nodes` |
+| `prom` (4) | `query`, `query_range`, `label_values`, `series` |
+| `log` (7) | `loki_query_range`, `loki_labels`, `loki_label_values`, `loki_series`, `es_search`, `es_indices`, `es_cluster_health` |
+| `trace` (5) | `tempo_get_trace`, `tempo_search`, `jaeger_services`, `jaeger_operations`, `jaeger_search_traces` |
+| `db` (18) | Postgres: `pg_version`, `pg_stat_activity`, `pg_stat_database`, `pg_stat_replication`, `pg_locks`, `pg_top_table_size`. MySQL: `mysql_version`, `mysql_processlist`, `mysql_global_status`, `mysql_global_variables`, `mysql_engine_innodb_status`, `mysql_top_table_size`. Redis: `redis_info`, `redis_dbsize`, `redis_scan`, `redis_inspect_key`, `redis_slowlog`, `redis_client_list` |
+| `perf` (4) | `rbspy_dump` (Ruby, always-on), `go_pprof_cpu`, `linux_perf_record`, `v8_inspector_cpu_profile` *(last three conditional on host binaries)* |
+| `jvm` (4) | `jstat_gc`, `jcmd_gc`, `jcmd_thread_dump`, `async_profile` |
+| `py` (2) | `spy_dump`, `spy_top_snapshot` |
+| `gpu` (2) | `nvidia_smi`, `dcgm_metrics` |
+| `ebpf` (5) | `biolatency`, `tcptop`, `tcprtt`, `execsnoop`, `bpftrace_oneliner` *(all RiskHigh; gated by the approval banner)* |
+
+> **No `ruby` group.** rbspy is registered as `perf.rbspy_dump`. If
+> you are looking for Ruby profiling in `/tools`, search `perf`.
+
+### Skill playbooks (12 built-in)
+
+Skills are curated multi-step playbooks the agent picks when a
+question matches their triggers. They live in
+[skills/](skills/) (mirrored under `internal/skills/skills/` for
+embedding); you can override or add by dropping a `.md` file into
+`~/.cloudy/skills/` — user files win on name conflicts.
+
+| Skill | When it fires |
+| ----- | ------------- |
+| `cluster-recon` | "What's running in my cluster right now?" topology dump. |
+| `k8s-incident` | First-pass triage for CrashLoopBackOff / Pending / OOMKilled / Eviction. |
+| `crashloop-deep-dive` | Beyond exit codes — previous-container logs, probe audit, init-container ordering, traces. |
+| `oom-killed-triage` | Container-limit vs. node-level OOM, sawtooth-vs-plateau working-set pattern, JVM heap flag check. |
+| `log-spike-correlation` | Joins a Loki / ES error spike to Prom anomalies and pod events. |
+| `trace-error-pivot` | Walk a p99 / error-rate regression down to the slow span in Tempo or Jaeger and back to the pod. |
+| `db-latency-hunt` | PostgreSQL / MySQL / Redis read-only forensics for slow upstream DB calls. |
+| `prom-explorer` | Interactive PromQL composition without prior knowledge of the metric schema. |
+| `jvm-gc` | GC pause / heap-exhaustion / old-gen growth diagnosis. |
+| `jvm-thread` | Deadlock, blocked threads, pool exhaustion. |
+| `py-perf` | GIL contention, async-loop stalls, CPU bottlenecks. |
+| `gpu-saturation` | GPU OOM, low utilization, thermal throttling. |
 
 ## LLM providers
 

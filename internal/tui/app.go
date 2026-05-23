@@ -296,6 +296,11 @@ type Model struct {
 	// flight. Guards against scheduling duplicate ticks when several
 	// token events arrive in the same frame.
 	playbackActive bool
+
+	// pendingUserEcho is the pre-rendered "queued" chip shown directly
+	// above the prompt between submit and the first agent event of the
+	// turn. Drained into the stream by flushPendingUserEcho.
+	pendingUserEcho string
 }
 
 // NewModel constructs the root TUI model.
@@ -513,6 +518,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.assistantTurnStarted = false
 			m.playbackBuf = m.playbackBuf[:0]
 			m.playbackActive = false
+			// Move the queued user chip into history before
+			// returning to idle — otherwise the operator's
+			// question vanishes silently on Ctrl+C.
+			if flush := m.flushPendingUserEcho(); flush != "" {
+				var sCmd tea.Cmd
+				m.stream, sCmd = m.stream.Update(streamWriteMsg(flush))
+				return m, sCmd
+			}
 			return m, nil
 
 		case "ctrl+l":
@@ -520,10 +533,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// after a clear gets a fresh "● " bullet, and drop any
 			// playback runes still in flight — the operator just
 			// wiped the screen on purpose; keep-typing-the-old-reply
-			// would defeat that intent.
+			// would defeat that intent. Same reasoning for the
+			// queued user chip: a deliberate clear should not leak a
+			// "queued question" onto the freshly-blank screen.
 			m.assistantTurnStarted = false
 			m.playbackBuf = m.playbackBuf[:0]
 			m.playbackActive = false
+			m.pendingUserEcho = ""
 			var sCmd tea.Cmd
 			m.stream, sCmd = m.stream.Update(streamClearMsg{})
 			return m, sCmd
@@ -599,14 +615,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.enterSetup()
 		}
 
-		// Echo the user's question into the stream so it scrolls up
-		// alongside the agent's answer; otherwise the operator only
-		// sees the response and loses track of what was asked. Use
-		// streamWriteMsg so the echo lands immediately rather than
-		// waiting for the next agent-token flush tick.
-		echo := userEchoStyle.Render("> "+val) + "\n"
-		var sCmd tea.Cmd
-		m.stream, sCmd = m.stream.Update(streamWriteMsg("\n" + echo))
+		// Queue the echo as a chip above the prompt; flush into the
+		// stream on the first agent event of the turn.
+		echo := userEchoStyle.Render("> "+val)
+		m.pendingUserEcho = "\n" + echo + "\n"
 
 		// Setup gate: refuse to dispatch when no model has been picked.
 		// We deliberately don't gate on m.deps.Provider — that field is a
@@ -614,6 +626,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// agent runner's providerRef, swapped via /login or /model; m.deps.Model
 		// is the only field updated by those swaps, so it's the truth here.
 		if m.deps.Model == "" {
+			// No model picked: the agent will never fire, so there is
+			// no "first event" to drain the chip on. Flush it now,
+			// alongside the red banner, so the operator still sees
+			// what they asked plus why nothing happened.
+			flush := m.flushPendingUserEcho()
 			warn := setupRequiredStyle.Render(
 				"⚠ no LLM model selected. Run /login to pick a provider, paste "+
 					"an API key, and choose a model — chat works without /setup; "+
@@ -621,8 +638,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					"loki, …) so cloudy can investigate questions about your clusters.",
 			) + "\n"
 			var wCmd tea.Cmd
-			m.stream, wCmd = m.stream.Update(streamWriteMsg(warn))
-			return m, tea.Batch(sCmd, wCmd)
+			m.stream, wCmd = m.stream.Update(streamWriteMsg(flush + warn))
+			return m, wCmd
 		}
 
 		// Start the in-flight thinking animation. Reset seeds a new
@@ -636,7 +653,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// in flight. Cleared in agentDoneMsg and on Esc/Ctrl+C cancel.
 		m.prompt.SetInFlight(true)
 
-		return m, tea.Batch(sCmd, m.runAgent(val), thinkingTickCmd())
+		return m, tea.Batch(m.runAgent(val), thinkingTickCmd())
 
 	case arrowPickerResolveMsg:
 		// Single-select picker — could be /login (provider OR model step),
@@ -732,6 +749,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// event doesn't keep this goroutine alive or block on a closed
 		// channel. Subsequent runAgent calls install a fresh ch.
 		m.agentCh = nil
+		// If the run produced zero events (immediate error, empty
+		// response) the chip is still queued — flush it now so the
+		// question is preserved in the transcript.
+		echoFlush := m.flushPendingUserEcho()
 		if msg.err != nil {
 			// Errors short-circuit playback: dump any buffered tokens
 			// first so they aren't lost, then surface the error so
@@ -741,12 +762,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.playbackActive = false
 			m.thinking.streaming = false
 			m.assistantTurnStarted = false
-			if drain != "" {
+			if echoFlush != "" || drain != "" {
 				var sCmd tea.Cmd
-				m.stream, sCmd = m.stream.Update(streamWriteMsg(drain))
+				m.stream, sCmd = m.stream.Update(streamWriteMsg(echoFlush + drain))
 				return m, tea.Batch(sCmd, m.writeStream("\n"+agentError("error", msg.err)))
 			}
 			return m, m.writeStream("\n" + agentError("error", msg.err))
+		}
+		if echoFlush != "" {
+			var sCmd tea.Cmd
+			m.stream, sCmd = m.stream.Update(streamWriteMsg(echoFlush))
+			return m, sCmd
 		}
 		// Happy path: leave playback running so the operator sees the
 		// remaining buffer drain at typewriter pace. The playback tick
@@ -834,6 +860,13 @@ func (m Model) View() string {
 		banner = approvalBannerStyle.Render(line1) + "\n" + approvalHintStyle.Render(line2)
 	}
 
+	// Queued user chip: pre-rendered echo of the operator's just-
+	// submitted prompt that lives in its own slot directly above the
+	// prompt textarea until the agent emits its first event. Empty
+	// string most of the time, so the slot collapses to height 0
+	// (just like the optional approval banner).
+	queuedEcho := strings.TrimRight(m.pendingUserEcho, "\n")
+
 	// Compute the body height by subtracting every other component's actual
 	// rendered height from the terminal height. lipgloss.Height counts rows
 	// correctly even when content wraps, so this stays correct in narrow
@@ -861,7 +894,11 @@ func (m Model) View() string {
 	if pickerView != "" {
 		pickerH = lipgloss.Height(pickerView)
 	}
-	bodyH := m.height - headerH - promptH - paletteH - footerH - bannerH - thinkingH - pickerH - chromeBottomPad
+	queuedH := 0
+	if queuedEcho != "" {
+		queuedH = lipgloss.Height(queuedEcho)
+	}
+	bodyH := m.height - headerH - promptH - paletteH - footerH - bannerH - thinkingH - pickerH - queuedH - chromeBottomPad
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -887,6 +924,9 @@ func (m Model) View() string {
 	parts = append(parts, thinking)
 	if pickerView != "" {
 		parts = append(parts, pickerView)
+	}
+	if queuedEcho != "" {
+		parts = append(parts, queuedEcho)
 	}
 	parts = append(parts, prompt)
 	if paletteView != "" {
@@ -965,9 +1005,33 @@ func (m *Model) pumpAgentCmd() tea.Cmd {
 	}
 }
 
+// flushPendingUserEcho returns and clears the queued user-echo chip.
+// Returns "" when no chip is pending so callers can string-concat the
+// result unconditionally. Called from the first applyAgentEvent path
+// (so the chip moves into the stream the instant the reply starts)
+// plus the cancel/error/no-model paths so the operator's question is
+// never silently lost from the transcript.
+func (m *Model) flushPendingUserEcho() string {
+	if m.pendingUserEcho == "" {
+		return ""
+	}
+	out := m.pendingUserEcho
+	m.pendingUserEcho = ""
+	return out
+}
+
 // applyAgentEvent routes a single agent event to the appropriate sub-model.
 func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 	var cmds []tea.Cmd
+
+	// First event of a turn: the queued user chip has been sitting
+	// above the prompt; drain it into the stream now so it scrolls
+	// into history alongside the reply that is about to land.
+	if flush := m.flushPendingUserEcho(); flush != "" {
+		var fCmd tea.Cmd
+		m.stream, fCmd = m.stream.Update(streamWriteMsg(flush))
+		cmds = append(cmds, fCmd)
+	}
 
 	if evt.Token != "" {
 		// Switch the thinking row from verb-cycling to "Typing" once
@@ -1271,6 +1335,13 @@ func (m *Model) handleEscape() tea.Cmd {
 		m.assistantTurnStarted = false
 		m.playbackBuf = m.playbackBuf[:0]
 		m.playbackActive = false
+		// Mirror Ctrl+C: preserve the queued question in history so
+		// it doesn't silently disappear on cancel.
+		if flush := m.flushPendingUserEcho(); flush != "" {
+			var sCmd tea.Cmd
+			m.stream, sCmd = m.stream.Update(streamWriteMsg(flush))
+			return sCmd
+		}
 		return nil
 	}
 	// Nothing to cancel — clear the prompt so Esc always feels like
@@ -1292,9 +1363,12 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		// Same bullet-anchor reset and playback-buffer drop as the
 		// Ctrl+L path so a fresh "● " leads the next response and
 		// no half-played reply spills onto the cleared screen.
+		// The pending user chip is dropped for the same reason — a
+		// deliberate /clear should not leak a queued question.
 		m.assistantTurnStarted = false
 		m.playbackBuf = m.playbackBuf[:0]
 		m.playbackActive = false
+		m.pendingUserEcho = ""
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamClearMsg{})
 		m.prompt.SetValue("")
@@ -1466,14 +1540,13 @@ func (m Model) renderThinkingRow() string {
 	return thinkingStyle.Render(line)
 }
 
-// userEchoStyle renders the "> <input>" line that mirrors the operator's
-// last submitted prompt back into the stream. The previous "chip" form
-// (bold white-on-dark-grey with padding) read as a UI badge; the
-// chevron-led plain line reads as a transcript turn, matching how
-// Claude's CLI presents prior questions and clearly distinguishable
-// from the styled "●" the agent reply now leads with.
+// userEchoStyle renders the "> <input>" chip — bright text on dark grey
+// with padding so the operator's turn is visually distinct from the agent's
+// "● <reply>" turn even on non-color-aware terminals.
 var userEchoStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("250"))
+	Foreground(lipgloss.Color("255")).
+	Background(lipgloss.Color("237")).
+	Padding(0, 1)
 
 // setupRequiredStyle is the red banner shown in-stream when the operator
 // asks a question before /setup or /login has configured a model.
