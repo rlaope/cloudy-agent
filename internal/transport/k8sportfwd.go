@@ -45,6 +45,26 @@ func OpenPortForward(ctx context.Context, cfg *rest.Config, namespace, pod strin
 	apiURL := base.JoinPath("/api/v1/namespaces", namespace, "pods", pod, "portforward")
 
 	// Build the SPDY round-tripper and dialer.
+	//
+	// SECURITY NOTE (audited 2026-05): spdy.RoundTripperFor builds its
+	// own *http.Transport from cfg WITHOUT consulting cfg.WrapTransport,
+	// so the POST below is the ONE documented exception to the read-only
+	// HTTP contract. The exception is bounded by:
+	//
+	//   1. The POST only opens the SPDY upgrade handshake. After upgrade,
+	//      the wire is raw TCP multiplexed by SPDY — there is no HTTP
+	//      method on the bytes to method-check.
+	//   2. The pods/portforward: create RBAC verb is the cluster-side
+	//      fence. The apiserver itself refuses the POST when the SA
+	//      lacks the verb.
+	//   3. No LLM-reachable tool dispatches OpenPortForward. The single
+	//      production caller is internal/tools/db/client.go for local-
+	//      loopback DB driver setup; target pod is resolved internally
+	//      from operator-supplied config, never from an LLM arg.
+	//
+	// The call-site set is locked in by k8sportfwd_callers_test.go — a
+	// new caller added without updating that allow-list fails the build.
+	// See docs/SAFETY.md "Documented exception: SPDY portforward upgrade".
 	rt, upgrader, err := spdy.RoundTripperFor(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("transport: build SPDY round-tripper: %w", err)

@@ -161,7 +161,13 @@ func Save(p *Profile) error {
 	if p == nil || p.Name == "" {
 		return fmt.Errorf("permission: profile name is required")
 	}
-	if err := os.MkdirAll(Dir(), 0o755); err != nil {
+	// 0o700: profile files contain namespace allow/deny patterns + tool
+	// allow/deny lists that disclose internal cluster topology. The
+	// individual files are 0600; the enclosing directory was 0755 (other
+	// local users could enumerate profile names). Found by the v0.5
+	// adversarial security review (M-3). The secrets store
+	// (internal/secrets/store.go) uses the same 0700 pattern.
+	if err := os.MkdirAll(Dir(), 0o700); err != nil {
 		return fmt.Errorf("permission: mkdir %s: %w", Dir(), err)
 	}
 	final := Path(p.Name)

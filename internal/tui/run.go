@@ -11,6 +11,7 @@ import (
 	"github.com/rlaope/cloudy/internal/agent"
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/llm"
+	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/tools"
 	"github.com/rlaope/cloudy/internal/wiring"
 )
@@ -141,6 +142,12 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(
 			}
 		}
 
+		// Re-load the active permission profile each turn so a mid-
+		// session `cloudy profile use foo` swap is honoured by the next
+		// agent run without restarting the TUI. The hot path is fast —
+		// it is a single small YAML read from ~/.cloudy/profiles/.
+		activeProfile, _ := permission.LoadActive()
+
 		ag, err := agent.New(agent.Options{
 			Provider: provider,
 			Model:    modelID,
@@ -159,6 +166,7 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(
 			MaxProfileSecondsPerCall: deps.MaxProfileSecondsPerCall,
 			MaxLogResponseBytes:      deps.MaxLogResponseBytes,
 			Approver:                 approver,
+			Profile:                  activeProfile,
 		})
 		if err != nil {
 			emit(AgentEvent{Err: err, Done: true})

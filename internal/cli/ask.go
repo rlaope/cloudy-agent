@@ -134,6 +134,7 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		MaxProfileSecondsPerCall: permission.EffectiveProfileSeconds(activeProfile, cfg.Safety.MaxProfileSeconds),
 		MaxLogResponseBytes:      cfg.Safety.MaxLogResponseBytes,
 		Approver:                 agent.DenyApprover(),
+		Profile:                  activeProfile,
 	})
 	if err != nil {
 		return errf("agent: %w", err)
