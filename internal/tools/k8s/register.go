@@ -25,5 +25,7 @@ func RegisterAll(reg *tools.Registry, hub *Hub) {
 		NewListHPATool(hub),
 		NewListPDBsTool(hub),
 		NewListNetworkPoliciesTool(hub),
+		NewListCRDsTool(hub),
+		NewListCRTool(hub),
 	)
 }

@@ -20,6 +20,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -58,6 +59,11 @@ type MetricsNode struct {
 type Client struct {
 	core    kubernetes.Interface
 	metrics metricsclient.Interface
+	// dyn is the dynamic client used by the CRD-generic readers
+	// (k8s.list_crds, k8s.list_cr). It honours the same cfg.WrapTransport
+	// the typed clients use, so the read-only contract is preserved. nil
+	// when the Client was built via newTestClient without a dynamic stub.
+	dyn dynamic.Interface
 	// restCfg is the rest.Config the production clients were built from. It
 	// is retained so callers (e.g. the wiring layer building a ServiceProxy
 	// for discovery) can reuse the apiserver auth without re-loading the
@@ -86,7 +92,11 @@ func NewClient(kubeconfigPath, kubeContext string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("k8s: build metrics client: %w", err)
 	}
-	return &Client{core: core, metrics: mc, restCfg: cfg}, nil
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("k8s: build dynamic client: %w", err)
+	}
+	return &Client{core: core, metrics: mc, dyn: dyn, restCfg: cfg}, nil
 }
 
 // newClientFromConfig is used in tests to inject a pre-built config.
@@ -100,13 +110,24 @@ func newClientFromConfig(cfg *rest.Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{core: core, metrics: mc, restCfg: cfg}, nil
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{core: core, metrics: mc, dyn: dyn, restCfg: cfg}, nil
 }
 
 // newTestClient constructs a Client directly from pre-built interfaces (for
-// unit tests that supply fake clientsets).
+// unit tests that supply fake clientsets). The dynamic client is left nil;
+// tests that exercise the CRD-generic readers should use newTestClientWithDyn.
 func newTestClient(core kubernetes.Interface, mc metricsclient.Interface) *Client {
 	return &Client{core: core, metrics: mc}
+}
+
+// newTestClientWithDyn is the dynamic-aware variant of newTestClient for unit
+// tests that drive k8s.list_crds / k8s.list_cr against dynamic/fake.
+func newTestClientWithDyn(core kubernetes.Interface, mc metricsclient.Interface, dyn dynamic.Interface) *Client {
+	return &Client{core: core, metrics: mc, dyn: dyn}
 }
 
 // RESTConfig returns the *rest.Config the Client was constructed from, or nil
@@ -128,6 +149,16 @@ func (c *Client) Core() kubernetes.Interface {
 		return nil
 	}
 	return c.core
+}
+
+// Dyn returns the underlying dynamic.Interface used by the CRD-generic
+// readers. Returns nil when the Client was constructed via newTestClient
+// (which omits the dynamic stub) — callers must nil-check before use.
+func (c *Client) Dyn() dynamic.Interface {
+	if c == nil {
+		return nil
+	}
+	return c.dyn
 }
 
 func loadConfig(kubeconfigPath, kubeContext string) (*rest.Config, error) {

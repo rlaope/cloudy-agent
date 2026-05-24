@@ -158,7 +158,7 @@ TCP backends via in-process SPDY port-forward. A single
 `kubectl`-reachable cluster is enough — no VPN, no per-service
 ingress.
 
-### Tool surface (63 tools across 12 groups)
+### Tool surface (65 tools across 12 groups)
 
 Every probe the agent can call is a typed tool with a JSON schema.
 Tools self-register at boot — perf, eBPF, and DB groups also gate on
