@@ -43,9 +43,12 @@ curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy/master/install.sh | s
 ```
 
 Drops the latest GitHub release into `~/.local/bin/cloudy`, sets the
-executable bit, and prints a PATH-setup hint if needed. Re-run the
-same line anytime to upgrade — the installer always pulls whatever
-GitHub marks as `latest`.
+executable bit, and prints a PATH-setup hint if needed. Once the
+installer finishes, the binary is reachable as plain `cloudy` from
+any directory (no `./` prefix — it lives on `$PATH`, not in your
+working directory). Re-run the same one-liner anytime to upgrade,
+or use `cloudy update` from inside the TUI — the installer always
+pulls whatever GitHub marks as `latest`.
 
 Override the install location with `CLOUDY_INSTALL_DIR`:
 
@@ -60,17 +63,19 @@ release matrix):
 ```sh
 git clone https://github.com/rlaope/cloudy.git
 cd cloudy
-make build
-./cloudy --version
+make build         # produces ./cloudy in the repo root
+./cloudy --version # quick smoke test from the build dir
+sudo mv cloudy /usr/local/bin/   # or move it onto your PATH any other way
+cloudy --version   # now reachable as a bare command
 ```
 
-Either path leaves the binary discoverable as `cloudy` once the
-install directory is on your `PATH`.
+Either install path leaves the binary reachable as plain `cloudy`
+from any directory once it is on your `PATH`.
 
 ## First run
 
 ```sh
-./cloudy
+cloudy
 ```
 
 The TUI opens. Two commands get you to the first question:
@@ -102,29 +107,36 @@ cloudy profile cluster                      # show RBAC for current context
 
 ## Read-only by design
 
-Four independent guards, any one of which would catch a mutation
-attempt. Defense in depth, not a single chokepoint.
+Three independent enforcement layers plus boot-time and runtime
+hardening. Defense in depth, not a single chokepoint.
 
 1. **HTTP `RoundTripper`** rejects every method other than `GET` /
-   `HEAD` / `OPTIONS` before the request reaches the network.
-2. **Kubernetes client wrapper** rejects verbs other than `get` /
-   `list` / `watch` before the request reaches the apiserver.
-3. **Bundled `ClusterRole`** (`manifests/rbac/`) only grants those
-   verbs at the RBAC layer.
-4. **Bastion reachability verbs** (`services/proxy: get`,
-   `pods/portforward: create`) are the minimum required to reach HTTP
-   and TCP backends through the apiserver and do not widen the
-   mutation surface.
+   `HEAD` / `OPTIONS` before the request reaches the network. The
+   K8s client honours this too — `rest.Config.WrapTransport` is set
+   to the same wrapper, so apiserver calls share the HTTP whitelist
+   end-to-end.
+2. **Bundled `ClusterRole`** (`manifests/rbac/`) only grants `get`
+   / `list` / `watch` (plus the two narrow bastion verbs below) at
+   the RBAC layer — the cluster itself refuses anything else even
+   if a guard in cloudy were bypassed.
+3. **Bastion reachability verbs** (`services/proxy: get`,
+   `pods/portforward: create`) are the minimum required to reach
+   HTTP and TCP backends through the apiserver and do not widen
+   the mutation surface.
 
-Mutating tools (delete, exec, patch, write-mode port-forward) are not
-registered with the agent, so the LLM never sees them in its tool
-catalog and cannot ask for them.
+On top of those layers cloudy adds two hardening guards:
 
-A separate **risk-rated approval gate** sits in front of tools that
-*are* read-only but expensive enough to perturb the system they're
-observing — STW JVM pauses, attached eBPF probes, long profiling
-windows. The TUI surfaces a `y/N` banner; headless entry points
-refuse them with a clear message. See [docs/SAFETY.md](docs/SAFETY.md).
+- The **`tools.Registry` mutator-name assertion** panics at boot if
+  any registered tool name looks like a write (`create_*`,
+  `delete_*`, `patch_*`, ...). Mutating tools (`exec`, `delete`,
+  `patch`, write-mode port-forward) are never registered, so the
+  LLM never sees them in its tool catalogue and cannot ask for them.
+- A **risk-rated approval gate** sits in front of tools that are
+  read-only but expensive enough to perturb the system they're
+  observing — STW JVM pauses, attached eBPF probes, long profiling
+  windows. The TUI surfaces a `y/N` banner; headless entry points
+  refuse them with a clear message. See
+  [docs/SAFETY.md](docs/SAFETY.md).
 
 ## Backends cloudy understands
 
@@ -146,7 +158,7 @@ TCP backends via in-process SPDY port-forward. A single
 `kubectl`-reachable cluster is enough — no VPN, no per-service
 ingress.
 
-### Tool surface (61 tools across 12 groups)
+### Tool surface (63 tools across 12 groups)
 
 Every probe the agent can call is a typed tool with a JSON schema.
 Tools self-register at boot — perf, eBPF, and DB groups also gate on
@@ -155,7 +167,7 @@ wired in your environment.
 
 | Group | Tools (count) |
 | ----- | ------------- |
-| `k8s` (18) | `list_pods`, `list_nodes`, `list_namespaces`, `describe_pod`, `events`, `logs`, `top_pods`, `top_nodes`, `list_deployments`, `list_statefulsets`, `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`, `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies` |
+| `k8s` (20) | `list_pods`, `list_nodes`, `list_namespaces`, `describe_pod`, `events`, `logs`, `top_pods`, `top_nodes`, `list_deployments`, `list_statefulsets`, `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`, `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`, `list_crds`, `list_cr` *(CRD-generic dynamic-client reader; unlocks Argo Rollouts, KEDA, cert-manager, Gateway API, Sloth SLOs, ServiceMonitor, etc. in one tool)* |
 | `prom` (4) | `query`, `query_range`, `label_values`, `series` |
 | `log` (7) | `loki_query_range`, `loki_labels`, `loki_label_values`, `loki_series`, `es_search`, `es_indices`, `es_cluster_health` |
 | `trace` (5) | `tempo_get_trace`, `tempo_search`, `jaeger_services`, `jaeger_operations`, `jaeger_search_traces` |

@@ -30,11 +30,16 @@ golangci-lint v1.64 (optional locally, required in CI)
 ```sh
 git clone https://github.com/rlaope/cloudy
 cd cloudy
-make build           # builds ./cmd → ./cloudy
+make build           # builds ./cmd → ./cloudy in the repo root
 make test            # go test -race -count=1 ./...
 make lint            # golangci-lint or `go vet` as a fallback
-./cloudy tools       # see what wired in on your machine
+./cloudy tools       # ./-prefix only here, because the binary is not on $PATH yet
 ```
+
+End-users install via `curl … install.sh | sh` (see [README](README.md))
+which drops the binary into `~/.local/bin/cloudy`; they invoke it as
+plain `cloudy`. The `./cloudy` form above is specific to the
+contributor build flow where the binary lives next to the source.
 
 There is no required `cloudy.yaml` to build or run unit tests — only
 integration paths consult one.
