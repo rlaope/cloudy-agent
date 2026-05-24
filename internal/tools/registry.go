@@ -23,6 +23,7 @@ var ErrMutatorTool = errors.New("tools: mutator tool rejected by read-only regis
 // Detection is token-aware (split on '.' and '_') so legitimate names like
 // "mysql_top_table_size" are not flagged for containing "set" as a substring.
 var mutatorTokens = map[string]struct{}{
+	// Original block — HTTP verbs + common K8s + SQL mutators.
 	"create":  {},
 	"update":  {},
 	"delete":  {},
@@ -40,6 +41,28 @@ var mutatorTokens = map[string]struct{}{
 	"write":   {},
 	"post":    {},
 	"put":     {},
+
+	// Added by the v0.5 adversarial security review (M-2). The guard
+	// is a name check, not a behaviour check — its only purpose is to
+	// surface mistakes at register time. Cheap to extend; the cost of
+	// a false positive is a tool rename.
+	//
+	// Only unambiguous-mutator verbs were added. Verbs that double as
+	// read-only nouns (label / annotate / set / start / stop / enable /
+	// disable / remove) were deliberately omitted: they false-positive
+	// against legitimate read tools (prom.label_values, log.loki_label_*,
+	// db.mysql_global_status's GlobalStatusTable struct names, etc.)
+	// without buying real safety — a mutating tool that uses one of
+	// those verbs as its main token would still trip "create"/"update"/
+	// "delete" first if it does anything real.
+	"recreate":  {},
+	"purge":     {},
+	"evict":     {},
+	"cordon":    {},
+	"drain":     {},
+	"taint":     {},
+	"truncate":  {},
+	"terminate": {},
 }
 
 // assertReadOnlyName panics with ErrMutatorTool if name contains a forbidden

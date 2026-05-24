@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/rlaope/cloudy/internal/llm"
+	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/skills"
 	"github.com/rlaope/cloudy/internal/tools"
@@ -156,6 +157,13 @@ type Options struct {
 	// internal tests, never for production entry points. cmd/main.go injects
 	// a TUI-backed approver; cli/ask.go injects DenyApprover.
 	Approver Approver
+	// Profile, when non-nil, drives the default MaskingHook — its
+	// Masking.KeyRegex / Masking.ValueRegex patterns are compiled once and
+	// applied to every tool observation before the LLM sees it. nil = no
+	// masking (the historical behaviour). Closing the M-1 gap from the v0.5
+	// security review which found permission.Masker had no production
+	// call sites despite being published, tested, and documented.
+	Profile *permission.Profile
 	// History is the prior conversation context prepended to each run.
 	History []llm.Message
 	// Hooks is the cross-cutting policy chain. When nil, defaults include
@@ -211,6 +219,21 @@ func New(opts Options) (*Agent, error) {
 		}
 		if opts.MaxLogResponseBytes > 0 {
 			hooks = append(hooks, NewLogSummaryHook(opts.MaxLogResponseBytes))
+		}
+		// MaskingHook sits after LogSummaryHook on purpose: LogSummary
+		// clips the observation first (head/tail + exception extract),
+		// then masking redacts whatever survived the clip. Running them
+		// in the reverse order would waste regex work on the bytes the
+		// summary was about to drop.
+		if opts.Profile != nil {
+			masker, err := permission.NewMasker(opts.Profile)
+			if err != nil {
+				return nil, fmt.Errorf("agent: compile masker: %w", err)
+			}
+			// NewMaskingHook handles a nil masker gracefully — no
+			// profile-configured patterns is the common case and stays
+			// a no-op without a branch here.
+			hooks = append(hooks, NewMaskingHook(masker))
 		}
 		if opts.Approver != nil {
 			var regGetter func() *tools.Registry

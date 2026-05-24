@@ -107,6 +107,31 @@ surface — `services/proxy: get` routes a read-only HTTP request
 through the apiserver, and `pods/portforward: create` opens a local
 TCP tunnel without giving cloudy any verb on the workload itself.
 
+### Documented exception: SPDY portforward upgrade
+
+The portforward subresource is opened with `POST /api/v1/namespaces/{ns}/pods/{pod}/portforward`
+because the K8s apiserver only accepts SPDY upgrade requests via POST.
+This single POST is **not** routed through `ReadOnlyRoundTripper` (the
+`spdy.RoundTripperFor(cfg)` constructor builds its own transport without
+consulting `cfg.WrapTransport`).
+
+The exception is bounded by construction:
+
+- The POST only opens the upgrade handshake; once SPDY hands off to the
+  multiplexed TCP stream, the bytes flowing through the tunnel are not
+  HTTP — there is no HTTP method on the wire to check.
+- The `pods/portforward: create` RBAC verb is the cluster-side fence:
+  the apiserver itself will reject the POST if the ServiceAccount lacks
+  that verb.
+- No LLM-reachable tool dispatches `OpenPortForward`. The single caller
+  is `internal/tools/db/client.go` for local-loopback DB-driver setup,
+  and the target pod is resolved internally — never from LLM args.
+
+This exception is enforced by a regression test in
+`internal/transport/k8sportfwd_callers_test.go` that fails the build
+if any new caller of `OpenPortForward` appears outside the audited
+allow-list.
+
 ---
 
 ## Mutator-name registry panic
