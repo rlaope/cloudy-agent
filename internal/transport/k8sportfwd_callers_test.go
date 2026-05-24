@@ -51,8 +51,13 @@ func TestOpenPortForward_CallerAllowList(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
-			// Skip subagent worktrees if they exist anywhere inside internal/.
-			if strings.Contains(path, ".claude/worktrees") {
+			// Skip subagent worktrees IF they appear inside the walked
+			// tree. We compare the basename, not the full path — using
+			// strings.Contains(path, ".claude/worktrees") used to fire
+			// on the walk's root itself when the test ran from a git
+			// worktree at .claude/worktrees/agent-*/internal, causing
+			// SkipDir at root and the entire walk to return zero files.
+			if d.Name() == "worktrees" || strings.HasSuffix(path, "/.claude") {
 				return fs.SkipDir
 			}
 			return nil
