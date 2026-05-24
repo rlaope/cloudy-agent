@@ -364,13 +364,19 @@ func composePostgresDSN(localAddr, passwordEnv string) string {
 // composeMySQLDSN builds a Go-MySQL DSN pointing at localAddr.
 //
 // v0 defaults: user="root", db="mysql".
+//
+// The password is URL-escaped — a literal '@', ':', '/' or '?' in the
+// operator-supplied password would otherwise split the DSN at the wrong
+// boundary and the connection would silently authenticate as a different
+// user or fail to parse. The Postgres composer already does this; missing
+// here was the L-1 finding from the v0.5 security review.
 func composeMySQLDSN(localAddr, passwordEnv string) string {
 	pw := ""
 	if passwordEnv != "" {
 		pw = os.Getenv(passwordEnv)
 	}
 	if pw != "" {
-		return fmt.Sprintf("root:%s@tcp(%s)/mysql", pw, localAddr)
+		return fmt.Sprintf("root:%s@tcp(%s)/mysql", url.QueryEscape(pw), localAddr)
 	}
 	return fmt.Sprintf("root@tcp(%s)/mysql", localAddr)
 }

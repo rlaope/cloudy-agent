@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -68,6 +69,13 @@ func Load() error {
 		// Parse KEY=VALUE
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) != 2 {
+			// L-3 from the v0.5 security review: a typo'd line (no '=')
+			// used to be skipped silently — operators with a truncated
+			// API-key paste then ran unauthenticated without notice.
+			// Warn to stderr while still proceeding with the rest of
+			// the file so a single bad line does not lock the user out
+			// of cloudy entirely.
+			fmt.Fprintf(os.Stderr, "secrets: %s: skipping malformed line (no '='): %q\n", path, line)
 			continue
 		}
 
@@ -75,6 +83,7 @@ func Load() error {
 		value := parts[1]
 
 		if key == "" {
+			fmt.Fprintf(os.Stderr, "secrets: %s: skipping line with empty key: %q\n", path, line)
 			continue
 		}
 
@@ -147,9 +156,18 @@ func Add(key, value string) error {
 	}
 	tmpName := tmp.Name()
 
-	// Write all entries
-	for k, v := range entries {
-		if _, err := fmt.Fprintf(tmp, "%s=%s\n", k, v); err != nil {
+	// Write all entries in sorted-key order. Without sorting the on-disk
+	// file was shuffled on every Add() (map iteration order in Go is
+	// randomized), defeating `git diff`-style review and chmod-time
+	// integrity tracking for operators who back up ~/.cloudy/secrets.
+	// L-2 from the v0.5 security review.
+	sortedKeys := make([]string, 0, len(entries))
+	for k := range entries {
+		sortedKeys = append(sortedKeys, k)
+	}
+	sort.Strings(sortedKeys)
+	for _, k := range sortedKeys {
+		if _, err := fmt.Fprintf(tmp, "%s=%s\n", k, entries[k]); err != nil {
 			tmp.Close()
 			os.Remove(tmpName)
 			return fmt.Errorf("secrets: write temp: %w", err)

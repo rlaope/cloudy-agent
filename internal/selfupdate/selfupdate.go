@@ -24,6 +24,8 @@ package selfupdate
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,6 +116,29 @@ func Run(ctx context.Context, w io.Writer) (Result, error) {
 	}
 	// Best-effort cleanup if any step after this fails.
 	cleanup := func() { _ = os.Remove(tmpPath) }
+
+	// SHA-256 verification (L-4 from the v0.5 security review). The
+	// release workflow publishes a per-asset .sha256 file with the
+	// canonical hash. We download it, compute the local hash of what
+	// we just pulled, and bail before chmod/rename if they disagree.
+	// Without this, the only check between GitHub TLS and the running
+	// `os.Rename` over the live binary was a 4-byte ELF/Mach-O magic
+	// scan — an attacker who controlled the release artifact (or could
+	// MITM despite TLS) could ship anything that started with those
+	// bytes. The .sha256 file shares the same TLS path so this is not
+	// supply-chain attestation, but it closes the "asset got corrupted
+	// in flight" gap and gives operators an end-to-end integrity check
+	// they can audit against the published value.
+	fmt.Fprintf(w, "→ verifying SHA-256\n")
+	expected, err := fetchSHA256(ctx, url+".sha256")
+	if err != nil {
+		cleanup()
+		return res, fmt.Errorf("fetch sha256: %w", err)
+	}
+	if err := verifySHA256(tmpPath, expected); err != nil {
+		cleanup()
+		return res, fmt.Errorf("sha256 mismatch: %w", err)
+	}
 
 	if err := validateBinary(tmpPath); err != nil {
 		cleanup()
@@ -250,4 +275,66 @@ func validateBinary(path string) error {
 // the GitHub-style "v" prefix on tags.
 func matches(local, remote string) bool {
 	return strings.TrimPrefix(local, "v") == strings.TrimPrefix(remote, "v")
+}
+
+// fetchSHA256 GETs the per-asset .sha256 companion file published by the
+// release workflow (see .github/workflows/release.yml's `shasum -a 256 ...
+// > cloudy-${goos}-${goarch}.sha256` step) and returns just the 64-char
+// hex digest. The file's canonical format is
+//
+//	"<hex>  cloudy-<goos>-<goarch>"
+//
+// (`shasum` output: hash, two spaces, filename) — we accept either that
+// shape or a bare hex line so an operator who hand-publishes a release
+// is not punished for using sha256sum (which uses the same shape) or a
+// stripped digest.
+func fetchSHA256(ctx context.Context, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{Timeout: requestTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("sha256 fetch status %d (no .sha256 alongside the asset?)", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return "", err
+	}
+	// First whitespace-delimited token, lowercased.
+	digest := strings.ToLower(strings.TrimSpace(strings.Fields(string(body))[0]))
+	if len(digest) != 64 {
+		return "", fmt.Errorf("sha256 file did not contain a 64-char hex digest: %q", digest)
+	}
+	for _, r := range digest {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return "", fmt.Errorf("sha256 digest contains non-hex character %q", r)
+		}
+	}
+	return digest, nil
+}
+
+// verifySHA256 streams the file at path through a SHA-256 hasher and
+// compares the hex digest to expected. Returns nil on match. Streamed
+// to avoid loading the full binary (~50 MB) into memory.
+func verifySHA256(path, expected string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("hash: %w", err)
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if got != strings.ToLower(expected) {
+		return fmt.Errorf("digest mismatch: got %s, expected %s", got, expected)
+	}
+	return nil
 }

@@ -97,6 +97,44 @@ if head -c 32 "$TMP" | grep -q "<!DOCTYPE\|<html"; then
     exit 1
 fi
 
+# ─── Verify SHA-256 ──────────────────────────────────────────────────
+#
+# The release workflow publishes a per-asset .sha256 file. Verifying it
+# closes the "asset got corrupted in flight" gap (and gives operators
+# an end-to-end witness they can audit against the published value).
+# Same TLS path as the binary itself, so this is not supply-chain
+# attestation — it is integrity. Mirrors the in-process selfupdate
+# path's behaviour (internal/selfupdate/selfupdate.go fetchSHA256).
+#
+# Pick the right hasher: macOS ships `shasum`, most linuxes ship
+# `sha256sum`. Both produce the same shape "<hex>  <filename>".
+if command -v sha256sum >/dev/null 2>&1; then
+    HASHER="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+    HASHER="shasum -a 256"
+else
+    color_yellow "⚠ no sha256sum/shasum on PATH — skipping integrity check"
+    HASHER=""
+fi
+
+if [ -n "$HASHER" ]; then
+    color_cyan "→ verifying SHA-256"
+    SHA_URL="$URL.sha256"
+    EXPECTED="$(curl -fsSL "$SHA_URL" 2>/dev/null | awk '{print $1}' | head -n1)"
+    if [ -z "$EXPECTED" ] || [ "${#EXPECTED}" -ne 64 ]; then
+        color_red "✗ could not fetch a valid .sha256 alongside the asset ($SHA_URL)"
+        exit 1
+    fi
+    ACTUAL="$($HASHER "$TMP" | awk '{print $1}')"
+    if [ "$ACTUAL" != "$EXPECTED" ]; then
+        color_red "✗ SHA-256 mismatch"
+        echo "  expected: $EXPECTED"
+        echo "  actual:   $ACTUAL"
+        echo "  Refusing to install. Re-download or report to https://github.com/$REPO/issues"
+        exit 1
+    fi
+fi
+
 # ─── Install ──────────────────────────────────────────────────────────
 
 mkdir -p "$INSTALL_DIR"
