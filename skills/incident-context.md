@@ -21,6 +21,8 @@ allowed_tools:
   - gitops.argo_app_history
   - k8s.events
   - k8s.list_pods
+  - k8s.list_crds
+  - k8s.list_cr
   - prom.query
   - prom.query_range
 defaults:

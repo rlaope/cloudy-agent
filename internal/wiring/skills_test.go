@@ -21,7 +21,7 @@ var canonicalToolNames = []string{
 	"k8s.list_deployments", "k8s.list_statefulsets", "k8s.list_daemonsets",
 	"k8s.list_jobs", "k8s.list_cronjobs", "k8s.list_services",
 	"k8s.list_ingresses", "k8s.list_hpa", "k8s.list_pdbs",
-	"k8s.list_networkpolicies",
+	"k8s.list_networkpolicies", "k8s.list_crds", "k8s.list_cr",
 
 	"prom.query", "prom.query_range", "prom.label_values", "prom.series",
 
