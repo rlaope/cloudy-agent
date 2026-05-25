@@ -1,43 +1,56 @@
+version: "2"
 run:
-  timeout: 5m
   tests: true
-
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
     - govet
     - ineffassign
     - staticcheck
-    - gofmt
-
-linters-settings:
-  errcheck:
-    exclude-functions:
-      - (io.Closer).Close
-      - (*os.File).Close
-      - (*bufio.Writer).Flush
-      - os.Remove
-      - os.RemoveAll
-      - fmt.Fprint
-      - fmt.Fprintln
-      - fmt.Fprintf
-      - fmt.Sscan
-      - fmt.Sscanf
-      - (net/http.ResponseWriter).Write
-      - (io.Writer).Write
-
+  settings:
+    staticcheck:
+      checks:
+        - SA*
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*bufio.Writer).Flush
+        - os.Remove
+        - os.RemoveAll
+        - fmt.Fprint
+        - fmt.Fprintln
+        - fmt.Fprintf
+        - fmt.Sscan
+        - fmt.Sscanf
+        - (net/http.ResponseWriter).Write
+        - (io.Writer).Write
+  exclusions:
+    generated: lax
+    rules:
+      - linters:
+          - errcheck
+          - ineffassign
+          - staticcheck
+        path: _test\.go
+      - linters:
+          - errcheck
+        path: cmd/cloudy/
+        text: Error return value of `sess.Close`
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - ineffassign
-        - staticcheck
-    - path: cmd/cloudy/
-      text: "Error return value of `sess.Close`"
-      linters:
-        - errcheck
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
