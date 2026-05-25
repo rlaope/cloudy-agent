@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/llm"
 	"github.com/rlaope/cloudy/internal/permission"
+	"github.com/rlaope/cloudy/internal/session"
 	"github.com/rlaope/cloudy/internal/tools"
 	"github.com/rlaope/cloudy/internal/wiring"
 )
@@ -148,6 +150,13 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(
 		// it is a single small YAML read from ~/.cloudy/profiles/.
 		activeProfile, _ := permission.LoadActive()
 
+		// Persist the user prompt so the session log lets ops correlate a
+		// failure with the input that triggered it. Empty inputs (e.g.
+		// internal /-commands) are skipped.
+		if deps.Session != nil && input != "" {
+			_ = deps.Session.Append(session.Event{Kind: session.KindUser, Text: input})
+		}
+
 		ag, err := agent.New(agent.Options{
 			Provider: provider,
 			Model:    modelID,
@@ -169,13 +178,17 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(
 			Profile:                  activeProfile,
 		})
 		if err != nil {
+			logSessionError(deps.Session, "agent.new", err)
 			emit(AgentEvent{Err: err, Done: true})
 			return
 		}
 
-		newMsgs, runErr := ag.Run(runCtx, input, &tuiSink{emit: emit})
+		newMsgs, runErr := ag.Run(runCtx, input, &tuiSink{emit: emit, sess: deps.Session})
 		if len(newMsgs) > 0 {
 			history = newMsgs
+		}
+		if runErr != nil {
+			logSessionError(deps.Session, "agent.run", runErr)
 		}
 		emit(AgentEvent{Done: true, Err: runErr})
 	}
@@ -185,18 +198,41 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(
 // bubbletea Update loop already understands. The previous indirection
 // (write-bytes-then-parse-the-markers-back-out) is gone — tool boundaries
 // arrive as structured events directly.
+//
+// sess is an optional append-only session log; when non-nil, tool boundaries,
+// errors, and usage events are mirrored to it so a post-mortem can see what
+// ran and what failed without the operator needing to scrape the TUI.
 type tuiSink struct {
 	emit func(AgentEvent)
+	sess *session.Session
 }
 
 func (s *tuiSink) WriteToken(tok string) { s.emit(AgentEvent{Token: tok}) }
 
 func (s *tuiSink) BeginToolCall(name, args string) {
 	s.emit(AgentEvent{ToolBegin: &toolBeginEvt{name: name, args: args}})
+	if s.sess != nil {
+		_ = s.sess.Append(session.Event{
+			Kind: session.KindToolCall,
+			Name: name,
+			Args: json.RawMessage(args),
+		})
+	}
 }
 
 func (s *tuiSink) EndToolCall(observation string, err error) {
 	s.emit(AgentEvent{ToolEnd: &toolEndEvt{observation: observation, err: err}})
+	if s.sess == nil {
+		return
+	}
+	if err != nil {
+		logSessionError(s.sess, "tool", err)
+		return
+	}
+	_ = s.sess.Append(session.Event{
+		Kind: session.KindToolResult,
+		Text: observation,
+	})
 }
 
 func (s *tuiSink) RecordUsage(u llm.Usage) {
@@ -205,4 +241,31 @@ func (s *tuiSink) RecordUsage(u llm.Usage) {
 		Output: u.OutputTokens,
 		USD:    u.CostUSD,
 	}})
+	if s.sess != nil {
+		_ = s.sess.Append(session.Event{
+			Kind: session.KindUsage,
+			Tokens: &session.Tokens{
+				Input:  u.InputTokens,
+				Output: u.OutputTokens,
+				USD:    u.CostUSD,
+			},
+		})
+	}
+}
+
+// logSessionError appends a KindError event to sess when sess and err are
+// both non-nil and err is not a plain context cancellation (skipping ctx
+// cancels keeps the log signal-heavy when the operator just hit Ctrl+C).
+func logSessionError(sess *session.Session, name string, err error) {
+	if sess == nil || err == nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	_ = sess.Append(session.Event{
+		Kind: session.KindError,
+		Name: name,
+		Text: err.Error(),
+	})
 }
