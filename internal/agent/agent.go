@@ -115,9 +115,13 @@ type Options struct {
 	// hot-swapped by /setup. When nil, Options.Registry is used for the entire
 	// lifetime of the agent (legacy behaviour).
 	RegistryFn func() *tools.Registry
-	// Skill, if non-nil, prepends its SystemPrompt and filters the Registry
-	// through skill.AllowedTools before each run.
-	Skill *skills.Skill
+	// Skill, if non-nil, is consulted at the top of every Run via
+	// SkillProvider.Resolve: its returned prompt is prepended to the system
+	// prompt, and its returned tool whitelist filters the Registry for this
+	// run. The concrete *skills.Skill type is wrapped in skills.NewStaticSkill
+	// at every call site; future implementations (RAG-backed, runbook-backed)
+	// plug in behind the same interface. See docs/RFC-RAG.md §4.
+	Skill skills.SkillProvider
 	// Skills, if non-nil, is rendered into the system preamble as a
 	// catalog of available skill playbooks the agent can suggest to the
 	// operator (via "/skill <name>"). Distinct from Skill — Skill is the
@@ -175,9 +179,17 @@ type Options struct {
 // Agent executes the ReAct loop for a single user query. An Agent is safe
 // for sequential reuse but MUST NOT be used concurrently.
 type Agent struct {
-	opts      Options
-	staticReg *tools.Registry // pre-filtered at New(); nil when RegistryFn is set
-	hooks     []Hook
+	opts  Options
+	hooks []Hook
+}
+
+// resolvedSkill holds the per-Run result of SkillProvider.Resolve. The fields
+// are stable for the whole Run (we resolve once at the top) so we can pass
+// them around without re-invoking the provider per step.
+type resolvedSkill struct {
+	name    string
+	prompt  string
+	allowed []string
 }
 
 // New constructs an Agent from opts, applying defaults and validating
@@ -197,15 +209,6 @@ func New(opts Options) (*Agent, error) {
 	}
 	if opts.MaxToolTokens <= 0 {
 		opts.MaxToolTokens = defaultMaxToolTokens
-	}
-
-	// Pre-compute the filtered registry only for the static (non-fn) path.
-	var staticReg *tools.Registry
-	if opts.RegistryFn == nil {
-		staticReg = opts.Registry
-		if opts.Skill != nil && len(opts.Skill.AllowedTools) > 0 {
-			staticReg = opts.Registry.Filter(opts.Skill.AllowedTools)
-		}
 	}
 
 	hooks := opts.Hooks
@@ -247,25 +250,46 @@ func New(opts Options) (*Agent, error) {
 		}
 	}
 
-	return &Agent{opts: opts, staticReg: staticReg, hooks: hooks}, nil
+	return &Agent{opts: opts, hooks: hooks}, nil
+}
+
+// resolveSkill invokes the SkillProvider once for this Run. When Options.Skill
+// is nil (the historical "no active skill" path) it returns a zero-value
+// resolvedSkill, which downstream code (resolveRegistry, buildSystemPrompt)
+// treats as "no prompt, no filter".
+func (a *Agent) resolveSkill(ctx context.Context) (resolvedSkill, error) {
+	if a.opts.Skill == nil {
+		return resolvedSkill{}, nil
+	}
+	prompt, allowed, err := a.opts.Skill.Resolve(ctx)
+	if err != nil {
+		return resolvedSkill{}, fmt.Errorf("agent: resolve skill: %w", err)
+	}
+	return resolvedSkill{
+		name:    a.opts.Skill.Name(),
+		prompt:  prompt,
+		allowed: allowed,
+	}, nil
 }
 
 // resolveRegistry returns the current Registry for this Run, applying the
-// skill filter if Skill.AllowedTools is set. When RegistryFn is set it is
-// called on every Run so hot-swapped registries are picked up automatically.
-// When only the static Registry is set it returns the pre-filtered staticReg.
-func (a *Agent) resolveRegistry() *tools.Registry {
+// skill filter when the resolved skill carries an AllowedTools whitelist.
+// When RegistryFn is set it is called on every Run so hot-swapped registries
+// are picked up automatically; otherwise the static Registry is used.
+func (a *Agent) resolveRegistry(skill resolvedSkill) *tools.Registry {
+	var reg *tools.Registry
 	if a.opts.RegistryFn != nil {
-		reg := a.opts.RegistryFn()
+		reg = a.opts.RegistryFn()
 		if reg == nil {
 			return nil
 		}
-		if a.opts.Skill != nil && len(a.opts.Skill.AllowedTools) > 0 {
-			return reg.Filter(a.opts.Skill.AllowedTools)
-		}
-		return reg
+	} else {
+		reg = a.opts.Registry
 	}
-	return a.staticReg
+	if len(skill.allowed) > 0 {
+		return reg.Filter(skill.allowed)
+	}
+	return reg
 }
 
 // Run executes the ReAct loop for userInput, streaming tokens and tool-call
@@ -277,7 +301,16 @@ func (a *Agent) resolveRegistry() *tools.Registry {
 // (not the bare context.DeadlineExceeded) so callers can distinguish it from
 // upstream cancellation.
 func (a *Agent) Run(ctx context.Context, userInput string, sink render.Sink) ([]llm.Message, error) {
-	reg := a.resolveRegistry()
+	// Resolve the active skill exactly once per Run. The returned prompt /
+	// allowed-tools are stable for the whole loop, so we pass them as values
+	// through resolveRegistry / buildSystemPrompt rather than re-invoking the
+	// provider per step.
+	skill, err := a.resolveSkill(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	reg := a.resolveRegistry(skill)
 	if reg == nil {
 		return nil, fmt.Errorf("agent: no registry available")
 	}
@@ -290,7 +323,7 @@ func (a *Agent) Run(ctx context.Context, userInput string, sink render.Sink) ([]
 		defer cancel()
 	}
 
-	sysPrompt := a.buildSystemPrompt(reg)
+	sysPrompt := a.buildSystemPrompt(reg, skill)
 
 	msgs := make([]llm.Message, 0, len(a.opts.History)+2)
 	msgs = append(msgs, llm.Message{Role: llm.RoleSystem, Content: sysPrompt})
@@ -496,8 +529,9 @@ func truncateMiddle(s string, max int) string {
 }
 
 // buildSystemPrompt assembles base preamble + skill catalog + active skill
-// prompt + tool catalogue from the given registry snapshot.
-func (a *Agent) buildSystemPrompt(reg *tools.Registry) string {
+// prompt + tool catalogue from the given registry snapshot. skill carries the
+// already-resolved SkillProvider output for this Run.
+func (a *Agent) buildSystemPrompt(reg *tools.Registry, skill resolvedSkill) string {
 	var sb strings.Builder
 	sb.WriteString(basePreamble)
 	if a.opts.Skills != nil {
@@ -509,11 +543,11 @@ func (a *Agent) buildSystemPrompt(reg *tools.Registry) string {
 			}
 		}
 	}
-	if a.opts.Skill != nil && a.opts.Skill.SystemPrompt != "" {
+	if skill.prompt != "" {
 		sb.WriteString("\n\n## Active skill: ")
-		sb.WriteString(a.opts.Skill.Name)
+		sb.WriteString(skill.name)
 		sb.WriteString("\n")
-		sb.WriteString(a.opts.Skill.SystemPrompt)
+		sb.WriteString(skill.prompt)
 	}
 	tools := reg.List()
 	if len(tools) > 0 {

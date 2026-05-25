@@ -102,13 +102,13 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		fmt.Fprintf(stderr, "cloudy: profile=%s\n", activeProfile.Name)
 	}
 
-	var activeSkill *skills.Skill
+	var activeSkill skills.SkillProvider
 	if opts.skill != "" {
 		s, ok := skillReg.Get(opts.skill)
 		if !ok {
 			return errf("unknown skill: %s", opts.skill)
 		}
-		activeSkill = s
+		activeSkill = skills.NewStaticSkill(s)
 		toolReg = toolReg.Filter(s.AllowedTools)
 	}
 
