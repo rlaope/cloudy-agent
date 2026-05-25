@@ -118,21 +118,22 @@ func (spec ListResourceSpec[T]) Build(hub *Hub) tools.Tool {
 // hits ErrMetricsUnavailable. Returned via Observation.Text (not as an error)
 // so the LLM relays it as a normal answer instead of a tool failure.
 func metricsUnavailableMessage(ctxName string, err error) string {
-	ctxLabel := ctxName
-	if ctxLabel == "" {
-		ctxLabel = "kubeconfig current-context"
-	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "metrics-server is not available in context %q.\n", ctxLabel)
+	if ctxName == "" {
+		sb.WriteString("metrics-server is not available in your current kubeconfig context.\n")
+	} else {
+		fmt.Fprintf(&sb, "metrics-server is not available in context %q.\n", ctxName)
+	}
 	sb.WriteString("This typically means metrics-server is not installed, or its APIService (v1beta1.metrics.k8s.io) is degraded.\n\n")
 	sb.WriteString("Verify with:\n  kubectl ")
 	if ctxName != "" {
-		fmt.Fprintf(&sb, "--context %s ", ctxName)
+		// %q quotes so context names with spaces/specials are paste-safe.
+		fmt.Fprintf(&sb, "--context %q ", ctxName)
 	}
 	sb.WriteString("get deploy -n kube-system metrics-server\n")
 	sb.WriteString("  kubectl ")
 	if ctxName != "" {
-		fmt.Fprintf(&sb, "--context %s ", ctxName)
+		fmt.Fprintf(&sb, "--context %q ", ctxName)
 	}
 	sb.WriteString("get apiservice v1beta1.metrics.k8s.io\n\n")
 	sb.WriteString("Install: https://github.com/kubernetes-sigs/metrics-server\n\n")
