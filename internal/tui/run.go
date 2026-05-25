@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -150,13 +149,6 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(
 		// it is a single small YAML read from ~/.cloudy/profiles/.
 		activeProfile, _ := permission.LoadActive()
 
-		// Persist the user prompt so the session log lets ops correlate a
-		// failure with the input that triggered it. Empty inputs (e.g.
-		// internal /-commands) are skipped.
-		if deps.Session != nil && input != "" {
-			_ = deps.Session.Append(session.Event{Kind: session.KindUser, Text: input})
-		}
-
 		ag, err := agent.New(agent.Options{
 			Provider: provider,
 			Model:    modelID,
@@ -183,7 +175,7 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(
 			return
 		}
 
-		newMsgs, runErr := ag.Run(runCtx, input, &tuiSink{emit: emit, sess: deps.Session})
+		newMsgs, runErr := ag.Run(runCtx, input, &tuiSink{emit: emit, sess: deps.Session, modelID: modelID})
 		if len(newMsgs) > 0 {
 			history = newMsgs
 		}
@@ -199,12 +191,33 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(
 // (write-bytes-then-parse-the-markers-back-out) is gone — tool boundaries
 // arrive as structured events directly.
 //
-// sess is an optional append-only session log; when non-nil, tool boundaries,
-// errors, and usage events are mirrored to it so a post-mortem can see what
-// ran and what failed without the operator needing to scrape the TUI.
+// When sess is non-nil, the sink ALSO mirrors a narrow, safe subset of events
+// to the on-disk session log so a post-mortem can identify which tools ran
+// and which errored. Deliberately NOT mirrored (deferred until the
+// MaskingHook pipeline is reachable from this seam):
+//
+//   - tool arguments — may contain credentials/PII (e.g. db.query connection
+//     strings, http.api bearer tokens) and are not currently masked here.
+//   - tool observations / result text — masked by AfterToolCall hooks at the
+//     agent layer; the sink sees the pre-mask bytes, so writing them would
+//     re-open the v0.5 M-1 redaction gap on disk.
+//   - assistant prose / WriteToken streams — would balloon the JSONL and we
+//     have no end-of-turn boundary for the assistant text yet.
+//
+// modelID is captured so KindUsage events carry it via Event.Name, letting
+// `cloudy session list` populate the Model column from readMeta.
+//
+// lastTool stores the most recent tool name seen by BeginToolCall so the
+// matching EndToolCall error path can attribute the failure to a real tool
+// (not the placeholder "tool"). Today the agent iterates tool calls
+// sequentially (internal/agent/agent.go:363 — single goroutine, single loop),
+// so a scalar is sufficient; when parallel tool dispatch lands this needs to
+// move to a per-call-id map.
 type tuiSink struct {
-	emit func(AgentEvent)
-	sess *session.Session
+	emit     func(AgentEvent)
+	sess     *session.Session
+	modelID  string
+	lastTool string
 }
 
 func (s *tuiSink) WriteToken(tok string) { s.emit(AgentEvent{Token: tok}) }
@@ -212,27 +225,28 @@ func (s *tuiSink) WriteToken(tok string) { s.emit(AgentEvent{Token: tok}) }
 func (s *tuiSink) BeginToolCall(name, args string) {
 	s.emit(AgentEvent{ToolBegin: &toolBeginEvt{name: name, args: args}})
 	if s.sess != nil {
+		s.lastTool = name
 		_ = s.sess.Append(session.Event{
 			Kind: session.KindToolCall,
 			Name: name,
-			Args: json.RawMessage(args),
 		})
 	}
 }
 
 func (s *tuiSink) EndToolCall(observation string, err error) {
 	s.emit(AgentEvent{ToolEnd: &toolEndEvt{observation: observation, err: err}})
-	if s.sess == nil {
+	if s.sess == nil || err == nil {
+		// Success-path observations are intentionally not persisted — see
+		// the type doc on tuiSink. The corresponding KindToolCall (with the
+		// tool name) is already on disk, which is enough to see the agent's
+		// trajectory; the rich payload waits on the masker wiring.
 		return
 	}
-	if err != nil {
-		logSessionError(s.sess, "tool", err)
-		return
+	name := s.lastTool
+	if name == "" {
+		name = "tool"
 	}
-	_ = s.sess.Append(session.Event{
-		Kind: session.KindToolResult,
-		Text: observation,
-	})
+	logSessionError(s.sess, name, err)
 }
 
 func (s *tuiSink) RecordUsage(u llm.Usage) {
@@ -244,6 +258,7 @@ func (s *tuiSink) RecordUsage(u llm.Usage) {
 	if s.sess != nil {
 		_ = s.sess.Append(session.Event{
 			Kind: session.KindUsage,
+			Name: s.modelID,
 			Tokens: &session.Tokens{
 				Input:  u.InputTokens,
 				Output: u.OutputTokens,

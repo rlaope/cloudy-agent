@@ -234,6 +234,12 @@ func readMeta(id, path string, modTime time.Time) (Meta, error) {
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
+	// Match Replay's 4 MiB cap so a single oversized event (e.g. a future
+	// tool_result carrying a large blob) does not knock the whole session out
+	// of `cloudy session list`. Default 64 KiB is fragile once anything but
+	// the opening header lands in the file.
+	const maxLine = 4 * 1024 * 1024
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLine)
 	var lines []string
 	for scanner.Scan() {
 		line := scanner.Text()
