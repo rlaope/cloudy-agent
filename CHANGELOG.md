@@ -1,5 +1,148 @@
 # Changelog
 
+## v0.5.0 — Unreleased
+
+### Added — Tool surface (45 → 65, 10 → 12 groups)
+- **K8s workload tools (10)** — `list_deployments`, `list_statefulsets`,
+  `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`,
+  `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`.
+  Covers `apps/v1`, `batch/v1`, `networking.k8s.io/v1`, `autoscaling/v2`,
+  `policy/v1`. (#52)
+- **CRD-generic dynamic-client reader (2)** — `list_crds` and `list_cr`
+  via `client-go/dynamic` with `unstructured.Unstructured`. One pair of
+  tools unlocks Argo Rollouts, KEDA scaledobjects, cert-manager,
+  Sloth SLOs, Gateway API, ServiceMonitor, etc. without adding typed
+  bindings for each CRD. Dotted-path field projection so the LLM never
+  consumes a 50KB+ Unstructured object. (#61)
+- **Alertmanager + Prom rules reader (3)** — `alert.list_active`,
+  `alert.list_silences` (Alertmanager v2), `alert.list_rules`
+  (Prometheus rules API). Answers "what's actually paging right now". (#54)
+- **Argo CD reader (3)** — `gitops.argo_list_apps`, `argo_app_status`,
+  `argo_app_history`. Answers "what changed in the last 30 minutes". (#54)
+
+### Added — Skill playbooks (7 → 13)
+- **`incident-context`** — joins active alerts + recent Argo syncs + pod
+  restarts + Argo Rollouts/KEDA CR state into a fixed-shape situational
+  summary with explicit confidence rubric. (#54)
+- **`log-spike-correlation`**, **`trace-error-pivot`**,
+  **`db-latency-hunt`**, **`oom-killed-triage`**,
+  **`crashloop-deep-dive`** — five new SRE skills closing gaps that
+  every existing tool group needed a playbook for. (#45)
+
+### Added — TUI quality
+- **Typewriter playback** — assistant tokens buffer through a per-frame
+  rune drain instead of arriving in raw SSE bursts, so multi-token
+  responses read as a steady cadence regardless of upstream chunking.
+  Multi-byte UTF-8 (Korean, emoji) survives the playback boundary. (#42)
+- **Queued user-echo chip** — operator's submitted prompt lives as a
+  pre-rendered chip directly above the prompt until the agent's first
+  event of the turn, then slides into the stream history. Stacks
+  multiple submits while the agent is busy. (#45)
+- **Mouse wheel scrolls the transcript** instead of being hijacked by
+  the prompt's history navigation (was an arrow-key passthrough). (#48)
+- **Stream → prompt margin + braille spinner** so the reply does not
+  butt against the prompt border and the thinking row reads as alive
+  during silent gaps between tool results. (#48)
+- **System preamble teaches cloudy itself** — the LLM can now answer
+  meta-questions (`what is /setup?`, `what skills do you have?`) from
+  in-band context. Adds a skill catalog injection point so RAG-style
+  providers slot in cleanly later. (#47)
+- **Stream-inline `/setup` and `/login` wizards** with arrow-picker
+  multi-select plus an interactive model picker. (#41, #35)
+
+### Added — Self-update path
+- **In-process `cloudy update` / `/update`** atomically replaces the
+  running binary with the latest GitHub release. Verifies SHA-256
+  against the per-asset companion file before chmod/rename. (#44, #58)
+- **`install.sh` one-liner** with the same SHA-256 verification
+  contract; refuses HTML error pages, falls back to `shasum -a 256`
+  when `sha256sum` is unavailable. (#43, #58)
+
+### Added — Security hardening (v0.5 adversarial audit)
+- **`MaskingHook` wired into the agent data path** — `permission.Masker`
+  had been a published API since v0.4 with zero production call sites.
+  Connection strings with embedded passwords reached the LLM verbatim.
+  Now every tool observation passes through the active profile's
+  KeyRegex / ValueRegex redaction before the prompt is assembled.
+  (Audit M-1, #57)
+- **SPDY portforward exception documented + bounded** — the SPDY
+  upgrade POSTs outside `ReadOnlyRoundTripper`. Documented in
+  SAFETY.md, inline `SECURITY NOTE` at the construction site, and
+  `TestOpenPortForward_CallerAllowList` fails the build if a new
+  caller appears outside the audited allow-list. (Audit H-1, #57)
+- **Mutator-token blocklist extended** with `recreate`, `purge`,
+  `evict`, `cordon`, `drain`, `taint`, `truncate`, `terminate`.
+  (Audit M-2, #57)
+- **`~/.cloudy/profiles/` mode 0755 → 0700** — profile YAML can
+  disclose namespace allow/deny patterns and tool ACLs that benefit
+  from not being world-readable. (Audit M-3, #57)
+- **MySQL DSN URL-escapes the password** so `@:/?` in operator-
+  supplied credentials does not split the DSN at the wrong boundary.
+  (Audit L-1, #58)
+- **`~/.cloudy/secrets` writes sorted** so `git diff`-style review
+  and integrity tracking are stable across `Add()` calls. (Audit L-2, #58)
+- **`secrets.Load` warns on malformed lines** instead of silently
+  skipping — truncated API-key pastes no longer run cloudy
+  unauthenticated without notice. (Audit L-3, #58)
+- **Self-update SHA-256 verification** (already listed above) closes
+  the "asset corrupted in flight" gap that the 4-byte magic-byte
+  check missed. (Audit L-4, #58)
+
+### Added — Structure & observability
+- **`wiring.Rebuild` single owner** for the build-registry + replace
+  sequence; three callsites collapsed into one (`cmd/main.go`,
+  `setup/wizard.go`, `tui/setupchat.go`). Also fixed a latent bug
+  where the boot registry was under-calling `BuildRegistry` and
+  silently dropping Databases / Logs / Tracing / Pprof / NodeInspectors
+  until the first `/setup` ran. (#50)
+- **Startup tool-inventory banner** — at boot cloudy prints one stderr
+  line naming the wired groups plus skipped groups with their reason,
+  so operators do not need to type `/tools` to discover that, say, the
+  trace group was dropped because no Tempo/Jaeger endpoint was
+  discovered. (#49)
+- **`tui/app.go` split**: 1,770 → 1,203 LOC (−32%). Extracted splash /
+  playback / thinking / selfupdate / styles into sibling files (#51),
+  then agent_runner controller (`runAgent`, `pumpAgentCmd`,
+  `applyAgentEvent`, event types) (#59).
+- **`SkillProvider` interface scaffold** — `*skills.Skill` becomes
+  `StaticSkill` behind an interface so future `RAGSkill` / `RunbookSkill`
+  implementations slot in without changing every agent call site.
+  Zero behaviour change today. (#63, opens path to v0.6 RAG layer.)
+
+### Added — Tests
+- **`internal/cli/` 0 → 18 tests** covering dispatcher, `parseInto`,
+  `update`/`doctor` identity, `environmentChecks`. (#53)
+- **K8s workload tools 0 → 11 tests** covering each new list tool's
+  namespace filter / column rendering, plus a constructor-Name-drift
+  guard. (#55)
+- Plus regression tests for `Registry.Filter()` `llmAlias` carry-over
+  (#49), `MaskingHook` redaction contract (#57), `OpenPortForward`
+  caller allow-list (#57, #59), SHA-256 verification (#58),
+  `SkillProvider` round-trip (#63), and Tempo metrics-generator
+  service-graph + RED tools (#64).
+
+### Added — Tool surface from this PR set (open, not yet merged at time of writing)
+- **`trace.service_graph` + `trace.route_red`** via Tempo's
+  metrics-generator (`traces_service_graph_*`, `traces_spanmetrics_*`).
+  Service topology + per-route RED metrics without adding a new
+  backend. (#64)
+
+### Added — Docs
+- **`docs/RFC-RAG.md`** — pre-implementation PRD for the v0.6 RAG /
+  knowledge-base layer (`~/.cloudy/knowledge/`). Phased rollout
+  v0.6.0 → v0.7.0. (#60)
+- **`docs/SAFETY.md` honesty pass** — corrected the "4 enforcement
+  layers" claim to actual 3 enforcement + 2 hardening guards.
+  Removed `transport.CheckVerb` dead code referenced as a fictional
+  fourth layer. (#50, #56)
+
+### Fixed
+- **`Registry.Filter()` lost `llmAlias`** — skill-narrowed registries
+  silently broke sanitized-name resolution for Anthropic / OpenAI /
+  Google / Moonshot providers; recovered tool dispatches now resolve
+  through the alias map. (#49)
+- **`fix(ci): gofmt`** regression in the typewriter playback PR. (#46)
+
 ## v0.4.0 — 2026-05-17
 
 ### Added — Safety hardening
