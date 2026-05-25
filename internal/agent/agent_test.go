@@ -359,13 +359,13 @@ func TestRun_SkillFilterStillApplied_WithRegistryFn(t *testing.T) {
 		},
 	}
 
-	sk := &skills.Skill{AllowedTools: []string{"allowed.tool"}}
+	sk := &skills.Skill{Name: "filter-test", AllowedTools: []string{"allowed.tool"}}
 
 	ag, err := agent.New(agent.Options{
 		Provider:   capProv,
 		Model:      "stub-model",
 		RegistryFn: func() *tools.Registry { return reg },
-		Skill:      sk,
+		Skill:      skills.NewStaticSkill(sk),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
