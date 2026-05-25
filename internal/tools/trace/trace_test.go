@@ -52,6 +52,8 @@ func TestRegisterAll_TempoAndJaeger(t *testing.T) {
 	wantTools := []string{
 		"trace.tempo_get_trace",
 		"trace.tempo_search",
+		"trace.service_graph",
+		"trace.route_red",
 		"trace.jaeger_services",
 		"trace.jaeger_operations",
 		"trace.jaeger_search_traces",

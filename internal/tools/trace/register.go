@@ -69,6 +69,8 @@ func RegisterAll(reg *tools.Registry, c Clients, skipReasons []string) {
 		reg.MustRegister(
 			newTempoGetTraceTool(c.Tempo),
 			newTempoSearchTool(c.Tempo),
+			newTempoServiceGraphTool(c.Tempo),
+			newTempoRouteREDTool(c.Tempo),
 		)
 	}
 	if len(c.Jaeger) > 0 {

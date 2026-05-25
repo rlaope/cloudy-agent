@@ -158,7 +158,7 @@ TCP backends via in-process SPDY port-forward. A single
 `kubectl`-reachable cluster is enough — no VPN, no per-service
 ingress.
 
-### Tool surface (65 tools across 12 groups)
+### Tool surface (67 tools across 12 groups)
 
 Every probe the agent can call is a typed tool with a JSON schema.
 Tools self-register at boot — perf, eBPF, and DB groups also gate on
@@ -170,7 +170,7 @@ wired in your environment.
 | `k8s` (20) | `list_pods`, `list_nodes`, `list_namespaces`, `describe_pod`, `events`, `logs`, `top_pods`, `top_nodes`, `list_deployments`, `list_statefulsets`, `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`, `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`, `list_crds`, `list_cr` *(CRD-generic dynamic-client reader; unlocks Argo Rollouts, KEDA, cert-manager, Gateway API, Sloth SLOs, ServiceMonitor, etc. in one tool)* |
 | `prom` (4) | `query`, `query_range`, `label_values`, `series` |
 | `log` (7) | `loki_query_range`, `loki_labels`, `loki_label_values`, `loki_series`, `es_search`, `es_indices`, `es_cluster_health` |
-| `trace` (5) | `tempo_get_trace`, `tempo_search`, `jaeger_services`, `jaeger_operations`, `jaeger_search_traces` |
+| `trace` (7) | `tempo_get_trace`, `tempo_search`, `service_graph` *(Tempo metrics-generator service-graph edges)*, `route_red` *(Tempo metrics-generator per-route RED)*, `jaeger_services`, `jaeger_operations`, `jaeger_search_traces` |
 | `alert` (3) | `list_active`, `list_silences` *(Alertmanager v2)*, `list_rules` *(Prometheus rules API)* |
 | `gitops` (3) | `argo_list_apps`, `argo_app_status`, `argo_app_history` *(Argo CD v1 API)* |
 | `db` (18) | Postgres: `pg_version`, `pg_stat_activity`, `pg_stat_database`, `pg_stat_replication`, `pg_locks`, `pg_top_table_size`. MySQL: `mysql_version`, `mysql_processlist`, `mysql_global_status`, `mysql_global_variables`, `mysql_engine_innodb_status`, `mysql_top_table_size`. Redis: `redis_info`, `redis_dbsize`, `redis_scan`, `redis_inspect_key`, `redis_slowlog`, `redis_client_list` |

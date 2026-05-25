@@ -29,6 +29,7 @@ var canonicalToolNames = []string{
 	"log.loki_series", "log.es_search", "log.es_indices", "log.es_cluster_health",
 
 	"trace.tempo_get_trace", "trace.tempo_search",
+	"trace.service_graph", "trace.route_red",
 	"trace.jaeger_services", "trace.jaeger_operations", "trace.jaeger_search_traces",
 
 	"alert.list_active", "alert.list_silences", "alert.list_rules",
