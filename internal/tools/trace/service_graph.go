@@ -53,47 +53,68 @@ func newTempoServiceGraphTool(clients map[string]*TempoClient) tools.Tool {
 			if a.Limit > 500 {
 				a.Limit = 500
 			}
+			// C02 (v0.5 review): previously `if a.MinReqRate == 0 { a.MinReqRate = 0.1 }`
+			// collided "user explicitly passed 0 to disable" with "unset =
+			// use default". We now use a sentinel: < 0 means default,
+			// 0 is honoured as "no threshold", positives are clamped to
+			// the user value. Schema default stays at 0.1 for the
+			// non-explicit caller; the schema's `"default": 0.1` is
+			// purely descriptive — Go cannot distinguish unset from zero
+			// for plain `float64`, hence the < 0 sentinel.
 			if a.MinReqRate < 0 {
-				a.MinReqRate = 0
-			}
-			if a.MinReqRate == 0 {
 				a.MinReqRate = 0.1
 			}
 			until, since, err := resolveRange(a.Until, a.Since, 5*time.Minute)
 			if err != nil {
 				return tools.Observation{}, fmt.Errorf("trace.service_graph: %w", err)
 			}
+			// C03 (v0.5 review): rate window now derived from the
+			// resolved range instead of hardcoded `[5m]`. Widening
+			// since/until widens the rate window. See promRateWindow
+			// (route_red.go) for the ladder.
+			rateWindow := promRateWindow(until.Sub(since))
 			c, err := pickTempo(clients, a.Name)
 			if err != nil {
 				return tools.Observation{}, err
 			}
 
-			totalQ := `sum by (server, client) (rate(traces_service_graph_request_total[5m]))`
-			failedQ := `sum by (server, client) (rate(traces_service_graph_request_failed_total[5m]))`
+			totalQ := fmt.Sprintf(`sum by (server, client) (rate(traces_service_graph_request_total[%s]))`, rateWindow)
+			failedQ := fmt.Sprintf(`sum by (server, client) (rate(traces_service_graph_request_failed_total[%s]))`, rateWindow)
 
-			totals, rawTotal, err := queryTempoMetrics(ctx, c, totalQ, since, until)
+			totals, _, err := queryTempoMetrics(ctx, c, totalQ, since, until)
 			if err != nil {
 				return tools.Observation{}, fmt.Errorf("trace.service_graph: total: %w", err)
 			}
+			// Failed counter is tolerated as missing — many Tempo deployments
+			// have not populated it yet. We DO surface non-missing errors
+			// (parse failure, 5xx, auth) in the Raw payload so the operator
+			// sees why err_rate is 0 instead of inferring "no errors".
+			var failedQueryError string
 			failures, _, err := queryTempoMetrics(ctx, c, failedQ, since, until)
 			if err != nil {
-				// Some Tempo deployments may not have the failed counter populated yet;
-				// surface the edges without error rate rather than failing the whole call.
+				failedQueryError = err.Error()
 				failures = nil
 			}
 
 			edges := buildEdges(totals, failures, a.MinReqRate)
 			tbl, text := renderEdges(edges, a.Limit)
 
+			// C15 (v0.5 review): Raw used to include the full total_body
+			// matrix JSON for context bloat — the parsed `edges` already
+			// carries every datum the LLM needs. Drop the raw bytes.
+			raw := map[string]any{
+				"total_query":  totalQ,
+				"failed_query": failedQ,
+				"rate_window":  rateWindow,
+				"edges":        edges,
+			}
+			if failedQueryError != "" {
+				raw["failed_query_error"] = failedQueryError
+			}
 			return tools.Observation{
 				Text:  text,
 				Table: tbl,
-				Raw: map[string]any{
-					"total_query":  totalQ,
-					"failed_query": failedQ,
-					"total_body":   rawTotal,
-					"edges":        edges,
-				},
+				Raw:   raw,
 			}, nil
 		},
 	}.Build()
