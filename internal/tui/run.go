@@ -12,6 +12,7 @@ import (
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/llm"
 	"github.com/rlaope/cloudy/internal/permission"
+	"github.com/rlaope/cloudy/internal/session"
 	"github.com/rlaope/cloudy/internal/tools"
 	"github.com/rlaope/cloudy/internal/wiring"
 )
@@ -169,13 +170,17 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(
 			Profile:                  activeProfile,
 		})
 		if err != nil {
+			logSessionError(deps.Session, "agent.new", err)
 			emit(AgentEvent{Err: err, Done: true})
 			return
 		}
 
-		newMsgs, runErr := ag.Run(runCtx, input, &tuiSink{emit: emit})
+		newMsgs, runErr := ag.Run(runCtx, input, &tuiSink{emit: emit, sess: deps.Session, modelID: modelID})
 		if len(newMsgs) > 0 {
 			history = newMsgs
+		}
+		if runErr != nil {
+			logSessionError(deps.Session, "agent.run", runErr)
 		}
 		emit(AgentEvent{Done: true, Err: runErr})
 	}
@@ -185,18 +190,63 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(
 // bubbletea Update loop already understands. The previous indirection
 // (write-bytes-then-parse-the-markers-back-out) is gone — tool boundaries
 // arrive as structured events directly.
+//
+// When sess is non-nil, the sink ALSO mirrors a narrow, safe subset of events
+// to the on-disk session log so a post-mortem can identify which tools ran
+// and which errored. Deliberately NOT mirrored (deferred until the
+// MaskingHook pipeline is reachable from this seam):
+//
+//   - tool arguments — may contain credentials/PII (e.g. db.query connection
+//     strings, http.api bearer tokens) and are not currently masked here.
+//   - tool observations / result text — masked by AfterToolCall hooks at the
+//     agent layer; the sink sees the pre-mask bytes, so writing them would
+//     re-open the v0.5 M-1 redaction gap on disk.
+//   - assistant prose / WriteToken streams — would balloon the JSONL and we
+//     have no end-of-turn boundary for the assistant text yet.
+//
+// modelID is captured so KindUsage events carry it via Event.Name, letting
+// `cloudy session list` populate the Model column from readMeta.
+//
+// lastTool stores the most recent tool name seen by BeginToolCall so the
+// matching EndToolCall error path can attribute the failure to a real tool
+// (not the placeholder "tool"). Today the agent iterates tool calls
+// sequentially (internal/agent/agent.go:363 — single goroutine, single loop),
+// so a scalar is sufficient; when parallel tool dispatch lands this needs to
+// move to a per-call-id map.
 type tuiSink struct {
-	emit func(AgentEvent)
+	emit     func(AgentEvent)
+	sess     *session.Session
+	modelID  string
+	lastTool string
 }
 
 func (s *tuiSink) WriteToken(tok string) { s.emit(AgentEvent{Token: tok}) }
 
 func (s *tuiSink) BeginToolCall(name, args string) {
 	s.emit(AgentEvent{ToolBegin: &toolBeginEvt{name: name, args: args}})
+	if s.sess != nil {
+		s.lastTool = name
+		_ = s.sess.Append(session.Event{
+			Kind: session.KindToolCall,
+			Name: name,
+		})
+	}
 }
 
 func (s *tuiSink) EndToolCall(observation string, err error) {
 	s.emit(AgentEvent{ToolEnd: &toolEndEvt{observation: observation, err: err}})
+	if s.sess == nil || err == nil {
+		// Success-path observations are intentionally not persisted — see
+		// the type doc on tuiSink. The corresponding KindToolCall (with the
+		// tool name) is already on disk, which is enough to see the agent's
+		// trajectory; the rich payload waits on the masker wiring.
+		return
+	}
+	name := s.lastTool
+	if name == "" {
+		name = "tool"
+	}
+	logSessionError(s.sess, name, err)
 }
 
 func (s *tuiSink) RecordUsage(u llm.Usage) {
@@ -205,4 +255,32 @@ func (s *tuiSink) RecordUsage(u llm.Usage) {
 		Output: u.OutputTokens,
 		USD:    u.CostUSD,
 	}})
+	if s.sess != nil {
+		_ = s.sess.Append(session.Event{
+			Kind: session.KindUsage,
+			Name: s.modelID,
+			Tokens: &session.Tokens{
+				Input:  u.InputTokens,
+				Output: u.OutputTokens,
+				USD:    u.CostUSD,
+			},
+		})
+	}
+}
+
+// logSessionError appends a KindError event to sess when sess and err are
+// both non-nil and err is not a plain context cancellation (skipping ctx
+// cancels keeps the log signal-heavy when the operator just hit Ctrl+C).
+func logSessionError(sess *session.Session, name string, err error) {
+	if sess == nil || err == nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	_ = sess.Append(session.Event{
+		Kind: session.KindError,
+		Name: name,
+		Text: err.Error(),
+	})
 }
