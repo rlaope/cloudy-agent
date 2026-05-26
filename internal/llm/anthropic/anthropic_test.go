@@ -327,31 +327,9 @@ func TestBuildRequest_ToolUseEmptyInput(t *testing.T) {
 	}
 }
 
-// TestNormalizeToolInput exercises the helper directly so the rule set is
-// pinned at the unit level, not only through buildRequest.
-func TestNormalizeToolInput(t *testing.T) {
-	cases := []struct {
-		name string
-		in   json.RawMessage
-		want string
-	}{
-		{"nil", nil, "{}"},
-		{"empty", json.RawMessage{}, "{}"},
-		{"empty_object", json.RawMessage(`{}`), "{}"},
-		{"json_null", json.RawMessage(`null`), "{}"},
-		{"whitespace", json.RawMessage("   \t\n"), "{}"},
-		{"invalid_json", json.RawMessage(`{`), "{}"},
-		{"array", json.RawMessage(`[]`), "{}"},
-		{"string_literal", json.RawMessage(`"x"`), "{}"},
-		{"populated_object", json.RawMessage(`{"a":1}`), `{"a":1}`},
-		{"object_with_lead_space", json.RawMessage(`  {"a":1}`), `  {"a":1}`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := string(normalizeToolInput(tc.in))
-			if got != tc.want {
-				t.Errorf("normalizeToolInput(%q) = %q, want %q", string(tc.in), got, tc.want)
-			}
-		})
-	}
-}
+// Note: the unit-level coverage that used to live here (TestNormalizeToolInput
+// against the package-local shim) now lives in internal/llm/args_test.go's
+// TestNormalizeArguments — the shim was removed in this PR so anthropic and
+// every other provider share the same exported helper. The boundary tests in
+// this file (TestBuildRequest_ToolUseEmptyInput) still exercise the helper
+// end-to-end through the Anthropic wire format.
