@@ -88,4 +88,64 @@ func TestObservationText(t *testing.T) {
 			t.Errorf("table header missing; got:\n%s", got)
 		}
 	})
+
+	// Review follow-up: rows with fewer cells than headers used to emit a
+	// short markdown row that downstream renderers misaligned. Now we pad
+	// to len(Headers) with empty cells.
+	t.Run("pads_short_rows", func(t *testing.T) {
+		obs := tools.Observation{
+			Table: &render.Table{
+				Headers: []string{"A", "B", "C"},
+				Rows: [][]string{
+					{"a", "b"}, // 2 cells under a 3-column header
+					{},         // 0 cells
+				},
+			},
+		}
+		got := observationText(obs)
+		for _, want := range []string{
+			"| a | b |  |",
+			"|  |  |  |",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("missing padded row %q in:\n%s", want, got)
+			}
+		}
+	})
+
+	// Review follow-up: a pre-existing `\|` in cell content used to
+	// double-escape into `\\|`, splitting the cell at the resulting
+	// terminator. Backslash is now escaped before the pipe.
+	t.Run("backslash_pipe_not_double_escaped", func(t *testing.T) {
+		obs := tools.Observation{
+			Table: &render.Table{
+				Headers: []string{"X"},
+				Rows:    [][]string{{`a\|b`}},
+			},
+		}
+		got := observationText(obs)
+		// Expected on-disk form: `\\` then `\|` → 4 characters `\\\|`
+		// surrounding `a` and `b`.
+		want := `a\\\|b`
+		if !strings.Contains(got, want) {
+			t.Errorf("expected the cell to escape backslash before pipe (%q), got:\n%s", want, got)
+		}
+	})
+
+	// Review follow-up: obs.Text ending in `\n` joined with `\n\n` + table
+	// previously yielded three consecutive newlines and rendered a blank
+	// paragraph above the table. Trailing newlines are trimmed.
+	t.Run("trims_trailing_newlines", func(t *testing.T) {
+		obs := tools.Observation{
+			Text: "3 node(s)\n\n",
+			Table: &render.Table{
+				Headers: []string{"NAME"},
+				Rows:    [][]string{{"node-a"}},
+			},
+		}
+		got := observationText(obs)
+		if strings.Contains(got, "\n\n\n") {
+			t.Errorf("expected at most two consecutive newlines after trim; got:\n%s", got)
+		}
+	})
 }

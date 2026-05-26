@@ -531,7 +531,11 @@ func observationText(obs tools.Observation) string {
 	if text == "" {
 		return tbl
 	}
-	return text + "\n\n" + tbl
+	// Trim trailing newlines on text so the join doesn't produce a triple
+	// newline (text "3 node(s)\n" + "\n\n" + tbl → blank paragraph above
+	// the table in glamour output and a misleading structural gap in the
+	// LLM-visible payload).
+	return strings.TrimRight(text, "\n") + "\n\n" + tbl
 }
 
 // renderMarkdownTable produces a GitHub-flavored markdown table from a
@@ -565,9 +569,15 @@ func renderMarkdownTable(t *render.Table) string {
 	sb.WriteByte('\n')
 	for _, row := range t.Rows {
 		sb.WriteByte('|')
-		for j, cell := range row {
-			if j >= len(t.Headers) {
-				break
+		for i := 0; i < len(t.Headers); i++ {
+			// Pad short rows with empty cells so column alignment under
+			// the separator rule stays consistent. A row with fewer
+			// cells than headers (or zero cells) otherwise emits a
+			// malformed markdown row that downstream renderers split or
+			// align incorrectly.
+			var cell string
+			if i < len(row) {
+				cell = row[i]
 			}
 			sb.WriteByte(' ')
 			sb.WriteString(escapeMarkdownCell(cell))
@@ -579,8 +589,12 @@ func renderMarkdownTable(t *render.Table) string {
 }
 
 // escapeMarkdownCell replaces characters that would break a markdown
-// table row (the cell separator and newlines).
+// table row (the cell separator and newlines). Backslashes are escaped
+// first so a pre-existing `\|` in cell content doesn't double-escape
+// into `\\|` (which a markdown parser would read as literal-backslash
+// followed by a cell terminator, splitting the cell in two).
 func escapeMarkdownCell(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "|", "\\|")
 	return s

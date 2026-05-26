@@ -98,3 +98,35 @@ func TestStreamModel_NoColor_StaysRaw(t *testing.T) {
 		t.Errorf("noColor mode dropped raw markdown markers:\n%s", s.content.String())
 	}
 }
+
+// TestStreamModel_GlamourRerendersOnResize pins the new behaviour where a
+// WindowSizeMsg arriving AFTER the assistant tokens have stopped
+// streaming re-renders the in-flight mdBuf at the new width — otherwise
+// the visible wrap stayed at the old viewport's width until the next
+// token or chrome event triggered drainPending. Without this the
+// operator who resizes their terminal mid-conversation sees a
+// stale-looking last message.
+func TestStreamModel_GlamourRerendersOnResize(t *testing.T) {
+	s := newStreamModel(false)
+	updated, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = updated
+
+	updated, _ = s.Update(streamTokenMsg("Some assistant prose for the resize check."))
+	s = updated
+	s.drainPending()
+	originalTail := s.mdTailLen
+	if originalTail == 0 {
+		t.Fatal("expected mdTailLen to be set after the first flush")
+	}
+
+	// Tokens have stopped (no further streamTokenMsg). Now resize.
+	updated, _ = s.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
+	s = updated
+
+	if s.mdTailLen == 0 {
+		t.Fatal("resize while mdBuf is non-empty should leave a fresh rendered tail")
+	}
+	if s.mdTailLen == originalTail {
+		t.Errorf("expected tail length to change at the new wrap width (was %d, still %d)", originalTail, s.mdTailLen)
+	}
+}

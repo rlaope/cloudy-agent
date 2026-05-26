@@ -291,6 +291,25 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 			)
 			if err == nil {
 				s.mdRenderer = r
+				// If an assistant message is currently in flight,
+				// re-render its tail under the new width immediately so
+				// the visible wrap matches the new viewport — otherwise
+				// the operator sees stale wrap until the next token /
+				// chrome event triggers a re-render.
+				if s.mdBuf.Len() > 0 {
+					rendered := s.renderAssistantTail(s.mdBuf.String())
+					cur := s.content.String()
+					if s.mdTailLen > 0 && len(cur) >= s.mdTailLen {
+						cur = cur[:len(cur)-s.mdTailLen]
+					}
+					s.content.Reset()
+					s.content.WriteString(cur)
+					s.content.WriteString(rendered)
+					s.mdTailLen = len(rendered)
+					if s.ready {
+						s.vp.SetContent(s.content.String())
+					}
+				}
 			}
 		}
 
