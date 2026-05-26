@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -189,5 +190,107 @@ func TestStream_4xxError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "401") {
 		t.Errorf("error should contain 401, got: %v", err)
+	}
+}
+
+// TestStream_ToolCallNoInput_NormalizedToEmptyObject covers a parameter-less
+// tool call (e.g. k8s_list_nodes). The Anthropic stream sends content_block_
+// start → content_block_stop with NO input_json_delta in between, leaving the
+// args buffer empty. The previous behavior left tc.Arguments as `RawMessage(nil)`,
+// which then caused buildRequest's `omitempty` on Input to drop the field on
+// the next turn — and Anthropic returns HTTP 400 with
+// `messages.<n>.content.<i>.tool_use.input: Field required`.
+func TestStream_ToolCallNoInput_NormalizedToEmptyObject(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, "event: content_block_start")
+		fmt.Fprintln(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call1","name":"k8s_list_nodes"}}`)
+		fmt.Fprintln(w, "")
+		fmt.Fprintln(w, "event: content_block_stop")
+		fmt.Fprintln(w, `data: {"type":"content_block_stop","index":0}`)
+		fmt.Fprintln(w, "")
+		fmt.Fprintln(w, "event: message_stop")
+		fmt.Fprintln(w, `data: {"type":"message_stop"}`)
+	}))
+	defer srv.Close()
+
+	p := redirectProvider("test-key", srv.URL)
+	ch, err := p.Stream(context.Background(), llm.Request{
+		Model:    "claude-3-5-sonnet-20241022",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "list nodes"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream error: %v", err)
+	}
+	var toolChunks []*llm.ToolCall
+	for chunk := range ch {
+		if chunk.Err != nil {
+			t.Fatalf("chunk error: %v", chunk.Err)
+		}
+		if chunk.ToolCall != nil {
+			toolChunks = append(toolChunks, chunk.ToolCall)
+		}
+		if chunk.Done {
+			break
+		}
+	}
+	if len(toolChunks) != 1 {
+		t.Fatalf("expected 1 tool chunk, got %d", len(toolChunks))
+	}
+	if string(toolChunks[0].Arguments) != "{}" {
+		t.Errorf("Arguments = %q, want %q (empty input must be normalized to {} so the next turn does not 400)", string(toolChunks[0].Arguments), "{}")
+	}
+}
+
+// TestBuildRequest_ToolUseEmptyInput verifies the outbound request shape when
+// re-serializing an assistant message that includes a parameter-less tool
+// call. The `input` field must be present as `{}`, not omitted, regardless of
+// how Arguments got set upstream.
+func TestBuildRequest_ToolUseEmptyInput(t *testing.T) {
+	cases := []struct {
+		name string
+		args json.RawMessage
+	}{
+		{"nil_args", nil},
+		{"empty_args", json.RawMessage{}},
+		{"already_empty_obj", json.RawMessage(`{}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := llm.Request{
+				Model: "claude-3-5-sonnet-20241022",
+				Messages: []llm.Message{
+					{Role: llm.RoleUser, Content: "go"},
+					{
+						Role:      llm.RoleAssistant,
+						ToolCalls: []llm.ToolCall{{ID: "call1", Name: "k8s_list_nodes", Arguments: tc.args}},
+					},
+					{Role: llm.RoleTool, ToolCallID: "call1", Content: "ok"},
+				},
+			}
+			body, err := buildRequest(req)
+			if err != nil {
+				t.Fatalf("buildRequest: %v", err)
+			}
+			if !strings.Contains(string(body), `"input":{}`) {
+				t.Errorf("body missing `\"input\":{}` (parameter-less tool_use must ship an empty object, not be omitted):\n%s", body)
+			}
+			// Cross-check: parse the body and assert the tool_use block has Input.
+			var got struct {
+				Messages []struct {
+					Role    string `json:"role"`
+					Content json.RawMessage
+				} `json:"messages"`
+			}
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			// Find the assistant message and confirm its content block stream
+			// contains an `"input":{}` substring — already done above, this
+			// branch just guards that the body is parseable JSON at all.
+			if len(got.Messages) < 2 {
+				t.Fatalf("want >=2 messages in body, got %d", len(got.Messages))
+			}
+		})
 	}
 }

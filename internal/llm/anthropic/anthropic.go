@@ -192,11 +192,23 @@ func buildRequest(req llm.Request) ([]byte, error) {
 					blocks = append(blocks, antContentBlock{Type: "text", Text: m.Content})
 				}
 				for _, tc := range m.ToolCalls {
+					// Anthropic requires tool_use.input to be present (an empty
+					// object is fine; the field itself is not optional). Our
+					// antContentBlock.Input is `json:"input,omitempty"`, which
+					// drops the field when Arguments is nil/empty — that is
+					// exactly the shape models emit for parameter-less tools
+					// like k8s_list_nodes, and the API responds with
+					// `messages.<n>.content.<i>.tool_use.input: Field required`
+					// (HTTP 400). Normalize to `{}` so the field always ships.
+					input := tc.Arguments
+					if len(input) == 0 {
+						input = json.RawMessage("{}")
+					}
 					blocks = append(blocks, antContentBlock{
 						Type:  "tool_use",
 						ID:    tc.ID,
 						Name:  tc.Name,
-						Input: tc.Arguments,
+						Input: input,
 					})
 				}
 				msgs = append(msgs, antMessage{Role: "assistant", Content: blocks})
@@ -304,7 +316,16 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 				continue
 			}
 			if tc, ok := toolBlocks[ev.Index]; ok {
-				tc.Arguments = json.RawMessage(argsBuf[ev.Index])
+				// Parameter-less tool calls emit no input_json_delta events,
+				// so argsBuf[ev.Index] is nil here. Normalize to `{}` so the
+				// rest of cloudy never has to special-case empty arguments
+				// (and the request re-serializer at buildRequest does not
+				// drop the input field on the next turn).
+				args := argsBuf[ev.Index]
+				if len(args) == 0 {
+					args = []byte("{}")
+				}
+				tc.Arguments = json.RawMessage(args)
 				cp := *tc
 				ch <- llm.Chunk{ToolCall: &cp}
 				delete(toolBlocks, ev.Index)
