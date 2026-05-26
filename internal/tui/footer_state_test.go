@@ -51,11 +51,12 @@ func TestFooterClusterState(t *testing.T) {
 	}
 }
 
-// TestMouseCaptureDisabled pins the env-var parsing for CLOUDY_NO_MOUSE so a
-// future shape change ("only 1 is on" vs "any value is on") is caught.
-// Treating `0`/`false`/`""` as off keeps the common shell idioms working
-// without a parser.
-func TestMouseCaptureDisabled(t *testing.T) {
+// TestFullscreenRequested pins the env-var parsing for CLOUDY_FULLSCREEN
+// so a future shape change ("only 1 is on" vs "any value is on") is
+// caught. Treating `0`/`false`/`""` as off keeps the common shell idioms
+// working without a parser. Default (env unset) returns false — cloudy
+// boots in terminal-native mode so drag-to-select works.
+func TestFullscreenRequested(t *testing.T) {
 	cases := []struct {
 		val  string
 		want bool
@@ -84,9 +85,9 @@ func TestMouseCaptureDisabled(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run("val="+tc.val, func(t *testing.T) {
-			t.Setenv("CLOUDY_NO_MOUSE", tc.val)
-			if got := mouseCaptureDisabled(); got != tc.want {
-				t.Errorf("mouseCaptureDisabled with %q = %v, want %v", tc.val, got, tc.want)
+			t.Setenv("CLOUDY_FULLSCREEN", tc.val)
+			if got := fullscreenRequested(); got != tc.want {
+				t.Errorf("fullscreenRequested with %q = %v, want %v", tc.val, got, tc.want)
 			}
 		})
 	}

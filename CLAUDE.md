@@ -54,10 +54,6 @@ Read-only multi-cluster SRE monitoring AI CLI. Go module rooted at
 - Session log: `~/.cloudy/logs/<id>.jsonl`. `tail -1 $(ls -t … | head -1)`
   surfaces the latest agent error verbatim — that's how the Anthropic
   `tool_use.input: Field required` 400 was diagnosed.
-- TUI mouse capture (`tea.WithMouseCellMotion`) breaks terminal
-  drag-to-select. `CLOUDY_NO_MOUSE=1 cloudy` opts out (or `=true`/`=yes`;
-  case + whitespace tolerant); trade-off is no in-app wheel scroll
-  (use PgUp/PgDn / arrows).
 
 ## Korean responses
 
