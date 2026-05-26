@@ -64,20 +64,24 @@ func TestStreamModel_TokenBatching_CoalescesBurst(t *testing.T) {
 }
 
 // TestStreamModel_FlushTick_DrainsPending checks the other end of the
-// pipeline: when the flush tick arrives, every byte that piled up in
-// pendingTokens lands in content and the viewport is refreshed. Also
-// resets flushScheduled so subsequent token bursts re-arm the tick.
+// pipeline: when the flush tick arrives AND mdBuf has crossed a
+// sentence boundary, the committed prefix lands in content and the
+// viewport refreshes. Mid-sentence bursts do NOT commit under the
+// sentence-batched streaming model — that path is covered by
+// TestStreamModel_SentenceBatchedCommit (stream_glamour_test.go).
 func TestStreamModel_FlushTick_DrainsPending(t *testing.T) {
 	s := newStreamModel(true)
 	s, _ = s.Update(windowMsg())
 
 	s, _ = s.Update(streamTokenMsg("partial "))
-	s, _ = s.Update(streamTokenMsg("answer"))
+	// Newline is an unambiguous sentence boundary, so the flush tick
+	// commits as soon as it lands in mdBuf.
+	s, _ = s.Update(streamTokenMsg("answer.\n"))
 
 	s, _ = s.Update(streamFlushTickMsg{})
 
-	if got := s.content.String(); got != "partial answer" {
-		t.Errorf("flush should drain pending into content; got %q", got)
+	if got := s.content.String(); !strings.Contains(got, "partial answer.") {
+		t.Errorf("flush should drain the committed sentence into content; got %q", got)
 	}
 	if s.pendingTokens.Len() != 0 {
 		t.Error("pendingTokens should be empty after flush")
