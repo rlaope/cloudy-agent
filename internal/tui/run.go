@@ -52,29 +52,33 @@ func Run(ctx context.Context, deps Deps) error {
 	deps.SwapModel = makeSwapModel(ref, deps.Model)
 
 	m := NewModel(deps)
-	// WithMouseCellMotion captures wheel events as tea.MouseMsg so the
-	// stream viewport can scroll. Without it the alt-screen terminal
-	// emulator translates wheel into ↑/↓ key sequences, which the
-	// prompt textarea interprets as history navigation — the opposite
-	// of what the operator means when they scroll up to read history.
+	// CLOUDY_NO_MOUSE=1 puts cloudy in "terminal-native mode": both
+	// bubble tea's mouse capture (WithMouseCellMotion) AND the alt-screen
+	// switch (WithAltScreen) are skipped. The alt-screen switch on its own
+	// breaks click-and-drag selection on some terminals (operators report
+	// "cloudy drag doesn't work but Claude Code does" — Claude Code runs
+	// inline). Pairing the two opt-outs makes the behaviour match Claude
+	// Code's: assistant prose scrolls into the terminal's scrollback and
+	// native drag-to-copy works.
 	//
-	// Mouse capture also intercepts drag, which disables the terminal's
-	// native click-and-drag text selection — annoying when the operator
-	// wants to copy a chunk of output. CLOUDY_NO_MOUSE=1 opts out so
-	// drag-to-select works at the cost of in-app wheel scrolling (use
-	// PgUp/PgDn or arrow keys instead).
-	opts := []tea.ProgramOption{tea.WithAltScreen()}
-	if !mouseCaptureDisabled() {
-		opts = append(opts, tea.WithMouseCellMotion())
+	// Trade-off in native mode: no in-app wheel scroll (use PgUp/PgDn or
+	// arrow keys); the persistent header/footer don't stay pinned. We
+	// keep alt-screen on by default because the full-screen TUI is
+	// cloudy's primary UX.
+	opts := []tea.ProgramOption{}
+	if mouseCaptureDisabled() {
+		// Native terminal mode — nothing fancy added.
+	} else {
+		opts = append(opts, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	}
 	p := tea.NewProgram(m, opts...)
 	_, err := p.Run()
 	return err
 }
 
-// mouseCaptureDisabled reports whether the operator has opted out of bubble
-// tea's mouse capture via CLOUDY_NO_MOUSE. The value is trimmed and matched
-// case-insensitively so common shell shapes (=1, =true, =yes, = false with
+// mouseCaptureDisabled reports whether the operator opted out of bubble
+// tea's mouse + alt-screen machinery via CLOUDY_NO_MOUSE. Trimmed and
+// case-insensitive so common shell shapes (=1, =true, =yes, = false with
 // a stray paste-space) all behave the way the operator expects.
 func mouseCaptureDisabled() bool {
 	v := strings.TrimSpace(os.Getenv("CLOUDY_NO_MOUSE"))
