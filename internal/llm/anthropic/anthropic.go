@@ -206,7 +206,7 @@ func buildRequest(req llm.Request) ([]byte, error) {
 					//   - any other non-object JSON or partial garbage that
 					//     could land in args via a stream truncation or a
 					//     replay of corrupted history
-					input := normalizeToolInput(tc.Arguments)
+					input := llm.NormalizeArguments(tc.Arguments)
 					blocks = append(blocks, antContentBlock{
 						Type:  "tool_use",
 						ID:    tc.ID,
@@ -322,8 +322,10 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 				// Normalize parameter-less / null / truncated args to `{}` so
 				// the rest of cloudy never has to special-case the empty form
 				// and the next-turn buildRequest cannot ship a malformed
-				// tool_use block. See normalizeToolInput for the full rule.
-				tc.Arguments = normalizeToolInput(argsBuf[ev.Index])
+				// tool_use block. See llm.NormalizeArguments for the full
+				// rule (this seam is what produced `tool_use.input: Field
+				// required` 400s pre-v0.5).
+				tc.Arguments = llm.NormalizeArguments(argsBuf[ev.Index])
 				cp := *tc
 				ch <- llm.Chunk{ToolCall: &cp}
 				delete(toolBlocks, ev.Index)
@@ -353,34 +355,4 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 		return
 	}
 	ch <- llm.Chunk{Done: true}
-}
-
-// normalizeToolInput returns a JSON object suitable for Anthropic's
-// tool_use.input field. The API requires the field to be present and to be
-// a JSON object; a bare `len == 0` check would still let the following
-// non-object shapes through and 400 the next turn:
-//
-//   - JSON `null` (4 bytes, non-empty)
-//   - whitespace-only payloads ("   ")
-//   - partial / truncated JSON ("{\"name\":")
-//   - any other non-object literal (numbers, strings, arrays)
-//
-// We collapse all of those to `{}`. Already-valid JSON objects are returned
-// unchanged. Non-object but otherwise valid JSON (e.g. an array or a string
-// literal) is also collapsed — Anthropic would reject those on the wire and
-// `{}` is the only safe canonical fallback this layer can produce without
-// guessing at the model's intent.
-func normalizeToolInput(raw json.RawMessage) json.RawMessage {
-	const empty = "{}"
-	if len(raw) == 0 {
-		return json.RawMessage(empty)
-	}
-	if !json.Valid(raw) {
-		return json.RawMessage(empty)
-	}
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return json.RawMessage(empty)
-	}
-	return raw
 }

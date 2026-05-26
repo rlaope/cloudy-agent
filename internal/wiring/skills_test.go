@@ -114,3 +114,82 @@ func TestSkillToolRefs_CatchesUnknown(t *testing.T) {
 		t.Errorf("error should name the unknown tool; got: %v", err)
 	}
 }
+
+// TestSkillToolRefs_SuppressesSkippedGroups pins the noise-reduction rule
+// that landed alongside this PR: built-in skills routinely reference tools
+// in groups that may be skipped on the operator's environment (no Loki, no
+// Tempo, no Argo, …). Surfacing those as validation errors on every startup
+// is wall-of-text noise the operator cannot act on; the skipped-group banner
+// already says the group was dropped.
+//
+// User typos in the SAME tool ('k8s' group is wired, so `k8s.fake_tool` is
+// still a real bug) must continue to surface. That asymmetry is the whole
+// point of this rule.
+func TestSkillToolRefs_SuppressesSkippedGroups(t *testing.T) {
+	t.Parallel()
+
+	reg := skills.New([]*skills.Skill{
+		{
+			Name:         "incident-context",
+			Description:  "shared infra skill that wants alerts + gitops",
+			AllowedTools: []string{"alert.list_active", "gitops.argo_list_apps"},
+			SystemPrompt: "irrelevant",
+		},
+		{
+			Name:         "user-typo",
+			Description:  "user skill with a real typo in a wired group",
+			AllowedTools: []string{"k8s.fake_tool"},
+			SystemPrompt: "irrelevant",
+		},
+	})
+
+	tr := tools.New()
+	tr.MustRegister(stubTool{name: "k8s.list_pods"})
+	// alert + gitops are NOT registered; declare them skipped so the
+	// validator should keep quiet about `alert.list_active` and
+	// `gitops.argo_list_apps` while still flagging the k8s typo.
+	tr.MarkSkipped("alert", "no Alertmanager endpoint configured")
+	tr.MarkSkipped("gitops", "no Argo CD endpoint configured")
+
+	err := wiring.ValidateSkillToolRefs(reg, tr)
+	if err == nil {
+		t.Fatal("expected validation error for k8s.fake_tool; got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "k8s.fake_tool") {
+		t.Errorf("expected the k8s typo to surface; got: %s", msg)
+	}
+	for _, suppressed := range []string{"alert.list_active", "gitops.argo_list_apps"} {
+		if strings.Contains(msg, suppressed) {
+			t.Errorf("expected tool %q in a skipped group to be suppressed; got: %s", suppressed, msg)
+		}
+	}
+}
+
+// TestSkillToolRefs_SuppressesSubGroupSkips covers the case where a single
+// tool group registers tools under one prefix (e.g. `perf.*`) but calls
+// MarkSkipped with sub-group keys (`perf-pprof`, `perf-v8`, `perf-linux`).
+// A naive `skipped[groupPrefix(toolName)]` lookup misses those — the tool's
+// prefix is `perf` while the skip key is `perf-pprof`. The suppression rule
+// must understand the sub-group shape or the wall-of-warnings comes back
+// for environments that skipped one of the perf probes.
+func TestSkillToolRefs_SuppressesSubGroupSkips(t *testing.T) {
+	t.Parallel()
+
+	reg := skills.New([]*skills.Skill{{
+		Name:         "uses-perf-tools",
+		Description:  "skill that references perf tools whose probes were skipped",
+		AllowedTools: []string{"perf.go_pprof_cpu", "perf.linux_perf_record"},
+		SystemPrompt: "irrelevant",
+	}})
+
+	tr := tools.New()
+	// No perf tools registered. Skip keys mirror real
+	// internal/tools/perf/register.go behaviour.
+	tr.MarkSkipped("perf-pprof", "no pprof endpoints configured")
+	tr.MarkSkipped("perf-linux", "perf requires linux, host is darwin")
+
+	if err := wiring.ValidateSkillToolRefs(reg, tr); err != nil {
+		t.Fatalf("expected sub-group skipped refs to be suppressed, got: %v", err)
+	}
+}

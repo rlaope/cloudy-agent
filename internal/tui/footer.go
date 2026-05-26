@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -98,4 +99,84 @@ func orUnconfigured(s string) string {
 		return footerStateUnconfigured
 	}
 	return s
+}
+
+// footerClusterState renders the state segment from the configured cluster
+// list. The rule:
+//
+//   - 0 clusters and no current-ctx fallback → "no set-up"
+//   - 1 cluster → just the name (e.g. "prod")
+//   - N>1 clusters → "<default> +<N-1>" (e.g. "prod +2")
+//
+// defaultCtx is used as a single-element fallback when Contexts is empty —
+// for users who never ran the setup wizard but have a kubeconfig
+// current-context, we still want the footer to say which cluster they hit
+// rather than the bland "set-up done" placeholder it used to show.
+func footerClusterState(contexts []string, defaultCtx string) string {
+	names := dedupe(nonEmpty(contexts))
+	if len(names) == 0 {
+		if defaultCtx != "" {
+			return defaultCtx
+		}
+		return footerStateUnconfigured
+	}
+	if len(names) == 1 {
+		return names[0]
+	}
+	primary := names[0]
+	matched := false
+	if defaultCtx != "" {
+		// If the kubeconfig current-context is one of the configured ones,
+		// surface it as the headline so the footer matches what tools
+		// without an explicit `context` argument will target.
+		for _, n := range names {
+			if n == defaultCtx {
+				primary = defaultCtx
+				matched = true
+				break
+			}
+		}
+	}
+	// If defaultCtx is set but does NOT appear in the configured list, the
+	// kubeconfig current-context is steering tools to a cluster the user
+	// did not configure here. Surface it explicitly so the footer cannot
+	// silently lie about which cluster bare-word tool calls hit.
+	if defaultCtx != "" && !matched {
+		return fmt.Sprintf("%s* (configured: %s +%d)", defaultCtx, names[0], len(names)-1)
+	}
+	return fmt.Sprintf("%s +%d", primary, len(names)-1)
+}
+
+// nonEmpty returns a copy of in with empty strings removed.
+func nonEmpty(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// dedupe returns a copy of in with duplicate entries removed, preserving
+// first-seen order. Without this a kubeconfig that merged the same context
+// twice (or a copy-paste in cloudy.yaml) would render `prod +1` and imply
+// the agent talks to two distinct clusters when it only has one.
+func dedupe(in []string) []string {
+	if len(in) <= 1 {
+		return in
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }

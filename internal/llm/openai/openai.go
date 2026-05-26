@@ -197,8 +197,11 @@ func buildRequest(req llm.Request) ([]byte, error) {
 				ID:   tc.ID,
 				Type: "function",
 				Function: oaiToolFunction{
-					Name:      tc.Name,
-					Arguments: string(tc.Arguments),
+					Name: tc.Name,
+					// Normalize so parameter-less / null / partial-JSON
+					// payloads ship as the canonical empty object instead of
+					// "" / "null" — see llm.NormalizeArguments for the rule.
+					Arguments: string(llm.NormalizeArguments(tc.Arguments)),
 				},
 			})
 		}
@@ -268,6 +271,10 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 		if data == "[DONE]" {
 			for _, tc := range toolAccum {
 				cp := *tc
+				// Parameter-less / null / partial-JSON accumulations get
+				// canonicalised here so downstream cloudy state and the
+				// next-turn request both see a valid empty object.
+				cp.Arguments = llm.NormalizeArguments(cp.Arguments)
 				ch <- llm.Chunk{ToolCall: &cp}
 			}
 			ch <- llm.Chunk{Done: true}
@@ -331,6 +338,7 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 	// Flush any accumulated tool calls if stream ended without [DONE].
 	for _, tc := range toolAccum {
 		cp := *tc
+		cp.Arguments = llm.NormalizeArguments(cp.Arguments)
 		ch <- llm.Chunk{ToolCall: &cp}
 	}
 	ch <- llm.Chunk{Done: true}

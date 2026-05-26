@@ -42,6 +42,12 @@ type Deps struct {
 	InitialCtx string
 	// InitialNS is the initial namespace (best-effort).
 	InitialNS string
+	// Contexts is the full list of kubeconfig contexts configured for this
+	// session (cfg.Contexts when set; otherwise a single-element slice
+	// containing InitialCtx, or empty when nothing is wired). The footer
+	// renders this as `<default> +<N-1>` so the operator can see at a
+	// glance which cluster(s) the agent talks to.
+	Contexts []string
 	// FirstRun is true when no config file exists yet, causing the TUI to
 	// display the full welcome banner and prompt the user to run /setup.
 	FirstRun bool
@@ -186,7 +192,7 @@ func NewModel(deps Deps) Model {
 	keys := defaultKeys()
 	noColor := false
 
-	state := footerStateReady
+	state := footerClusterState(deps.Contexts, deps.InitialCtx)
 	if deps.FirstRun {
 		state = footerStateUnconfigured
 	}
@@ -622,12 +628,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if res.done {
 			m.setupChat = nil
 		}
-		// Save succeeded: flip the footer state segment and reset the
-		// welcome banner so the next launch / cleared stream shows the
-		// returning-user form. Used to live in exitSetup; now lives on
-		// the actual success edge.
+		// Save succeeded: refresh the footer state segment AND deps.Contexts
+		// from the just-written cloudy.yaml so the footer reads the chosen
+		// cluster(s) — not the stale boot-time snapshot — and reset the
+		// welcome banner for the returning-user form.
 		if msg.err == nil {
-			m.footer.SetState(footerStateReady)
+			if cfg, err := config.Load(config.Path()); err == nil {
+				m.deps.Contexts = cfg.Contexts
+			}
+			m.footer.SetState(footerClusterState(m.deps.Contexts, m.deps.InitialCtx))
 			m.welcome = NewWelcomeModel(false, m.deps.InitialCtx)
 			m.welcome.SetWidth(m.width)
 		}
