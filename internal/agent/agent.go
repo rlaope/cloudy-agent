@@ -495,19 +495,95 @@ func (a *Agent) runTool(ctx context.Context, tc llm.ToolCall, reg *tools.Registr
 		if err != nil {
 			sink.EndToolCall("", err)
 		} else {
-			sink.EndToolCall(obs.Text, nil)
+			// Mirror the table-aware composition formatObservation uses
+			// so the operator sees the same data the LLM does, not just
+			// the bare summary string.
+			sink.EndToolCall(observationText(obs), nil)
 		}
 	}
 	return obs, err
 }
 
 // formatObservation converts an Observation and optional error into the
-// text fed back to the LLM as the tool result.
+// text fed back to the LLM as the tool result. When the observation
+// carries a Table (every k8s.list_* tool does), the rows are rendered as
+// a GitHub-flavored markdown table appended to Text — without this the
+// LLM only saw the summary string ("3 node(s)") and had no row data to
+// reason from. The same composed text is what runTool emits to the TUI
+// sink so the operator sees what the model sees.
 func (a *Agent) formatObservation(obs tools.Observation, err error) string {
 	if err != nil {
 		return fmt.Sprintf("error: %v", err)
 	}
-	return truncateMiddle(obs.Text, a.opts.MaxToolTokens)
+	return truncateMiddle(observationText(obs), a.opts.MaxToolTokens)
+}
+
+// observationText composes obs.Text with a rendered Table (when
+// present) into the single string surfaced to both the LLM and the TUI.
+// Rendering is GitHub-flavored markdown so glamour can pretty-print
+// the result in the TUI and the LLM sees a structure it can reason about.
+func observationText(obs tools.Observation) string {
+	text := obs.Text
+	if obs.Table == nil || len(obs.Table.Rows) == 0 {
+		return text
+	}
+	tbl := renderMarkdownTable(obs.Table)
+	if text == "" {
+		return tbl
+	}
+	return text + "\n\n" + tbl
+}
+
+// renderMarkdownTable produces a GitHub-flavored markdown table from a
+// render.Table. Cells with pipes or newlines are escaped so the table
+// stays parseable.
+func renderMarkdownTable(t *render.Table) string {
+	if t == nil || len(t.Headers) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteByte('|')
+	for _, h := range t.Headers {
+		sb.WriteByte(' ')
+		sb.WriteString(escapeMarkdownCell(h))
+		sb.WriteString(" |")
+	}
+	sb.WriteByte('\n')
+	sb.WriteByte('|')
+	for i := range t.Headers {
+		sep := " --- |"
+		if i < len(t.Aligns) {
+			switch t.Aligns[i] {
+			case render.AlignRight:
+				sep = " ---: |"
+			case render.AlignCenter:
+				sep = " :---: |"
+			}
+		}
+		sb.WriteString(sep)
+	}
+	sb.WriteByte('\n')
+	for _, row := range t.Rows {
+		sb.WriteByte('|')
+		for j, cell := range row {
+			if j >= len(t.Headers) {
+				break
+			}
+			sb.WriteByte(' ')
+			sb.WriteString(escapeMarkdownCell(cell))
+			sb.WriteString(" |")
+		}
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+// escapeMarkdownCell replaces characters that would break a markdown
+// table row (the cell separator and newlines).
+func escapeMarkdownCell(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "|", "\\|")
+	return s
 }
 
 // truncateMiddle preserves both the head and tail of s when its length exceeds
