@@ -146,6 +146,12 @@ type Model struct {
 	// the resolve handler whether the operator confirmed or cancelled.
 	modelPickerActive bool
 
+	// scopePickerActive is true while the operator is choosing
+	// namespaces via `/scope` (with no argument). The multi-select
+	// picker's resolve message becomes a Scope{Namespaces: …} instead
+	// of falling through to setupChat. Reset by the resolve handler.
+	scopePickerActive bool
+
 	// agentCh is the channel the in-flight agent goroutine emits
 	// AgentEvent values on. The Update loop reads it one event at a
 	// time via pumpAgentCmd — after each event is applied to sub-
@@ -177,6 +183,16 @@ type Model struct {
 	// flight. Guards against scheduling duplicate ticks when several
 	// token events arrive in the same frame.
 	playbackActive bool
+
+	// playbackEmittable is the number of runes at the front of
+	// playbackBuf that have been cleared for the typewriter to drain.
+	// Advanced by bufferAssistantToken whenever a new sentence /
+	// clause / paragraph boundary lands in the buffer (see
+	// refreshEmittableWindow). The look-ahead gate makes sure the
+	// typewriter only starts emitting chars whose end-of-unit is
+	// already buffered, so a sentence never appears half-typed while
+	// the next SSE chunk is in flight.
+	playbackEmittable int
 
 	// pendingUserEcho is the pre-rendered "queued chip" column shown
 	// directly above the prompt between submit and the first agent
@@ -258,36 +274,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, splashTickCmd()
 
 	case thinkingTickMsg:
-		if !m.running && !m.playbackActive {
-			// Agent finished AND playback fully drained; let the
-			// tick loop die. We keep ticking through playback so the
-			// elapsed counter on the status row stays live even
-			// after the LLM has stopped emitting tokens.
+		if !m.running {
+			// Agent finished and the body has been drained in the
+			// same Update that fired agentDoneMsg — no playback tail
+			// to wait on anymore, so the elapsed counter retires
+			// here instead of running on borrowed time.
 			return m, nil
 		}
 		m.thinking.tick()
 		return m, thinkingTickCmd()
 
 	case playbackTickMsg:
-		// Pop a fixed number of runes from the buffer and write
-		// them via the synchronous chrome path. Re-arms only when
-		// more runes remain; an empty buffer lets the loop die so
-		// idle sessions don't keep ticking.
-		out := m.popPlaybackRunes(playbackRunesPerTick)
-		if out == "" {
-			m.playbackActive = false
-			// Buffer empty AND LLM finished → release the "Typing"
-			// indicator on the next View pass and reset the per-turn
-			// bullet anchor so the next reply gets a fresh "● ".
-			if !m.running {
-				m.thinking.streaming = false
-				m.assistantTurnStarted = false
-			}
-			return m, nil
-		}
-		var sCmd tea.Cmd
-		m.stream, sCmd = m.stream.Update(streamWriteMsg(out))
-		return m, tea.Batch(sCmd, playbackTickCmd())
+		// The typewriter playback loop was removed in favour of a
+		// single drain on agentDoneMsg — the operator prefers a
+		// "thinking spinner → finished reply lands at once" rhythm
+		// over a slow per-char reveal. Leaving the message type
+		// declared (no callers, no tickCmd issues it) keeps existing
+		// tests from re-declaring the symbol while making the
+		// no-render contract explicit if someone re-introduces a
+		// tick from a future code path.
+		return m, nil
 
 	case tea.KeyMsg:
 		// Splash key-skip: an eager typist who hits Enter / starts a
@@ -411,6 +417,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prompt.SetInFlight(false)
 			m.assistantTurnStarted = false
 			m.playbackBuf = m.playbackBuf[:0]
+			m.playbackEmittable = 0
 			m.playbackActive = false
 			// Move the queued user chip into history before
 			// returning to idle — otherwise the operator's
@@ -432,6 +439,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// "queued question" onto the freshly-blank screen.
 			m.assistantTurnStarted = false
 			m.playbackBuf = m.playbackBuf[:0]
+			m.playbackEmittable = 0
 			m.playbackActive = false
 			m.pendingUserEcho = ""
 			var sCmd tea.Cmd
@@ -574,13 +582,54 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case arrowPickerMultiResolveMsg:
-		// Multi-select picker (e.g. /setup contexts + backend kinds).
-		// Only setupChat consumes these today; other chats fall through.
+		// Multi-select picker. Currently driven by /setup (contexts +
+		// backend kinds) and /scope (namespaces). Route by which mode
+		// is active so the two flows do not collide.
 		m.arrowPicker = nil
+		if m.scopePickerActive {
+			m.scopePickerActive = false
+			if msg.cancelled {
+				return m, m.writeStream("[scope cancelled]\n")
+			}
+			// "↺ All namespaces" wins regardless of what else the
+			// operator ticked — it's the explicit affordance for
+			// "drop the current scope". Same outcome as an empty
+			// selection, but discoverable instead of "deselect
+			// everything and pray".
+			ns := make([]string, 0, len(msg.keys))
+			for _, k := range msg.keys {
+				if k == scopeResetKey {
+					return m, m.handleScopeCmd("reset")
+				}
+				ns = append(ns, k)
+			}
+			if len(ns) == 0 {
+				return m, m.handleScopeCmd("reset")
+			}
+			return m, m.handleScopeCmd("ns=" + strings.Join(ns, ","))
+		}
 		if m.setupChat != nil {
 			res := m.setupChat.ApplyMulti(msg.keys, msg.cancelled)
 			return m, m.applySetupResult(res)
 		}
+		return m, nil
+
+	case scopeNamespacesMsg:
+		if !m.scopePickerActive {
+			// Stale result — operator cancelled or moved on before
+			// kubectl returned. Drop it silently so we don't pop
+			// a picker over whatever the operator is doing now.
+			return m, nil
+		}
+		if msg.err != nil {
+			m.scopePickerActive = false
+			return m, m.writeStream(agentError("scope", msg.err))
+		}
+		if len(msg.namespaces) == 0 {
+			m.scopePickerActive = false
+			return m, m.writeStream("[scope: no namespaces visible from current credentials]\n")
+		}
+		m.arrowPicker = buildScopeNamespacePicker(msg.namespaces, m.scope.Namespaces)
 		return m, nil
 
 	case paletteActionMsg:
@@ -669,16 +718,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.writeStream("\n" + agentError("error", msg.err))
 		}
-		if echoFlush != "" {
-			var sCmd tea.Cmd
-			m.stream, sCmd = m.stream.Update(streamWriteMsg(echoFlush))
-			return m, sCmd
+		// Happy path: drain the entire buffered reply at once. The
+		// operator saw the thinking spinner during streaming; once
+		// Done arrives the body lands in a single synchronous write
+		// and the markdown renders naturally without an artificial
+		// typewriter drag.
+		body := m.drainPlaybackBuffer()
+		m.thinking.streaming = false
+		m.assistantTurnStarted = false
+		out := echoFlush + body
+		if out == "" {
+			return m, nil
 		}
-		// Happy path: leave playback running so the operator sees the
-		// remaining buffer drain at typewriter pace. The playback tick
-		// handler clears thinking.streaming + assistantTurnStarted
-		// itself once the buffer empties.
-		return m, nil
+		var sCmd tea.Cmd
+		m.stream, sCmd = m.stream.Update(streamWriteMsg(out))
+		return m, sCmd
 
 	case selfUpdateDoneMsg:
 		// Dump the captured progress log first so the operator sees
@@ -1000,6 +1054,7 @@ func (m *Model) handleEscape() tea.Cmd {
 		m.prompt.SetInFlight(false)
 		m.assistantTurnStarted = false
 		m.playbackBuf = m.playbackBuf[:0]
+		m.playbackEmittable = 0
 		m.playbackActive = false
 		// Mirror Ctrl+C: preserve the queued question in history so
 		// it doesn't silently disappear on cancel.
@@ -1033,6 +1088,7 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		// deliberate /clear should not leak a queued question.
 		m.assistantTurnStarted = false
 		m.playbackBuf = m.playbackBuf[:0]
+		m.playbackEmittable = 0
 		m.playbackActive = false
 		m.pendingUserEcho = ""
 		var sCmd tea.Cmd
@@ -1099,9 +1155,19 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		return m.applyModelSwap(action.arg)
 
 	case "scope":
-		// Insert prefix into prompt so user fills in the argument.
-		m.prompt.SetValue("/scope ")
-		return nil
+		m.prompt.SetValue("")
+		if action.arg == "" {
+			// Bare /scope — kick off an async kubectl get ns and let
+			// the operator pick from the live namespace list via a
+			// multi-select arrow picker. This mirrors how /model
+			// (no-arg) and /setup (multi-select) handle HITL flows.
+			m.scopePickerActive = true
+			return tea.Batch(
+				m.writeStream("→ fetching namespaces…\n"),
+				fetchScopeNamespacesCmd(m.deps.InitialCtx),
+			)
+		}
+		return m.handleScopeCmd(action.arg)
 
 	case "tools":
 		return m.writeStream(renderInventory(m.deps.Tools))

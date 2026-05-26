@@ -381,30 +381,23 @@ func (p PromptModel) renderWithSelection() string {
 
 	var out strings.Builder
 	out.WriteString(white.Render("> "))
-	writeChevroned(&out, white, before, false)
-	writeChevroned(&out, reverse, sel, true)
-	writeChevroned(&out, white, after, true)
+	writeChevroned(&out, white, before)
+	writeChevroned(&out, reverse, sel)
+	writeChevroned(&out, white, after)
 	return out.String()
 }
 
 // writeChevroned writes s to out under the given style, inserting
 // "\n> " before every embedded newline so multi-line content lines up
-// with the bubbles textarea's per-row chevron prefix. addInitialNL
-// controls whether a leading "\n> " is emitted when s starts with text
-// after a prior segment; it's set false for the very first segment of
-// the prompt (where the parent already wrote "> ").
-func writeChevroned(out *strings.Builder, style lipgloss.Style, s string, addInitialNL bool) {
+// with the bubbles textarea's per-row chevron prefix. The parent has
+// already emitted the chevron for the first row, so we only prepend
+// "\n> " at internal newline boundaries.
+func writeChevroned(out *strings.Builder, style lipgloss.Style, s string) {
 	if s == "" {
 		return
 	}
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
-		if i > 0 || (addInitialNL && line == "") {
-			// Only emit a new chevron when there's an actual newline
-			// boundary between segments; addInitialNL handles the
-			// rare case where the previous segment ended mid-line
-			// and this one begins on the same line.
-		}
 		if i > 0 {
 			out.WriteString("\n")
 			out.WriteString(style.Render("> "))

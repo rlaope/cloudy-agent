@@ -184,15 +184,13 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 			m.stream, prefixCmd = m.stream.Update(streamWriteMsg(prefix))
 			cmds = append(cmds, prefixCmd)
 		}
-		// Buffer the actual prose runes for typewriter playback. The
-		// playback tick drains the buffer at a steady ~125 chars/s so
-		// the visible output flows like typing rather than mirroring
-		// the upstream SSE burst pattern.
+		// Buffer the prose silently while the LLM is still streaming;
+		// the operator only sees the "✦ Thinking…" indicator until
+		// agentDoneMsg arrives. The whole reply then lands in one
+		// synchronous write so the visible text matches the natural
+		// rhythm of "Claude finished, here's the answer" instead of
+		// dragging a slow typewriter across the response.
 		m.bufferAssistantToken(evt.Token)
-		if !m.playbackActive && len(m.playbackBuf) > 0 {
-			m.playbackActive = true
-			cmds = append(cmds, playbackTickCmd())
-		}
 	}
 	if evt.ToolBegin != nil {
 		// Flush any buffered assistant text *now* so the tool block
