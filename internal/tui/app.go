@@ -42,6 +42,12 @@ type Deps struct {
 	InitialCtx string
 	// InitialNS is the initial namespace (best-effort).
 	InitialNS string
+	// Contexts is the full list of kubeconfig contexts configured for this
+	// session (cfg.Contexts when set; otherwise a single-element slice
+	// containing InitialCtx, or empty when nothing is wired). The footer
+	// renders this as `<default> +<N-1>` so the operator can see at a
+	// glance which cluster(s) the agent talks to.
+	Contexts []string
 	// FirstRun is true when no config file exists yet, causing the TUI to
 	// display the full welcome banner and prompt the user to run /setup.
 	FirstRun bool
@@ -186,7 +192,7 @@ func NewModel(deps Deps) Model {
 	keys := defaultKeys()
 	noColor := false
 
-	state := footerStateReady
+	state := footerClusterState(deps.Contexts, deps.InitialCtx)
 	if deps.FirstRun {
 		state = footerStateUnconfigured
 	}

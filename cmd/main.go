@@ -109,6 +109,12 @@ func bootTUI(stdout, stderr io.Writer) error {
 	defer func() { _ = sess.Close() }()
 
 	ctxName, ns := currentKubeContext()
+	clusters := cfg.Contexts
+	if len(clusters) == 0 && ctxName != "" {
+		// No explicit contexts configured — fall back to the kubeconfig
+		// current-context so the footer's cluster segment is still useful.
+		clusters = []string{ctxName}
+	}
 	deps := tui.Deps{
 		Provider:                 provider,
 		Model:                    modelID,
@@ -117,6 +123,7 @@ func bootTUI(stdout, stderr io.Writer) error {
 		Session:                  sess,
 		InitialCtx:               ctxName,
 		InitialNS:                ns,
+		Contexts:                 clusters,
 		FirstRun:                 firstRun,
 		MaxTokensPerSession:      cfg.Safety.MaxTokensPerSession,
 		MaxUSDPerDay:             cfg.Safety.MaxUSDPerDay,
