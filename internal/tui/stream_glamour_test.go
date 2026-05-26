@@ -26,7 +26,11 @@ func TestStreamModel_GlamourRendersAssistantMarkdown(t *testing.T) {
 		t.Fatal("WindowSizeMsg should have initialised the glamour renderer")
 	}
 
-	const raw = "Here is **bold** and a `code` span."
+	// Trailing newline triggers the sentence-batched commit (newline is
+	// an unambiguous boundary). Without it the buffer would sit
+	// uncommitted waiting for whitespace after the period — that's the
+	// new sentence-by-sentence streaming model.
+	const raw = "Here is **bold** and a `code` span.\n"
 	updated, _ = s.Update(streamTokenMsg(raw))
 	s = updated
 	if !s.drainPending() {
@@ -91,11 +95,95 @@ func TestStreamModel_NoColor_StaysRaw(t *testing.T) {
 	s := newStreamModel(true)
 	updated, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	s = updated
-	updated, _ = s.Update(streamTokenMsg("Raw **markdown** stays."))
+	// Trailing newline so sentence-batched drainPending commits.
+	updated, _ = s.Update(streamTokenMsg("Raw **markdown** stays.\n"))
 	s = updated
 	s.drainPending()
 	if !strings.Contains(s.content.String(), "**markdown**") {
 		t.Errorf("noColor mode dropped raw markdown markers:\n%s", s.content.String())
+	}
+}
+
+// TestStreamModel_SentenceBatchedCommit pins the new streaming model:
+// drainPending only advances the visible content when a sentence
+// terminator + whitespace boundary lands in mdBuf past mdCommitted.
+// Tokens that land mid-sentence accumulate silently — they don't paint
+// half-words to the viewport every 16 ms like the old re-render-every-
+// flush behaviour did.
+func TestStreamModel_SentenceBatchedCommit(t *testing.T) {
+	s := newStreamModel(false)
+	updated, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = updated
+
+	// Token 1: mid-sentence, no terminator → must NOT commit.
+	updated, _ = s.Update(streamTokenMsg("Mid sent"))
+	s = updated
+	if s.drainPending() {
+		t.Errorf("drainPending should return false for a mid-sentence buffer")
+	}
+	if s.mdCommitted != 0 {
+		t.Errorf("mdCommitted should stay 0 before the first sentence ends; got %d", s.mdCommitted)
+	}
+
+	// Token 2: completes the sentence + adds a space → COMMIT.
+	updated, _ = s.Update(streamTokenMsg("ence. "))
+	s = updated
+	if !s.drainPending() {
+		t.Fatal("drainPending should commit once `.` + ` ` is in the buffer")
+	}
+	if s.mdCommitted == 0 {
+		t.Errorf("mdCommitted should advance past the committed sentence")
+	}
+	committedAfterFirst := s.mdCommitted
+
+	// Token 3: starts the next sentence — uncommitted until its
+	// terminator arrives.
+	updated, _ = s.Update(streamTokenMsg("Next sentence"))
+	s = updated
+	if s.drainPending() {
+		t.Errorf("drainPending should not advance on a partial second sentence")
+	}
+	if s.mdCommitted != committedAfterFirst {
+		t.Errorf("mdCommitted should stay at %d while the second sentence is partial; got %d", committedAfterFirst, s.mdCommitted)
+	}
+
+	// Token 4: terminator + space → commit.
+	updated, _ = s.Update(streamTokenMsg(". "))
+	s = updated
+	if !s.drainPending() {
+		t.Fatal("drainPending should commit once the second sentence terminates")
+	}
+	if s.mdCommitted <= committedAfterFirst {
+		t.Errorf("mdCommitted should have advanced past the second sentence; was %d, now %d", committedAfterFirst, s.mdCommitted)
+	}
+}
+
+// TestStreamModel_FinalizeForcesUncommittedTail pins the rule that a
+// tool / chrome boundary force-commits whatever's left in mdBuf, even
+// if the message ended mid-sentence. Without this, an LLM that omits
+// the final terminator (or that gets cut off) would silently lose its
+// trailing clause.
+func TestStreamModel_FinalizeForcesUncommittedTail(t *testing.T) {
+	s := newStreamModel(false)
+	updated, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = updated
+
+	updated, _ = s.Update(streamTokenMsg("Message ends mid-clause and is cut off"))
+	s = updated
+	s.drainPending() // no-op — no boundary
+
+	if s.mdCommitted != 0 {
+		t.Fatalf("precondition: nothing should be committed yet; got %d", s.mdCommitted)
+	}
+	beforeContent := s.content.String()
+
+	s.finalizeAssistantBlock()
+
+	if s.content.String() == beforeContent {
+		t.Errorf("finalize should have force-committed the uncommitted tail; content unchanged")
+	}
+	if s.mdBuf.Len() != 0 || s.mdCommitted != 0 {
+		t.Errorf("finalize should reset the buffer and committed offset; got mdBuf=%d mdCommitted=%d", s.mdBuf.Len(), s.mdCommitted)
 	}
 }
 
@@ -111,7 +199,9 @@ func TestStreamModel_GlamourRerendersOnResize(t *testing.T) {
 	updated, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	s = updated
 
-	updated, _ = s.Update(streamTokenMsg("Some assistant prose for the resize check."))
+	// Trailing newline so sentence-batched drainPending advances
+	// mdCommitted and produces a non-zero mdTailLen on the first flush.
+	updated, _ = s.Update(streamTokenMsg("Some assistant prose for the resize check.\n"))
 	s = updated
 	s.drainPending()
 	originalTail := s.mdTailLen
