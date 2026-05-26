@@ -108,11 +108,20 @@ func TestPromptSelection_ViewShowsHint(t *testing.T) {
 	p = updated
 
 	out := p.View()
-	if !strings.Contains(out, "[sel: 1 chars") {
-		t.Errorf("expected `[sel: 1 chars …]` in view, got:\n%s", out)
+	if !strings.Contains(out, "[sel") {
+		t.Errorf("expected `[sel …]` block in view, got:\n%s", out)
+	}
+	if !strings.Contains(out, "1 chars") {
+		t.Errorf("hint should include the selection size; got:\n%s", out)
 	}
 	if !strings.Contains(out, "ctrl+y") {
 		t.Errorf("hint must mention the ctrl+y trigger; got:\n%s", out)
+	}
+	// The selected substring itself must appear in the hint (within
+	// the reverse-video block) so the operator visually sees what
+	// they're about to copy.
+	if !strings.Contains(out, "a") {
+		t.Errorf("first selected rune `a` should be visible in the hint; got:\n%s", out)
 	}
 }
 

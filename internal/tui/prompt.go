@@ -336,18 +336,29 @@ func (p PromptModel) View() string {
 	case p.inSearch:
 		inner = "[search: " + p.searchBuf + "]\n" + p.ta.View()
 	case p.selAnchor >= 0:
-		// Inline status reveals the live selection size + the trigger
-		// key so the operator knows the selection is "real" even though
-		// the textarea itself can't render highlight (bubbles v1.0.0
-		// has no selection rendering). Appears inside the border to
-		// match the search-mode pattern.
-		cur := p.cursorRuneOffset()
-		n := cur - p.selAnchor
-		if n < 0 {
-			n = -n
+		// Bubbles v1.0.0's textarea can't render highlight inside its
+		// own content, so we surface the selection as a reverse-video
+		// preview above the textarea: the operator sees both the
+		// actual selected substring AND the trigger key. Long
+		// selections get a middle-ellipsis so the hint line never
+		// grows past the prompt's width.
+		runes := []rune(p.ta.Value())
+		a, b := p.selAnchor, p.cursorRuneOffset()
+		if a > b {
+			a, b = b, a
 		}
-		hint := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).
-			Render(fmt.Sprintf("[sel: %d chars · ctrl+y to copy · esc to clear]", n))
+		if a < 0 {
+			a = 0
+		}
+		if b > len(runes) {
+			b = len(runes)
+		}
+		selRunes := runes[a:b]
+		reverse := lipgloss.NewStyle().Reverse(true)
+		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		hint := dim.Render("[sel ") +
+			reverse.Render(truncateMiddleRunes(selRunes, 40)) +
+			dim.Render(fmt.Sprintf(" · %d chars · ctrl+y to copy · esc to clear]", b-a))
 		inner = hint + "\n" + p.ta.View()
 	default:
 		inner = p.ta.View()
@@ -405,6 +416,23 @@ func plainArrowKey(shiftKey string) tea.KeyType {
 		return tea.KeyEnd
 	}
 	return tea.KeyNull
+}
+
+// truncateMiddleRunes returns a string suitable for the inline selection
+// preview: empty selections render as a single space (so the reverse-
+// video block is visible at all), short selections pass through, and
+// long ones get a middle ellipsis (`head…tail`) so the hint line never
+// outgrows the prompt's width. Operates on runes rather than bytes so
+// multi-byte content (Korean, emoji) doesn't get cut mid-codepoint.
+func truncateMiddleRunes(rs []rune, max int) string {
+	if len(rs) == 0 {
+		return " "
+	}
+	if len(rs) <= max {
+		return string(rs)
+	}
+	half := (max - 1) / 2
+	return string(rs[:half]) + "…" + string(rs[len(rs)-half:])
 }
 
 // copySelectionCmd writes the active selection to the system clipboard
