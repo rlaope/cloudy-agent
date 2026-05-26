@@ -15,12 +15,18 @@ import (
 const playbackTickInterval = 16 * time.Millisecond
 
 // playbackRunesPerTick is the maximum number of runes emitted per
-// playbackTickMsg. The buffer drains at this fixed rate even when the
-// upstream LLM has finished generating — operators reported the raw
-// SSE flow felt "툭툭" / choppy, and pacing the output to a constant
-// human-readable speed (rather than mirroring the network burst
-// pattern) is the textbook fix.
-const playbackRunesPerTick = 4
+// playbackTickMsg. 2 runes / 16ms ≈ 125 chars/sec — slow enough to
+// stay behind the LLM's production rate (typical Claude / GPT
+// streaming runs 200-500 chars/sec) so the playback buffer keeps
+// growing while the network is delivering. That growing buffer is
+// what prevents the choppy "drain → pause → drain" pattern operators
+// reported ("끊김"): when drain is slower than fill, the buffer
+// never empties mid-stream and playback never stalls between SSE
+// chunks. The trailing tail (when the LLM has finished but the
+// buffer still has bytes left) plays out at the same steady cadence
+// — a slight extension of total visible time in exchange for a
+// continuous reading flow.
+const playbackRunesPerTick = 2
 
 // playbackToolFlushChunk caps the runes emitted in a single
 // streamWriteMsg when a ToolBegin event forces an early drain.
