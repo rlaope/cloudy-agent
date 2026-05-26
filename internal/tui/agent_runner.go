@@ -185,9 +185,9 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 			cmds = append(cmds, prefixCmd)
 		}
 		// Buffer the actual prose runes for typewriter playback. The
-		// playback tick drains the buffer at a steady ~250 chars/s
-		// so the visible output flows like typing rather than
-		// mirroring the upstream SSE burst pattern.
+		// playback tick drains the buffer at a steady ~125 chars/s so
+		// the visible output flows like typing rather than mirroring
+		// the upstream SSE burst pattern.
 		m.bufferAssistantToken(evt.Token)
 		if !m.playbackActive && len(m.playbackBuf) > 0 {
 			m.playbackActive = true
