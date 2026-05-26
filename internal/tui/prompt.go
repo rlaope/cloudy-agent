@@ -2,7 +2,6 @@ package tui
 
 import (
 	"encoding/base64"
-	"fmt"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -336,30 +335,12 @@ func (p PromptModel) View() string {
 	case p.inSearch:
 		inner = "[search: " + p.searchBuf + "]\n" + p.ta.View()
 	case p.selAnchor >= 0:
-		// Bubbles v1.0.0's textarea can't render highlight inside its
-		// own content, so we surface the selection as a reverse-video
-		// preview above the textarea: the operator sees both the
-		// actual selected substring AND the trigger key. Long
-		// selections get a middle-ellipsis so the hint line never
-		// grows past the prompt's width.
-		runes := []rune(p.ta.Value())
-		a, b := p.selAnchor, p.cursorRuneOffset()
-		if a > b {
-			a, b = b, a
-		}
-		if a < 0 {
-			a = 0
-		}
-		if b > len(runes) {
-			b = len(runes)
-		}
-		selRunes := runes[a:b]
-		reverse := lipgloss.NewStyle().Reverse(true)
-		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-		hint := dim.Render("[sel ") +
-			reverse.Render(truncateMiddleRunes(selRunes, 40)) +
-			dim.Render(fmt.Sprintf(" · %d chars · ctrl+y to copy · esc to clear]", b-a))
-		inner = hint + "\n" + p.ta.View()
+		// Replace the textarea's render entirely when a selection is
+		// active so the selected runes appear with reverse video IN
+		// PLACE (where they sit in the value), matching the visual
+		// model of GUI text-editor drag selection. Bubbles can't
+		// composite this kind of inline highlight on its own.
+		inner = p.renderWithSelection()
 	default:
 		inner = p.ta.View()
 	}
@@ -368,6 +349,68 @@ func (p PromptModel) View() string {
 		style = promptBorderInFlightStyle
 	}
 	return style.Render(inner)
+}
+
+// renderWithSelection draws the prompt manually with the selected
+// substring wrapped in lipgloss.Reverse so the operator sees the same
+// "white block" feedback as a GUI text editor's drag selection. Per-
+// line `>` chevrons are added so multi-line prompts still look like the
+// textarea (the textarea inserts those internally). The cursor block
+// and blink are intentionally not redrawn — the selection block
+// already pins the operator's eye where the cursor is.
+func (p PromptModel) renderWithSelection() string {
+	val := p.ta.Value()
+	runes := []rune(val)
+	a, b := p.selAnchor, p.cursorRuneOffset()
+	if a > b {
+		a, b = b, a
+	}
+	if a < 0 {
+		a = 0
+	}
+	if b > len(runes) {
+		b = len(runes)
+	}
+
+	white := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	reverse := lipgloss.NewStyle().Reverse(true)
+
+	before := string(runes[:a])
+	sel := string(runes[a:b])
+	after := string(runes[b:])
+
+	var out strings.Builder
+	out.WriteString(white.Render("> "))
+	writeChevroned(&out, white, before, false)
+	writeChevroned(&out, reverse, sel, true)
+	writeChevroned(&out, white, after, true)
+	return out.String()
+}
+
+// writeChevroned writes s to out under the given style, inserting
+// "\n> " before every embedded newline so multi-line content lines up
+// with the bubbles textarea's per-row chevron prefix. addInitialNL
+// controls whether a leading "\n> " is emitted when s starts with text
+// after a prior segment; it's set false for the very first segment of
+// the prompt (where the parent already wrote "> ").
+func writeChevroned(out *strings.Builder, style lipgloss.Style, s string, addInitialNL bool) {
+	if s == "" {
+		return
+	}
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if i > 0 || (addInitialNL && line == "") {
+			// Only emit a new chevron when there's an actual newline
+			// boundary between segments; addInitialNL handles the
+			// rare case where the previous segment ended mid-line
+			// and this one begins on the same line.
+		}
+		if i > 0 {
+			out.WriteString("\n")
+			out.WriteString(style.Render("> "))
+		}
+		out.WriteString(style.Render(line))
+	}
 }
 
 // cursorRuneOffset returns the textarea's current cursor position as a
@@ -416,23 +459,6 @@ func plainArrowKey(shiftKey string) tea.KeyType {
 		return tea.KeyEnd
 	}
 	return tea.KeyNull
-}
-
-// truncateMiddleRunes returns a string suitable for the inline selection
-// preview: empty selections render as a single space (so the reverse-
-// video block is visible at all), short selections pass through, and
-// long ones get a middle ellipsis (`head…tail`) so the hint line never
-// outgrows the prompt's width. Operates on runes rather than bytes so
-// multi-byte content (Korean, emoji) doesn't get cut mid-codepoint.
-func truncateMiddleRunes(rs []rune, max int) string {
-	if len(rs) == 0 {
-		return " "
-	}
-	if len(rs) <= max {
-		return string(rs)
-	}
-	half := (max - 1) / 2
-	return string(rs[:half]) + "…" + string(rs[len(rs)-half:])
 }
 
 // copySelectionCmd writes the active selection to the system clipboard

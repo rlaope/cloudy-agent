@@ -92,36 +92,36 @@ func TestPromptSelection_CopySelectionCmdReturnsCmd(t *testing.T) {
 	}
 }
 
-// TestPromptSelection_ViewShowsHint confirms the visible feedback
-// inside the prompt border so the operator knows the selection is
-// real. Bubbles v1.0.0 has no selection-highlight support in the
-// textarea itself; the hint is the only signal until that lands.
-func TestPromptSelection_ViewShowsHint(t *testing.T) {
+// TestPromptSelection_ViewHighlightsInPlace pins the rule that an
+// active selection renders the chosen runes with reverse video IN
+// PLACE (where they sit in the value), not as a separate `[sel: ...]`
+// status block. Operator feedback after #79: the status block was
+// noise — they wanted the GUI-text-editor model of highlighting the
+// actual text.
+func TestPromptSelection_ViewHighlightsInPlace(t *testing.T) {
 	p := newPromptModel(defaultKeys())
 	p.ta.SetValue("abcdef")
 	p.ta.SetCursor(0)
-	if strings.Contains(p.View(), "[sel:") {
-		t.Errorf("fresh prompt should not show a selection hint")
+	if strings.Contains(p.View(), "[sel") {
+		t.Errorf("fresh prompt should not show any selection block")
 	}
 
-	updated, _ := p.Update(tea.KeyMsg{Type: tea.KeyShiftRight})
-	p = updated
+	for i := 0; i < 3; i++ {
+		updated, _ := p.Update(tea.KeyMsg{Type: tea.KeyShiftRight})
+		p = updated
+	}
 
 	out := p.View()
-	if !strings.Contains(out, "[sel") {
-		t.Errorf("expected `[sel …]` block in view, got:\n%s", out)
+	if strings.Contains(out, "[sel") {
+		t.Errorf("selection mode must NOT emit a `[sel ...]` status block; got:\n%s", out)
 	}
-	if !strings.Contains(out, "1 chars") {
-		t.Errorf("hint should include the selection size; got:\n%s", out)
+	if strings.Contains(out, "ctrl+y") {
+		t.Errorf("ctrl+y hint should be discoverable elsewhere (docs/help), not stamped into the prompt; got:\n%s", out)
 	}
-	if !strings.Contains(out, "ctrl+y") {
-		t.Errorf("hint must mention the ctrl+y trigger; got:\n%s", out)
-	}
-	// The selected substring itself must appear in the hint (within
-	// the reverse-video block) so the operator visually sees what
-	// they're about to copy.
-	if !strings.Contains(out, "a") {
-		t.Errorf("first selected rune `a` should be visible in the hint; got:\n%s", out)
+	// The full value must still appear so the operator sees the
+	// content — the reverse-video ANSI wrapping doesn't strip text.
+	if !strings.Contains(out, "abcdef") {
+		t.Errorf("expected the typed value to be present in the rendered prompt; got:\n%s", out)
 	}
 }
 
