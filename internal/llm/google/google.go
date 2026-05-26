@@ -188,7 +188,10 @@ func buildRequest(req llm.Request) ([]byte, error) {
 					parts = append(parts, gemPart{
 						FunctionCall: &gemFunctionCall{
 							Name: tc.Name,
-							Args: tc.Arguments,
+							// Normalize so a nil tc.Arguments does not
+							// serialize as `args: null` — Gemini tolerates
+							// it today but the canonical shape is an object.
+							Args: llm.NormalizeArguments(tc.Arguments),
 						},
 					})
 				}
@@ -280,9 +283,12 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 				if part.FunctionCall != nil {
 					fc := part.FunctionCall
 					cp := llm.ToolCall{
-						ID:        fc.Name, // Gemini has no separate call ID; use name
-						Name:      fc.Name,
-						Arguments: fc.Args,
+						ID:   fc.Name, // Gemini has no separate call ID; use name
+						Name: fc.Name,
+						// Normalize empty/null/garbage args so cloudy state
+						// (and the next-turn replay) sees the canonical empty
+						// object — see llm.NormalizeArguments.
+						Arguments: llm.NormalizeArguments(fc.Args),
 					}
 					// emit tool calls immediately
 					ch <- llm.Chunk{ToolCall: &cp}

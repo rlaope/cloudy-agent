@@ -180,8 +180,12 @@ func buildRequest(req llm.Request) ([]byte, error) {
 				ID:   tc.ID,
 				Type: "function",
 				Function: compatToolCallFunction{
-					Name:      tc.Name,
-					Arguments: string(tc.Arguments),
+					Name: tc.Name,
+					// See llm.NormalizeArguments — local engines (vLLM with
+					// guided-json, llama.cpp tool-use mode) can reject the
+					// empty-string Arguments shape that nil/empty would
+					// otherwise produce.
+					Arguments: string(llm.NormalizeArguments(tc.Arguments)),
 				},
 			})
 		}
@@ -230,6 +234,7 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 		if data == "[DONE]" {
 			for _, tc := range toolAccum {
 				cp := *tc
+				cp.Arguments = llm.NormalizeArguments(cp.Arguments)
 				ch <- llm.Chunk{ToolCall: &cp}
 			}
 			ch <- llm.Chunk{Done: true}
@@ -282,6 +287,7 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 	// Flush any accumulated tool calls if stream ended without [DONE].
 	for _, tc := range toolAccum {
 		cp := *tc
+		cp.Arguments = llm.NormalizeArguments(cp.Arguments)
 		ch <- llm.Chunk{ToolCall: &cp}
 	}
 	ch <- llm.Chunk{Done: true}

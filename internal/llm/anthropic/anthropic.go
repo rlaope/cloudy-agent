@@ -355,32 +355,10 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 	ch <- llm.Chunk{Done: true}
 }
 
-// normalizeToolInput returns a JSON object suitable for Anthropic's
-// tool_use.input field. The API requires the field to be present and to be
-// a JSON object; a bare `len == 0` check would still let the following
-// non-object shapes through and 400 the next turn:
-//
-//   - JSON `null` (4 bytes, non-empty)
-//   - whitespace-only payloads ("   ")
-//   - partial / truncated JSON ("{\"name\":")
-//   - any other non-object literal (numbers, strings, arrays)
-//
-// We collapse all of those to `{}`. Already-valid JSON objects are returned
-// unchanged. Non-object but otherwise valid JSON (e.g. an array or a string
-// literal) is also collapsed — Anthropic would reject those on the wire and
-// `{}` is the only safe canonical fallback this layer can produce without
-// guessing at the model's intent.
+// normalizeToolInput delegates to the shared llm.NormalizeArguments so the
+// same canonicalization rule is enforced across every provider adapter (one
+// of the v0.5 lessons: the omitempty / null / partial-JSON gap class exists
+// at every provider seam, not just Anthropic's).
 func normalizeToolInput(raw json.RawMessage) json.RawMessage {
-	const empty = "{}"
-	if len(raw) == 0 {
-		return json.RawMessage(empty)
-	}
-	if !json.Valid(raw) {
-		return json.RawMessage(empty)
-	}
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return json.RawMessage(empty)
-	}
-	return raw
+	return llm.NormalizeArguments(raw)
 }
