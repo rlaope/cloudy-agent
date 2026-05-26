@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -97,6 +98,21 @@ type StreamModel struct {
 	pendingTokens  *strings.Builder
 	flushScheduled bool
 
+	// mdBuf accumulates the raw markdown text of the CURRENT assistant
+	// message. drainPending re-renders the entire buffer via glamour on
+	// each flush and replaces the tail bytes of `content` (length tracked
+	// in mdTailLen) with the new rendered output. The buffer is reset by
+	// finalizeMarkdown on tool / chrome / clear boundaries so the next
+	// assistant message starts a fresh block instead of re-rendering the
+	// previous one.
+	mdBuf     *strings.Builder
+	mdTailLen int
+
+	// mdRenderer is reconstructed on every WindowSizeMsg so word-wrap
+	// matches the current viewport width. noColor mode leaves it nil and
+	// drainPending falls back to writing raw text.
+	mdRenderer *glamour.TermRenderer
+
 	// pending tool block being assembled
 	pendingTool *toolBlock
 
@@ -165,6 +181,7 @@ func newStreamModel(noColor bool) StreamModel {
 		noColor:       noColor,
 		content:       &strings.Builder{},
 		pendingTokens: &strings.Builder{},
+		mdBuf:         &strings.Builder{},
 	}
 	if !noColor {
 		s.toolStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
@@ -187,8 +204,21 @@ func (s *StreamModel) drainPending() bool {
 		return false
 	}
 	wasAtBottom := !s.ready || s.vp.AtBottom()
-	s.content.WriteString(s.pendingTokens.String())
+	// Live re-render: drop the previously rendered tail (if any) and
+	// rebuild from the full mdBuf so partial markdown (`**bo|ld**` split
+	// across two chunks) lands correctly once both halves arrive. The
+	// raw pendingTokens just signals "do flush"; mdBuf is the source of
+	// truth for what to render.
 	s.pendingTokens.Reset()
+	rendered := s.renderAssistantTail(s.mdBuf.String())
+	cur := s.content.String()
+	if s.mdTailLen > 0 && len(cur) >= s.mdTailLen {
+		cur = cur[:len(cur)-s.mdTailLen]
+	}
+	s.content.Reset()
+	s.content.WriteString(cur)
+	s.content.WriteString(rendered)
+	s.mdTailLen = len(rendered)
 	if s.ready {
 		s.vp.SetContent(s.content.String())
 		if wasAtBottom {
@@ -196,6 +226,34 @@ func (s *StreamModel) drainPending() bool {
 		}
 	}
 	return true
+}
+
+// renderAssistantTail returns the glamour-rendered form of the current
+// assistant message, or the raw text when noColor mode is set / the
+// renderer isn't initialised yet (pre-first WindowSizeMsg). Glamour
+// failures (rare, but possible on malformed markdown) fall back to raw
+// so a broken render never blanks the stream.
+func (s *StreamModel) renderAssistantTail(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	if s.noColor || s.mdRenderer == nil {
+		return raw
+	}
+	out, err := s.mdRenderer.Render(raw)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+// finalizeAssistantBlock locks in the currently-rendered assistant tail
+// as permanent content and resets the markdown buffer so the next
+// assistant message starts a fresh block instead of overwriting this
+// one's tail. Called at tool / chrome / clear boundaries.
+func (s *StreamModel) finalizeAssistantBlock() {
+	s.mdBuf.Reset()
+	s.mdTailLen = 0
 }
 
 func (s StreamModel) Init() tea.Cmd { return nil }
@@ -218,12 +276,51 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 		} else {
 			s.vp.Width = m.Width
 		}
+		// Build / rebuild the glamour renderer so its word-wrap matches
+		// the current viewport width. Auto-style picks dark/light based
+		// on terminal background. noColor mode keeps the renderer nil so
+		// drainPending writes raw markdown instead.
+		if !s.noColor {
+			wrap := m.Width - 2
+			if wrap < 20 {
+				wrap = 20
+			}
+			r, err := glamour.NewTermRenderer(
+				glamour.WithAutoStyle(),
+				glamour.WithWordWrap(wrap),
+			)
+			if err == nil {
+				s.mdRenderer = r
+				// If an assistant message is currently in flight,
+				// re-render its tail under the new width immediately so
+				// the visible wrap matches the new viewport — otherwise
+				// the operator sees stale wrap until the next token /
+				// chrome event triggers a re-render.
+				if s.mdBuf.Len() > 0 {
+					rendered := s.renderAssistantTail(s.mdBuf.String())
+					cur := s.content.String()
+					if s.mdTailLen > 0 && len(cur) >= s.mdTailLen {
+						cur = cur[:len(cur)-s.mdTailLen]
+					}
+					s.content.Reset()
+					s.content.WriteString(cur)
+					s.content.WriteString(rendered)
+					s.mdTailLen = len(rendered)
+					if s.ready {
+						s.vp.SetContent(s.content.String())
+					}
+				}
+			}
+		}
 
 	case streamTokenMsg:
 		// Append-only: defer the viewport reflow to the next flush tick
 		// so a burst of SSE chunks coalesces into one render. Schedule
-		// the tick exactly once until the flush handler runs.
+		// the tick exactly once until the flush handler runs. Tokens
+		// land in BOTH pendingTokens (the flush-trigger signal) and
+		// mdBuf (the rolling source for glamour re-renders).
 		s.pendingTokens.WriteString(string(m))
+		s.mdBuf.WriteString(string(m))
 		if !s.flushScheduled {
 			s.flushScheduled = true
 			cmds = append(cmds, streamFlushTickCmd())
@@ -243,6 +340,9 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 		// scrollback survives chrome events the same way it survives
 		// streaming tokens.
 		s.drainPending()
+		// Commit the rendered assistant tail so this chrome line lands
+		// strictly after it, not as a tail-replacement.
+		s.finalizeAssistantBlock()
 		wasAtBottom := !s.ready || s.vp.AtBottom()
 		s.content.WriteString(string(m))
 		if s.ready {
@@ -259,6 +359,7 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 		// Same scroll-position rule as streamWriteMsg — capture after
 		// the drain so the operator's scrollback survives tool calls.
 		s.drainPending()
+		s.finalizeAssistantBlock()
 		wasAtBottom := !s.ready || s.vp.AtBottom()
 		s.pendingTool = &toolBlock{name: m.name, args: m.args}
 		s.pendingStart = time.Now()
@@ -314,6 +415,7 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 		// at the bottom, so a tool that finishes while the operator is
 		// reading earlier output does not yank the viewport away.
 		s.drainPending()
+		s.finalizeAssistantBlock()
 		wasAtBottom := !s.ready || s.vp.AtBottom()
 		if s.pendingTool != nil {
 			s.pendingTool.observation = m.observation
@@ -348,6 +450,8 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 	case streamClearMsg:
 		s.content.Reset()
 		s.pendingTokens.Reset()
+		s.mdBuf.Reset()
+		s.mdTailLen = 0
 		s.flushScheduled = false
 		s.pendingTool = nil
 		if s.ready {
