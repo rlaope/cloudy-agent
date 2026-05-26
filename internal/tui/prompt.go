@@ -1,7 +1,11 @@
 package tui
 
 import (
+	"encoding/base64"
+	"fmt"
+	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
@@ -54,6 +58,15 @@ type PromptModel struct {
 	// submitMsg / agentDoneMsg / cancel paths.
 	inFlight bool
 
+	// selAnchor is the rune offset (in textarea.Value()) where Shift+arrow
+	// selection began. -1 means no active selection. Selection extends
+	// from selAnchor to the textarea's current cursor position; Ctrl+Y
+	// copies the range to the system clipboard via OSC 52, any non-shift
+	// key clears the anchor. Bubbles v1.0.0's textarea has no built-in
+	// selection, so this is a thin wrapper that intercepts the shift
+	// arrows before forwarding their plain-arrow equivalents.
+	selAnchor int
+
 	keys keyMap
 }
 
@@ -86,9 +99,10 @@ func newPromptModel(keys keyMap) PromptModel {
 	ta.Focus()
 
 	return PromptModel{
-		ta:      ta,
-		histIdx: -1,
-		keys:    keys,
+		ta:        ta,
+		histIdx:   -1,
+		selAnchor: -1,
+		keys:      keys,
 	}
 }
 
@@ -104,6 +118,28 @@ func (p PromptModel) Update(msg tea.Msg) (PromptModel, tea.Cmd) {
 		p.ta.SetWidth(m.Width)
 
 	case tea.KeyMsg:
+		// Selection interception comes BEFORE the regular key switch so
+		// shift+arrow / ctrl+y never reach the textarea (it doesn't
+		// understand them). After this block, any other key clears the
+		// selection anchor — typing or navigating exits selection mode
+		// the same way it does in a GUI text field.
+		switch m.String() {
+		case "shift+left", "shift+right", "shift+up", "shift+down", "shift+home", "shift+end":
+			if p.selAnchor < 0 {
+				p.selAnchor = p.cursorRuneOffset()
+			}
+			plain := plainArrowKey(m.String())
+			p.ta, cmd = p.ta.Update(tea.KeyMsg{Type: plain})
+			return p, cmd
+		case "ctrl+y":
+			c := p.copySelectionCmd()
+			p.selAnchor = -1
+			return p, c
+		}
+		// Reached only for non-shift / non-copy keys. Clear the anchor so
+		// typing or a plain arrow exits selection mode cleanly.
+		p.selAnchor = -1
+
 		switch m.String() {
 		case "ctrl+r":
 			// Toggle incremental history search.
@@ -296,9 +332,24 @@ func (p *PromptModel) SetInFlight(v bool) { p.inFlight = v }
 
 func (p PromptModel) View() string {
 	var inner string
-	if p.inSearch {
+	switch {
+	case p.inSearch:
 		inner = "[search: " + p.searchBuf + "]\n" + p.ta.View()
-	} else {
+	case p.selAnchor >= 0:
+		// Inline status reveals the live selection size + the trigger
+		// key so the operator knows the selection is "real" even though
+		// the textarea itself can't render highlight (bubbles v1.0.0
+		// has no selection rendering). Appears inside the border to
+		// match the search-mode pattern.
+		cur := p.cursorRuneOffset()
+		n := cur - p.selAnchor
+		if n < 0 {
+			n = -n
+		}
+		hint := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).
+			Render(fmt.Sprintf("[sel: %d chars · ctrl+y to copy · esc to clear]", n))
+		inner = hint + "\n" + p.ta.View()
+	default:
 		inner = p.ta.View()
 	}
 	style := promptBorderStyle
@@ -306,6 +357,90 @@ func (p PromptModel) View() string {
 		style = promptBorderInFlightStyle
 	}
 	return style.Render(inner)
+}
+
+// cursorRuneOffset returns the textarea's current cursor position as a
+// rune offset into Value(). Counts runes (not bytes) so multi-byte input
+// (e.g. Korean) stays consistent with the selection range we slice from
+// []rune(Value()) later.
+func (p PromptModel) cursorRuneOffset() int {
+	row := p.ta.Line()
+	li := p.ta.LineInfo()
+	colInRow := li.StartColumn + li.ColumnOffset
+
+	lines := strings.Split(p.ta.Value(), "\n")
+	if row >= len(lines) {
+		row = len(lines) - 1
+	}
+	if row < 0 {
+		return 0
+	}
+	offset := 0
+	for i := 0; i < row; i++ {
+		offset += utf8.RuneCountInString(lines[i]) + 1 // +1 for the newline
+	}
+	if line := lines[row]; colInRow > utf8.RuneCountInString(line) {
+		colInRow = utf8.RuneCountInString(line)
+	}
+	return offset + colInRow
+}
+
+// plainArrowKey maps a shift+arrow key string to its plain-arrow KeyType
+// so the textarea (which has no selection-aware key bindings) still
+// performs the cursor movement the operator expects while the prompt
+// wrapper tracks the selection range separately.
+func plainArrowKey(shiftKey string) tea.KeyType {
+	switch shiftKey {
+	case "shift+left":
+		return tea.KeyLeft
+	case "shift+right":
+		return tea.KeyRight
+	case "shift+up":
+		return tea.KeyUp
+	case "shift+down":
+		return tea.KeyDown
+	case "shift+home":
+		return tea.KeyHome
+	case "shift+end":
+		return tea.KeyEnd
+	}
+	return tea.KeyNull
+}
+
+// copySelectionCmd writes the active selection to the system clipboard
+// via an OSC 52 escape sequence. The escape is emitted to os.Stderr
+// inside a tea.Cmd so bubble tea's renderer (which manages os.Stdout)
+// doesn't see the write and doesn't desync its cursor-tracking state.
+// Returns nil when there is no selection.
+func (p PromptModel) copySelectionCmd() tea.Cmd {
+	if p.selAnchor < 0 {
+		return nil
+	}
+	cur := p.cursorRuneOffset()
+	a, b := p.selAnchor, cur
+	if a > b {
+		a, b = b, a
+	}
+	runes := []rune(p.ta.Value())
+	if a < 0 {
+		a = 0
+	}
+	if b > len(runes) {
+		b = len(runes)
+	}
+	if a >= b {
+		return nil
+	}
+	text := string(runes[a:b])
+	return func() tea.Msg {
+		encoded := base64.StdEncoding.EncodeToString([]byte(text))
+		// OSC 52 ("set clipboard") is parsed and consumed by the
+		// terminal silently — no visible characters, no cursor
+		// movement — so writing it from a goroutine outside bubble
+		// tea's renderer pipeline is safe.
+		_, _ = os.Stderr.WriteString("\x1b]52;c;" + encoded + "\x07")
+		return nil
+	}
 }
 
 // Height returns the prompt's full rendered height in terminal rows, including
