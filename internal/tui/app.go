@@ -628,12 +628,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if res.done {
 			m.setupChat = nil
 		}
-		// Save succeeded: flip the footer state segment and reset the
-		// welcome banner so the next launch / cleared stream shows the
-		// returning-user form. Used to live in exitSetup; now lives on
-		// the actual success edge.
+		// Save succeeded: refresh the footer state segment AND deps.Contexts
+		// from the just-written cloudy.yaml so the footer reads the chosen
+		// cluster(s) — not the stale boot-time snapshot — and reset the
+		// welcome banner for the returning-user form.
 		if msg.err == nil {
-			m.footer.SetState(footerStateReady)
+			if cfg, err := config.Load(config.Path()); err == nil {
+				m.deps.Contexts = cfg.Contexts
+			}
+			m.footer.SetState(footerClusterState(m.deps.Contexts, m.deps.InitialCtx))
 			m.welcome = NewWelcomeModel(false, m.deps.InitialCtx)
 			m.welcome.SetWidth(m.width)
 		}

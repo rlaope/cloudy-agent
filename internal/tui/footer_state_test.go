@@ -30,9 +30,15 @@ func TestFooterClusterState(t *testing.T) {
 		{"single_ignores_default", []string{"prod"}, "staging", "prod"},
 		{"multi_default_first", []string{"prod", "staging", "dev"}, "prod", "prod +2"},
 		{"multi_default_middle", []string{"prod", "staging", "dev"}, "staging", "staging +2"},
-		{"multi_default_missing", []string{"prod", "staging", "dev"}, "qa", "prod +2"},
+		// When the kubeconfig current-context is NOT in the configured list,
+		// the footer surfaces that mismatch explicitly — silently picking
+		// the first configured name would lie about which cluster bare-word
+		// tool calls actually hit.
+		{"multi_default_missing", []string{"prod", "staging", "dev"}, "qa", "qa* (configured: prod +2)"},
 		{"multi_empty_default", []string{"prod", "staging"}, "", "prod +1"},
 		{"strips_empty_entries", []string{"", "prod", "", "staging"}, "prod", "prod +1"},
+		{"dedupes_duplicates", []string{"prod", "prod"}, "prod", "prod"},
+		{"dedupes_with_extras", []string{"prod", "staging", "prod"}, "prod", "prod +1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -59,6 +65,16 @@ func TestMouseCaptureDisabled(t *testing.T) {
 		{"false", false},
 		{"FALSE", false},
 		{"False", false},
+		// case-insensitive + whitespace tolerant — closes the symmetric-
+		// shape gap that the first version of this PR shipped.
+		{"FaLsE", false},
+		{"no", false},
+		{"No", false},
+		{"off", false},
+		{"OFF", false},
+		{" false", false},
+		{"false ", false},
+		{"  0  ", false},
 		{"1", true},
 		{"true", true},
 		{"yes", true},

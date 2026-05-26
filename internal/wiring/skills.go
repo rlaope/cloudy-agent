@@ -61,9 +61,12 @@ func ValidateSkillToolRefs(reg *skills.Registry, tr *tools.Registry) error {
 			}
 			// Suppress refs to tools in a skipped group — the operator
 			// already saw the skipped-group banner on startup and can't
-			// act on the skill complaining about it.
-			group := groupPrefix(tool)
-			if _, isSkipped := skipped[group]; isSkipped {
+			// act on the skill complaining about it. The match has to
+			// understand sub-group skip keys: the `perf` group registers
+			// `perf.go_pprof_cpu` etc. but skips with keys like
+			// `perf-pprof` / `perf-v8` / `perf-linux`, so a bare
+			// `skipped[group]` lookup would miss them and leak the noise.
+			if isInSkippedGroup(tool, skipped) {
 				continue
 			}
 			errs = append(errs, fmt.Sprintf("skill %q references unknown tool %q", s.Name, tool))
@@ -73,6 +76,30 @@ func ValidateSkillToolRefs(reg *skills.Registry, tr *tools.Registry) error {
 		return fmt.Errorf("skills: validation failed:\n  %s", strings.Join(errs, "\n  "))
 	}
 	return nil
+}
+
+// isInSkippedGroup reports whether the given tool name belongs to any
+// skipped tool group. Matches both the direct prefix
+// (`log.loki_query_range` → `log`) and sub-group keys that share the same
+// prefix (`perf.go_pprof_cpu` → matches `perf-pprof` because
+// `tools/perf/register.go` registers tools under `perf.*` but calls
+// MarkSkipped with split keys per probe).
+func isInSkippedGroup(toolName string, skipped map[string]string) bool {
+	group := groupPrefix(toolName)
+	if group == "" {
+		return false
+	}
+	if _, ok := skipped[group]; ok {
+		return true
+	}
+	// Sub-group keys: `perf-pprof`, `perf-v8`, …
+	prefix := group + "-"
+	for k := range skipped {
+		if strings.HasPrefix(k, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // groupPrefix returns the segment before the first '.' in a tool name —

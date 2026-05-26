@@ -165,3 +165,31 @@ func TestSkillToolRefs_SuppressesSkippedGroups(t *testing.T) {
 		}
 	}
 }
+
+// TestSkillToolRefs_SuppressesSubGroupSkips covers the case where a single
+// tool group registers tools under one prefix (e.g. `perf.*`) but calls
+// MarkSkipped with sub-group keys (`perf-pprof`, `perf-v8`, `perf-linux`).
+// A naive `skipped[groupPrefix(toolName)]` lookup misses those — the tool's
+// prefix is `perf` while the skip key is `perf-pprof`. The suppression rule
+// must understand the sub-group shape or the wall-of-warnings comes back
+// for environments that skipped one of the perf probes.
+func TestSkillToolRefs_SuppressesSubGroupSkips(t *testing.T) {
+	t.Parallel()
+
+	reg := skills.New([]*skills.Skill{{
+		Name:         "uses-perf-tools",
+		Description:  "skill that references perf tools whose probes were skipped",
+		AllowedTools: []string{"perf.go_pprof_cpu", "perf.linux_perf_record"},
+		SystemPrompt: "irrelevant",
+	}})
+
+	tr := tools.New()
+	// No perf tools registered. Skip keys mirror real
+	// internal/tools/perf/register.go behaviour.
+	tr.MarkSkipped("perf-pprof", "no pprof endpoints configured")
+	tr.MarkSkipped("perf-linux", "perf requires linux, host is darwin")
+
+	if err := wiring.ValidateSkillToolRefs(reg, tr); err != nil {
+		t.Fatalf("expected sub-group skipped refs to be suppressed, got: %v", err)
+	}
+}

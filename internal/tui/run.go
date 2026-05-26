@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -72,13 +73,13 @@ func Run(ctx context.Context, deps Deps) error {
 }
 
 // mouseCaptureDisabled reports whether the operator has opted out of bubble
-// tea's mouse capture via CLOUDY_NO_MOUSE. Any non-empty value other than
-// the literal "0" / "false" counts as opt-out so common shapes (`=1`,
-// `=true`, `=yes`) all work without a parser.
+// tea's mouse capture via CLOUDY_NO_MOUSE. The value is trimmed and matched
+// case-insensitively so common shell shapes (=1, =true, =yes, = false with
+// a stray paste-space) all behave the way the operator expects.
 func mouseCaptureDisabled() bool {
-	v := os.Getenv("CLOUDY_NO_MOUSE")
-	switch v {
-	case "", "0", "false", "FALSE", "False":
+	v := strings.TrimSpace(os.Getenv("CLOUDY_NO_MOUSE"))
+	switch strings.ToLower(v) {
+	case "", "0", "false", "no", "off":
 		return false
 	}
 	return true
