@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -55,9 +56,32 @@ func Run(ctx context.Context, deps Deps) error {
 	// emulator translates wheel into ↑/↓ key sequences, which the
 	// prompt textarea interprets as history navigation — the opposite
 	// of what the operator means when they scroll up to read history.
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	//
+	// Mouse capture also intercepts drag, which disables the terminal's
+	// native click-and-drag text selection — annoying when the operator
+	// wants to copy a chunk of output. CLOUDY_NO_MOUSE=1 opts out so
+	// drag-to-select works at the cost of in-app wheel scrolling (use
+	// PgUp/PgDn or arrow keys instead).
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	if !mouseCaptureDisabled() {
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(m, opts...)
 	_, err := p.Run()
 	return err
+}
+
+// mouseCaptureDisabled reports whether the operator has opted out of bubble
+// tea's mouse capture via CLOUDY_NO_MOUSE. Any non-empty value other than
+// the literal "0" / "false" counts as opt-out so common shapes (`=1`,
+// `=true`, `=yes`) all work without a parser.
+func mouseCaptureDisabled() bool {
+	v := os.Getenv("CLOUDY_NO_MOUSE")
+	switch v {
+	case "", "0", "false", "FALSE", "False":
+		return false
+	}
+	return true
 }
 
 // makeSwapModel returns a SwapModel closure that resolves modelID to a
