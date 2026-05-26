@@ -54,11 +54,6 @@ Read-only multi-cluster SRE monitoring AI CLI. Go module rooted at
 - Session log: `~/.cloudy/logs/<id>.jsonl`. `tail -1 $(ls -t … | head -1)`
   surfaces the latest agent error verbatim — that's how the Anthropic
   `tool_use.input: Field required` 400 was diagnosed.
-- TUI default = terminal-native mode (no alt-screen, no mouse capture)
-  so drag-to-select and the terminal's native copy shortcut work. Wheel
-  scroll is disabled in-app — use PgUp/PgDn / arrows. Opt back into the
-  full-screen pinned-header/footer TUI with `CLOUDY_FULLSCREEN=1`
-  (case + whitespace tolerant; common shell shapes accepted).
 
 ## Korean responses
 
