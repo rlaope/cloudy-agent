@@ -391,18 +391,44 @@ func TestModel_PaletteIncludes_Scope(t *testing.T) {
 	}
 }
 
-func TestModel_PaletteScope_InsertsPrefix(t *testing.T) {
+// TestModel_PaletteScope_BareTriggersPicker pins the HITL flow: a
+// bare /scope from the palette must clear the prompt and arm the
+// namespace picker, rather than the old "insert /scope prefix and
+// make the operator type the arg" stub. The async kubectl call is
+// triggered as a tea.Cmd; we don't invoke it here (tests don't need a
+// live cluster), we only check that scopePickerActive flipped.
+func TestModel_PaletteScope_BareTriggersPicker(t *testing.T) {
 	m := NewModel(makeDeps())
 	next, _ := m.Update(windowMsg())
 	m = next.(Model)
 
 	cmd := m.handlePaletteAction(paletteActionMsg{cmd: "scope"})
-	if cmd != nil {
-		cmd()
+	if cmd == nil {
+		t.Fatal("bare /scope should return a cmd (kubectl + chrome write)")
 	}
+	if !m.scopePickerActive {
+		t.Error("bare /scope must arm scopePickerActive so the result lands in the picker")
+	}
+	if m.prompt.Value() != "" {
+		t.Errorf("bare /scope should clear the prompt; got %q", m.prompt.Value())
+	}
+}
 
-	if m.prompt.Value() != "/scope " {
-		t.Errorf("palette scope action should set prompt to '/scope ', got %q", m.prompt.Value())
+// TestModel_PaletteScope_WithArgRoutesToHandler confirms that the
+// scope action still honours the parsed-arg path when the operator
+// typed e.g. "/scope ns=foo" — that goes straight to handleScopeCmd
+// instead of the picker.
+func TestModel_PaletteScope_WithArgRoutesToHandler(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	_ = m.handlePaletteAction(paletteActionMsg{cmd: "scope", arg: "ns=payments"})
+	if m.scopePickerActive {
+		t.Error("/scope with an arg must not arm the picker")
+	}
+	if got := m.scope.Namespaces; len(got) != 1 || got[0] != "payments" {
+		t.Errorf("/scope ns=payments should apply the namespace; got %v", got)
 	}
 }
 

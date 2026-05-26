@@ -88,20 +88,36 @@ func TestAgentStream_PumpsEveryEvent(t *testing.T) {
 			gotDone = true
 		}
 	}
-	// Drain any flush ticks that arrived after the Done event so the
-	// final batch of tokens lands in content before the assertion.
-	// Without this the test could observe content snapshotted between
-	// the last streamTokenMsg and its corresponding flush.
-	for _, c := range pending {
+	// Drain any flush + playback ticks that arrived after the Done
+	// event so the final batch of tokens lands in content before the
+	// assertion. The playback drain matters because sentence-atomic
+	// emission only flushes a trailing partial (e.g. "안녕하세요!"
+	// without a following space) once running == false — that happens
+	// on the next playbackTickMsg after agentDoneMsg.
+	for len(pending) > 0 {
+		c := pending[0]
+		pending = pending[1:]
 		if c == nil {
 			continue
 		}
 		msg := c()
-		if _, isFlush := msg.(streamFlushTickMsg); !isFlush {
+		if msg == nil {
 			continue
 		}
-		next, _ := m.Update(msg)
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			pending = append(pending, batch...)
+			continue
+		}
+		switch msg.(type) {
+		case streamFlushTickMsg, playbackTickMsg:
+		default:
+			continue
+		}
+		next, follow := m.Update(msg)
 		m = next.(Model)
+		if follow != nil {
+			pending = append(pending, follow)
+		}
 	}
 	if !gotDone {
 		t.Fatal("agentDoneMsg never arrived — pump loop terminated early")

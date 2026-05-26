@@ -120,23 +120,23 @@ func formatThinkingElapsed(d time.Duration) string {
 // It is rendered unconditionally from app start so the prompt position
 // never jumps when an agent run begins or ends — earlier versions
 // returned "" while idle, which made every Enter and every agentDoneMsg
-// shove the prompt up/down by a row. Four states:
+// shove the prompt up/down by a row. Three states:
 //
 //	· ready                                  -- idle, between turns
-//	✦ Synthesizing… (3s · 240 tokens)        -- thinking, no bytes yet
-//	✦ Typing       (1m12s · 1240 tokens)     -- playback in progress
+//	✦ Synthesizing… (3s · 240 tokens)        -- LLM is thinking, no bytes yet
+//	✦ Receiving…   (1m12s · 1240 tokens)     -- bytes arriving, body deferred until Done
 //
-// "Typing" stays up while playback drains, even after the LLM itself
-// has finished, so the status row honestly reflects what the operator
-// is watching: characters still landing on the screen.
+// The playback typewriter was removed in favour of a single drain on
+// agentDoneMsg, so there is no "Typing" state — once Done lands the
+// row reverts to idle in the same Update that writes the body.
 func (m Model) renderThinkingRow() string {
-	if !m.running && !m.playbackActive {
+	if !m.running {
 		return thinkingIdleStyle.Render("· ready")
 	}
 	elapsed := formatThinkingElapsed(time.Since(m.thinking.start))
-	verb := "Typing"
-	if !m.thinking.streaming {
-		verb = thinkingVerbs[m.thinking.verbIdx] + "…"
+	verb := thinkingVerbs[m.thinking.verbIdx] + "…"
+	if m.thinking.streaming {
+		verb = "Receiving…"
 	}
 	// Braille spinner rotates every tick (~250ms). Using the same tick
 	// counter that drives verb rotation keeps the two animations in
