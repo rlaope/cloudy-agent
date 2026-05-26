@@ -15,14 +15,15 @@ const maxPromptLines = 6
 // the prompt fills the full terminal width with two clean rules framing it.
 // Border colour is bright white (15) so the input box reads as the focus
 // surface in the TUI, contrasted against the dim chrome elsewhere.
-// Padding(1, 0) adds one blank row above and one below the textarea
-// content so the prompt breathes a little instead of butting flush
-// against the top/bottom rules. Operators reported the input felt
-// cramped at the default zero-padding.
+// Padding(1, 0, 0, 0) adds one blank row above the textarea content
+// (between the top rule and the input line) so the prompt has a small
+// breath of separation from the stream above without stealing a
+// second row from the viewport. Bottom padding stays zero — the
+// cursor line itself reads as the breathing room below.
 var promptBorderStyle = lipgloss.NewStyle().
 	Border(lipgloss.NormalBorder(), true, false, true, false).
 	BorderForeground(lipgloss.Color("15")).
-	Padding(1, 0)
+	Padding(1, 0, 0, 0)
 
 // promptBorderInFlightStyle is the same border drawn in the brand
 // sky-blue so the operator gets an at-a-glance "the system is working"
@@ -32,13 +33,13 @@ var promptBorderStyle = lipgloss.NewStyle().
 var promptBorderInFlightStyle = lipgloss.NewStyle().
 	Border(lipgloss.NormalBorder(), true, false, true, false).
 	BorderForeground(lipgloss.Color("117")).
-	Padding(1, 0)
+	Padding(1, 0, 0, 0)
 
 // promptBorderHeight is the number of extra terminal rows the border
-// styles add: top rule + top pad + bottom pad + bottom rule = 4. Used
-// by the parent Model for layout math; bump in lockstep with the
-// Padding above if anyone re-tunes the breathing room.
-const promptBorderHeight = 4
+// styles add: top rule + top pad + bottom rule = 3. Used by the
+// parent Model for layout math; bump in lockstep with the Padding
+// above if anyone re-tunes the breathing room.
+const promptBorderHeight = 3
 
 // submitMsg is sent when the user presses Enter on a non-slash prompt.
 type submitMsg string
