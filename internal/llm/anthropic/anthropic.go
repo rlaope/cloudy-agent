@@ -356,4 +356,3 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 	}
 	ch <- llm.Chunk{Done: true}
 }
-
