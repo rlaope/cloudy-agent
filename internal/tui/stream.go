@@ -285,8 +285,15 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 			if wrap < 20 {
 				wrap = 20
 			}
+			// Pin a static style instead of WithAutoStyle: auto-detect
+			// fires an OSC 11 background-color query at the terminal,
+			// and in inline mode (no alt-screen) the terminal's response
+			// gets fed to stdin and lands in the prompt textarea as a
+			// literal `]11;rgb:….` string. The dark style is the right
+			// default for a developer terminal; light terminals can be
+			// added behind an env var if anyone asks.
 			r, err := glamour.NewTermRenderer(
-				glamour.WithAutoStyle(),
+				glamour.WithStandardStyle("dark"),
 				glamour.WithWordWrap(wrap),
 			)
 			if err == nil {
