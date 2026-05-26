@@ -158,6 +158,41 @@ func TestStreamModel_SentenceBatchedCommit(t *testing.T) {
 	}
 }
 
+// TestStreamModel_ClauseBoundaryCommits pins the expanded boundary
+// set: a clause separator (`,`, `;`, `:`) followed by whitespace
+// commits the prefix just like a sentence terminator does. The narrow
+// sentence-only rule used to leave long enumerated sentences sitting
+// invisible until the final period; clause-level commit makes the
+// streamed output read at the same pace the operator scans it.
+func TestStreamModel_ClauseBoundaryCommits(t *testing.T) {
+	s := newStreamModel(false)
+	updated, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = updated
+
+	// Comma + space mid-sentence should already commit the prefix —
+	// without this rule a 30-word enumerated sentence would sit
+	// invisible until its final period.
+	updated, _ = s.Update(streamTokenMsg("First clause, "))
+	s = updated
+	if !s.drainPending() {
+		t.Fatal("comma + space should commit just like a sentence terminator")
+	}
+	committedAfterComma := s.mdCommitted
+	if committedAfterComma == 0 {
+		t.Errorf("mdCommitted should advance after `, `; got 0")
+	}
+
+	// Semicolon also counts.
+	updated, _ = s.Update(streamTokenMsg("second; "))
+	s = updated
+	if !s.drainPending() {
+		t.Fatal("semicolon + space should commit")
+	}
+	if s.mdCommitted <= committedAfterComma {
+		t.Errorf("mdCommitted should advance past `; `; was %d still %d", committedAfterComma, s.mdCommitted)
+	}
+}
+
 // TestStreamModel_FinalizeForcesUncommittedTail pins the rule that a
 // tool / chrome boundary force-commits whatever's left in mdBuf, even
 // if the message ended mid-sentence. Without this, an LLM that omits

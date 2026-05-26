@@ -277,13 +277,14 @@ func lastSentenceEnd(s string, minPos int) int {
 			// Newlines are unambiguous boundaries — commit immediately
 			// even at end-of-buffer.
 			return i
-		case '.', '!', '?':
+		case '.', '!', '?', ',', ';', ':':
+			// Sentence terminators AND clause separators count.
+			// Committing on commas / colons gives clause-by-clause
+			// cadence — sentence-only was too choppy in practice
+			// (long sentences sat invisible for too long). The
+			// followed-by-whitespace rule still applies so we don't
+			// commit on numbers like `3.14` or `Mr.` mid-stream.
 			if i+1 >= len(s) {
-				// At end of buffer with `.`/`!`/`?` — we cannot tell
-				// yet whether this is an abbreviation ("Mr.") or a
-				// sentence end. Wait for the next token's first byte
-				// to disambiguate; if it's whitespace this same
-				// position will be returned on the next call.
 				continue
 			}
 			next := s[i+1]
