@@ -285,15 +285,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, thinkingTickCmd()
 
 	case playbackTickMsg:
-		// The typewriter playback loop was removed in favour of a
-		// single drain on agentDoneMsg — the operator prefers a
-		// "thinking spinner → finished reply lands at once" rhythm
-		// over a slow per-char reveal. Leaving the message type
-		// declared (no callers, no tickCmd issues it) keeps existing
-		// tests from re-declaring the symbol while making the
-		// no-render contract explicit if someone re-introduces a
-		// tick from a future code path.
-		return m, nil
+		// Post-done typewriter drain. Each tick pops a chunk of runes
+		// off playbackBuf and writes them to the stream; the loop
+		// keeps re-arming itself until the buffer is empty, at which
+		// point playbackActive drops to false and no further ticks
+		// are scheduled. Ticks that arrive after a cancel/clear (or
+		// after a ToolBegin force-drain) find playbackActive=false
+		// and are a no-op.
+		if !m.playbackActive {
+			return m, nil
+		}
+		chunk := m.popPlaybackRunes(playbackRunesPerTick)
+		if chunk == "" {
+			m.playbackActive = false
+			return m, nil
+		}
+		var sCmd tea.Cmd
+		m.stream, sCmd = m.stream.Update(streamWriteMsg(chunk))
+		if len(m.playbackBuf) == 0 {
+			m.playbackActive = false
+			return m, sCmd
+		}
+		return m, tea.Batch(sCmd, playbackTickCmd())
 
 	case tea.KeyMsg:
 		// Splash key-skip: an eager typist who hits Enter / starts a
@@ -718,21 +731,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.writeStream("\n" + agentError("error", msg.err))
 		}
-		// Happy path: drain the entire buffered reply at once. The
-		// operator saw the thinking spinner during streaming; once
-		// Done arrives the body lands in a single synchronous write
-		// and the markdown renders naturally without an artificial
-		// typewriter drag.
-		body := m.drainPlaybackBuffer()
+		// Happy path: stop the spinner and start a fast typewriter
+		// drain of the buffered reply. The body was queued silently
+		// during streaming so the user only saw the spinner; once
+		// Done arrives it flows in at ~1500 chars/sec so the text
+		// appears naturally rather than as a single instant dump.
+		// Errors and ToolBegin keep their synchronous fast-flush
+		// paths so neither feels dragged behind the typewriter.
 		m.thinking.streaming = false
 		m.assistantTurnStarted = false
-		out := echoFlush + body
-		if out == "" {
-			return m, nil
+		m.releasePlaybackTail()
+		var cmds []tea.Cmd
+		if echoFlush != "" {
+			var fCmd tea.Cmd
+			m.stream, fCmd = m.stream.Update(streamWriteMsg(echoFlush))
+			cmds = append(cmds, fCmd)
 		}
-		var sCmd tea.Cmd
-		m.stream, sCmd = m.stream.Update(streamWriteMsg(out))
-		return m, sCmd
+		if len(m.playbackBuf) == 0 {
+			m.playbackActive = false
+			return m, tea.Batch(cmds...)
+		}
+		m.playbackActive = true
+		cmds = append(cmds, playbackTickCmd())
+		return m, tea.Batch(cmds...)
 
 	case selfUpdateDoneMsg:
 		// Dump the captured progress log first so the operator sees

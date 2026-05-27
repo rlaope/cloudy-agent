@@ -15,13 +15,15 @@ import (
 // released for draining once its terminator has landed.
 const playbackTickInterval = 16 * time.Millisecond
 
-// playbackRunesPerTick is the per-frame rune budget. 2 runes / 16ms
-// ≈ 125 chars/sec — slow enough that an LLM streaming at 200-500
-// chars/sec keeps the emittable window ahead of the typewriter, so
-// once a sentence starts appearing it flows continuously instead of
-// stuttering between SSE chunks. Faster rates emptied the buffer mid-
-// stream and produced the "끊김" pattern the previous tuning fought.
-const playbackRunesPerTick = 2
+// playbackRunesPerTick is the per-frame rune budget. 24 runes / 16ms
+// ≈ 1500 chars/sec — visibly a typewriter ("text flows in") rather
+// than an instant dump, but fast enough that a few-hundred-token
+// reply finishes in under a second. The tick only runs *after*
+// agentDoneMsg has arrived, so there is no look-ahead worry about
+// the emittable window catching the LLM's SSE rate; the whole
+// buffer is already complete and released at full length via
+// releasePlaybackTail.
+const playbackRunesPerTick = 24
 
 // playbackToolFlushChunk caps the runes emitted in a single
 // streamWriteMsg when a ToolBegin event forces an early drain.
