@@ -296,6 +296,20 @@ func lastSentenceEnd(s string, minPos int) int {
 	return -1
 }
 
+// RenderAssistantMarkdown is the public accessor for renderAssistantTail
+// used by the post-done playback path in app.go: when an assistant turn
+// finishes, the buffered raw markdown is rendered via glamour with the
+// same width-aware renderer used for the in-stream tail, so the visible
+// output gets headings/code/lists styled instead of the literal #/`/-
+// syntax.
+//
+// Returns the input verbatim when noColor mode is active or the
+// renderer hasn't been initialised yet — same fallback contract as the
+// internal helper.
+func (s *StreamModel) RenderAssistantMarkdown(raw string) string {
+	return s.renderAssistantTail(raw)
+}
+
 // renderAssistantTail returns the glamour-rendered form of the current
 // assistant message, or the raw text when noColor mode is set / the
 // renderer isn't initialised yet (pre-first WindowSizeMsg). Glamour

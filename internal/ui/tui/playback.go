@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -49,31 +50,23 @@ func playbackTickCmd() tea.Cmd {
 }
 
 // bufferAssistantToken queues the prose half of an LLM token for
-// typewriter playback. Three contracts:
+// typewriter playback. The buffer stores raw markdown (`#`, `**`,
+// “ ` “, list dashes) verbatim — agentDoneMsg later runs the
+// accumulated text through glamour so the operator sees rendered
+// headings / bold / code / lists rather than the literal syntax.
 //
-//  1. Every `\n` is followed by a fixed continuation indent
-//     (assistantContIndent) so wrapped paragraphs read as a single
-//     block, aligned under the bullet rather than flush left.
-//  2. Runes are appended as []rune (not bytes) so the playback tick
-//     pops a fixed number of *characters* per frame without ever
-//     splitting a multi-byte UTF-8 sequence — Korean and emoji
-//     survive intact.
-//  3. After appending, playbackEmittable is advanced to the last
-//     sentence boundary present in the buffer. The tick handler only
-//     drains runes up to that point, so once the typewriter starts
-//     emitting a sentence it is guaranteed to have the entire sentence
-//     buffered — no mid-sentence stalls between SSE chunks.
+// Runes are appended as []rune (not bytes) so the playback tick can
+// pop a fixed number of *characters* per frame without ever splitting
+// a multi-byte UTF-8 sequence — Korean and emoji survive intact.
 //
 // The styled "●  " bullet is NOT buffered here — it is emitted
 // directly via streamWriteMsg by the caller so its ANSI escape
-// sequences land atomically.
+// sequences land atomically. Continuation indenting for wrapped
+// lines is applied AFTER glamour renders, via indentRenderedBlock,
+// so glamour does not misinterpret the leading whitespace as a
+// fenced code block.
 func (m *Model) bufferAssistantToken(token string) {
-	for _, r := range token {
-		m.playbackBuf = append(m.playbackBuf, r)
-		if r == '\n' {
-			m.playbackBuf = append(m.playbackBuf, []rune(assistantContIndent)...)
-		}
-	}
+	m.playbackBuf = append(m.playbackBuf, []rune(token)...)
 	m.refreshEmittableWindow()
 }
 
@@ -129,22 +122,74 @@ func (m *Model) drainPlaybackBuffer() string {
 	return out
 }
 
-// popPlaybackRunes removes up to n runes from the front of the
-// playback buffer, capped by the emittable window. Returns the empty
-// string when the window is closed (no complete sentence available)
-// or the buffer is empty. Safe to call when n exceeds available
-// runes; returns whatever was emittable.
+// popPlaybackRunes removes up to n VISIBLE runes from the front of
+// the playback buffer, capped by the emittable window. ANSI escape
+// sequences (CSI: ESC `[` … final byte 0x40-0x7E) are walked atomically
+// and always emitted as part of the returned chunk, never split — so
+// the post-glamour rendered output (which is text + interleaved
+// `\x1b[…m` styling) typewriter-replays without ever sending a
+// half-escape that would garble the terminal.
+//
+// Returns the empty string when the buffer is empty or the emittable
+// window is closed.
 func (m *Model) popPlaybackRunes(n int) string {
 	if len(m.playbackBuf) == 0 || m.playbackEmittable == 0 {
 		return ""
 	}
-	if n > m.playbackEmittable {
-		n = m.playbackEmittable
+	limit := m.playbackEmittable
+	if limit > len(m.playbackBuf) {
+		limit = len(m.playbackBuf)
 	}
-	head := string(m.playbackBuf[:n])
-	m.playbackBuf = m.playbackBuf[n:]
-	m.playbackEmittable -= n
+	visible := 0
+	i := 0
+	for i < limit && visible < n {
+		r := m.playbackBuf[i]
+		if r == 0x1b { // ESC: emit the whole escape sequence atomically
+			i++
+			if i < limit && m.playbackBuf[i] == '[' {
+				i++
+				for i < limit {
+					c := m.playbackBuf[i]
+					i++
+					if c >= '@' && c <= '~' {
+						break
+					}
+				}
+			}
+			continue
+		}
+		visible++
+		i++
+	}
+	head := string(m.playbackBuf[:i])
+	m.playbackBuf = m.playbackBuf[i:]
+	if m.playbackEmittable >= i {
+		m.playbackEmittable -= i
+	} else {
+		m.playbackEmittable = 0
+	}
 	return head
+}
+
+// indentRenderedBlock prepends assistantContIndent (three spaces) to
+// every non-empty line of s except the first. The first line follows
+// the "●  " bullet directly; subsequent lines wrap under the column
+// the bullet established, giving the assistant block a clean left
+// edge. ANSI escape sequences are preserved verbatim — `\n` is the
+// only byte the walk reacts to and escape sequences never contain
+// newlines, so the split is safe.
+func indentRenderedBlock(s string) string {
+	if s == "" {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	for i := 1; i < len(lines); i++ {
+		if lines[i] == "" {
+			continue
+		}
+		lines[i] = assistantContIndent + lines[i]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // releasePlaybackTail forces the emittable window to cover the entire

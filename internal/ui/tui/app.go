@@ -731,15 +731,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.writeStream("\n" + agentError("error", msg.err))
 		}
-		// Happy path: stop the spinner and start a fast typewriter
-		// drain of the buffered reply. The body was queued silently
-		// during streaming so the user only saw the spinner; once
-		// Done arrives it flows in at ~1500 chars/sec so the text
-		// appears naturally rather than as a single instant dump.
-		// Errors and ToolBegin keep their synchronous fast-flush
-		// paths so neither feels dragged behind the typewriter.
+		// Happy path: render the buffered markdown through glamour so
+		// headings / bold / code fences / lists land as terminal-
+		// styled text rather than literal #/`/* syntax, then start a
+		// fast typewriter drain of the rendered output. The body was
+		// queued silently during streaming so the user only saw the
+		// spinner; once Done arrives it flows in at ~1500 chars/sec.
+		// Errors and ToolBegin keep their fast-flush paths so neither
+		// feels dragged behind the typewriter.
 		m.thinking.streaming = false
 		m.assistantTurnStarted = false
+		if len(m.playbackBuf) > 0 {
+			raw := string(m.playbackBuf)
+			rendered := m.stream.RenderAssistantMarkdown(raw)
+			rendered = strings.TrimRight(rendered, "\n")
+			rendered = indentRenderedBlock(rendered)
+			m.playbackBuf = []rune(rendered)
+		}
 		m.releasePlaybackTail()
 		var cmds []tea.Cmd
 		if echoFlush != "" {
