@@ -81,23 +81,14 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return errf("skills: %w", err)
 	}
 
-	activeProfile, _ := permission.LoadActive()
-
-	toolReg, warn := wiring.BuildRegistry(wiring.Options{
+	toolReg, warn := wiring.Rebuild(cfg, wiring.RebuildOpts{
 		KubeconfigPath: opts.base.kubeconfig,
 		ContextName:    opts.base.context,
-		Contexts:       cfg.Contexts,
-		Profile:        activeProfile,
-		PromEndpoints:  cfg.Prometheus,
-		Databases:      cfg.Databases,
-		Logs:           cfg.Logs,
-		Tracing:        cfg.Tracing,
-		Pprof:          cfg.Pprof,
-		NodeInspectors: cfg.NodeInspectors,
 	})
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
 	}
+	activeProfile, _ := permission.LoadActive()
 	if activeProfile != nil {
 		fmt.Fprintf(stderr, "cloudy: profile=%s\n", activeProfile.Name)
 	}
