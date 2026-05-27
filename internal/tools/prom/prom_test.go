@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	promclient "github.com/rlaope/cloudy/internal/clients/prom"
 	"github.com/rlaope/cloudy/internal/tools/prom"
 )
 
@@ -77,11 +78,11 @@ func TestQuery_SendsCorrectPath(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c, err := prom.NewClient(srv.URL, "", "", "")
+	c, err := promclient.NewClient(srv.URL, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	clients := map[string]*prom.Client{"default": c}
+	clients := map[string]*promclient.Client{"default": c}
 	tool := prom.NewQueryTool(clients)
 
 	args, _ := json.Marshal(map[string]any{
@@ -110,11 +111,11 @@ func TestQueryRange_ParsesMatrix(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c, err := prom.NewClient(srv.URL, "", "", "")
+	c, err := promclient.NewClient(srv.URL, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	clients := map[string]*prom.Client{"default": c}
+	clients := map[string]*promclient.Client{"default": c}
 	tool := prom.NewQueryRangeTool(clients)
 
 	start := time.Now().Add(-5 * time.Minute)
@@ -149,11 +150,11 @@ func TestLabelValues_ParsesValues(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c, err := prom.NewClient(srv.URL, "", "", "")
+	c, err := promclient.NewClient(srv.URL, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	clients := map[string]*prom.Client{"default": c}
+	clients := map[string]*promclient.Client{"default": c}
 	tool := prom.NewLabelValuesTool(clients)
 
 	args, _ := json.Marshal(map[string]any{
@@ -178,11 +179,11 @@ func TestSeries_ParsesSeries(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c, err := prom.NewClient(srv.URL, "", "", "")
+	c, err := promclient.NewClient(srv.URL, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	clients := map[string]*prom.Client{"default": c}
+	clients := map[string]*promclient.Client{"default": c}
 	tool := prom.NewSeriesTool(clients)
 
 	args, _ := json.Marshal(map[string]any{
@@ -208,8 +209,8 @@ func TestPromQLValidation(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := prom.NewClient(srv.URL, "", "", "")
-	clients := map[string]*prom.Client{"default": c}
+	c, _ := promclient.NewClient(srv.URL, "", "", "")
+	clients := map[string]*promclient.Client{"default": c}
 	tool := prom.NewQueryTool(clients)
 
 	args, _ := json.Marshal(map[string]any{"query": "rate(http_requests_total[5m)"}) // unbalanced

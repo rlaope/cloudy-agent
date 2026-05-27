@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	promclient "github.com/rlaope/cloudy/internal/clients/prom"
 	"github.com/rlaope/cloudy/internal/tools"
 )
 
@@ -16,12 +17,12 @@ const maxRangePoints = 11000
 
 // QueryRangeTool implements prom.query_range.
 type QueryRangeTool struct {
-	clients    map[string]*Client
+	clients    map[string]*promclient.Client
 	defaultKey string
 }
 
 // NewQueryRangeTool constructs a QueryRangeTool.
-func NewQueryRangeTool(clients map[string]*Client) *QueryRangeTool {
+func NewQueryRangeTool(clients map[string]*promclient.Client) *QueryRangeTool {
 	return &QueryRangeTool{clients: clients, defaultKey: firstKey(clients)}
 }
 

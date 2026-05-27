@@ -1,9 +1,12 @@
-// Package prom provides read-only Prometheus tools for the cloudy SRE agent.
+// Package promclient is the shared read-only Prometheus HTTP client for the
+// cloudy SRE agent. It is consumed both by the prom.* tool group and by
+// other tools (currently the gpu DCGM exporter scrape) that need to query
+// Prometheus directly.
 //
 // All HTTP traffic from this package flows through transport.New so that the
 // read-only contract (GET/HEAD/OPTIONS only) is enforced at the transport
 // layer, in addition to any network-level controls on the Prometheus endpoint.
-package prom
+package promclient
 
 import (
 	"context"

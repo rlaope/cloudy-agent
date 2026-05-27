@@ -7,18 +7,19 @@ import (
 	"strings"
 	"time"
 
+	promclient "github.com/rlaope/cloudy/internal/clients/prom"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/tools"
 )
 
 // LabelValuesTool implements prom.label_values.
 type LabelValuesTool struct {
-	clients    map[string]*Client
+	clients    map[string]*promclient.Client
 	defaultKey string
 }
 
 // NewLabelValuesTool constructs a LabelValuesTool.
-func NewLabelValuesTool(clients map[string]*Client) *LabelValuesTool {
+func NewLabelValuesTool(clients map[string]*promclient.Client) *LabelValuesTool {
 	return &LabelValuesTool{clients: clients, defaultKey: firstKey(clients)}
 }
 

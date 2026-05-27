@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	promclient "github.com/rlaope/cloudy/internal/clients/prom"
 )
 
 func TestQueryRange_RejectsExcessivePoints(t *testing.T) {
-	tool := NewQueryRangeTool(map[string]*Client{"default": {}})
+	tool := NewQueryRangeTool(map[string]*promclient.Client{"default": {}})
 
 	// 30d / 1s = 2_592_000 points — far above the 11k cap.
 	args, _ := json.Marshal(map[string]any{
@@ -29,7 +31,7 @@ func TestQueryRange_RejectsExcessivePoints(t *testing.T) {
 }
 
 func TestQueryRange_RejectsReversedWindow(t *testing.T) {
-	tool := NewQueryRangeTool(map[string]*Client{"default": {}})
+	tool := NewQueryRangeTool(map[string]*promclient.Client{"default": {}})
 
 	args, _ := json.Marshal(map[string]any{
 		"endpoint": "default",

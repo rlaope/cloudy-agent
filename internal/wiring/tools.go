@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 
+	promclient "github.com/rlaope/cloudy/internal/clients/prom"
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/tools"
@@ -139,9 +140,10 @@ func buildHub(opts Options) (*k8s.Hub, error) {
 }
 
 // buildPromClients converts a slice of PrometheusEndpoint config entries into
-// a map of named prom.Client values, resolving credentials from the environment.
-func buildPromClients(endpoints []config.PrometheusEndpoint) map[string]*prom.Client {
-	clients := make(map[string]*prom.Client, len(endpoints))
+// a map of named promclient.Client values, resolving credentials from the
+// environment.
+func buildPromClients(endpoints []config.PrometheusEndpoint) map[string]*promclient.Client {
+	clients := make(map[string]*promclient.Client, len(endpoints))
 	for _, ep := range endpoints {
 		if ep.URL == "" {
 			continue
@@ -154,7 +156,7 @@ func buildPromClients(endpoints []config.PrometheusEndpoint) map[string]*prom.Cl
 		if ep.BasicPassEnv != "" {
 			basicPass = os.Getenv(ep.BasicPassEnv)
 		}
-		c, err := prom.NewClient(ep.URL, ep.BasicUser, basicPass, bearer)
+		c, err := promclient.NewClient(ep.URL, ep.BasicUser, basicPass, bearer)
 		if err != nil {
 			continue
 		}

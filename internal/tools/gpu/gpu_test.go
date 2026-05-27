@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/rlaope/cloudy/internal/tools/prom"
+	promclient "github.com/rlaope/cloudy/internal/clients/prom"
 )
 
 // ---- nvidia_smi tests ----
@@ -150,11 +150,11 @@ func TestDCGM_QueryAndSort(t *testing.T) {
 	srv := fakeDCGMServer(t)
 	defer srv.Close()
 
-	c, err := prom.NewClient(srv.URL, "", "", "")
+	c, err := promclient.NewClient(srv.URL, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	tool := NewDCGMTool(map[string]*prom.Client{"default": c})
+	tool := NewDCGMTool(map[string]*promclient.Client{"default": c})
 
 	if tool.Name() != "gpu.dcgm_metrics" {
 		t.Fatalf("unexpected name: %s", tool.Name())
@@ -186,8 +186,8 @@ func TestDCGM_TopCap(t *testing.T) {
 	srv := fakeDCGMServer(t)
 	defer srv.Close()
 
-	c, _ := prom.NewClient(srv.URL, "", "", "")
-	tool := NewDCGMTool(map[string]*prom.Client{"default": c})
+	c, _ := promclient.NewClient(srv.URL, "", "", "")
+	tool := NewDCGMTool(map[string]*promclient.Client{"default": c})
 
 	args, _ := json.Marshal(map[string]any{"top": 1})
 	obs, err := tool.Run(context.Background(), args)

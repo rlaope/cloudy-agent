@@ -7,19 +7,20 @@ import (
 	"strings"
 	"time"
 
+	promclient "github.com/rlaope/cloudy/internal/clients/prom"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/tools"
 )
 
 // QueryTool implements prom.query.
 type QueryTool struct {
-	clients    map[string]*Client
+	clients    map[string]*promclient.Client
 	defaultKey string
 }
 
 // NewQueryTool constructs a QueryTool. clients maps endpoint names to Clients;
 // the first key is used as the default when endpoint is empty.
-func NewQueryTool(clients map[string]*Client) *QueryTool {
+func NewQueryTool(clients map[string]*promclient.Client) *QueryTool {
 	def := firstKey(clients)
 	return &QueryTool{clients: clients, defaultKey: def}
 }
@@ -68,7 +69,7 @@ func (t *QueryTool) Run(ctx context.Context, args json.RawMessage) (tools.Observ
 	return tools.Observation{Text: text, Table: tbl, Raw: res}, nil
 }
 
-func (t *QueryTool) resolve(endpoint string) (*Client, error) {
+func (t *QueryTool) resolve(endpoint string) (*promclient.Client, error) {
 	key := endpoint
 	if key == "" {
 		key = t.defaultKey
@@ -81,7 +82,7 @@ func (t *QueryTool) resolve(endpoint string) (*Client, error) {
 }
 
 // resultToObservation converts a Result into a Table and a Text summary.
-func resultToObservation(res *Result, query string) (*render.Table, string) {
+func resultToObservation(res *promclient.Result, query string) (*render.Table, string) {
 	switch res.ResultType {
 	case "vector":
 		tbl := &render.Table{
@@ -147,7 +148,7 @@ func seriesSparkline(values [][2]float64, width int) string {
 	return render.Render(floats, width)
 }
 
-func firstKey(m map[string]*Client) string {
+func firstKey(m map[string]*promclient.Client) string {
 	for k := range m {
 		return k
 	}
