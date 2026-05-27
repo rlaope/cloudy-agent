@@ -2,8 +2,8 @@ package wiring
 
 import (
 	"github.com/rlaope/cloudy/internal/config"
+	"github.com/rlaope/cloudy/internal/core/tools"
 	"github.com/rlaope/cloudy/internal/permission"
-	"github.com/rlaope/cloudy/internal/tools"
 )
 
 // RebuildOpts carries the small handful of inputs that vary between callers

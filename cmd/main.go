@@ -2,7 +2,7 @@
 //
 // Running `cloudy` with no arguments enters the full-screen TUI. Subcommands
 // (ask / setup / doctor / skills / session / contexts / profile) live in
-// internal/cli; main only wires the entry-point.
+// internal/ui/cli; main only wires the entry-point.
 package main
 
 import (
@@ -14,14 +14,14 @@ import (
 
 	"github.com/mattn/go-isatty"
 
-	"github.com/rlaope/cloudy/internal/cli"
 	"github.com/rlaope/cloudy/internal/config"
-	"github.com/rlaope/cloudy/internal/llm"
+	"github.com/rlaope/cloudy/internal/core/llm"
+	"github.com/rlaope/cloudy/internal/core/tools"
 	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/secrets"
 	"github.com/rlaope/cloudy/internal/session"
-	"github.com/rlaope/cloudy/internal/tools"
-	"github.com/rlaope/cloudy/internal/tui"
+	"github.com/rlaope/cloudy/internal/ui/cli"
+	"github.com/rlaope/cloudy/internal/ui/tui"
 	"github.com/rlaope/cloudy/internal/wiring"
 )
 

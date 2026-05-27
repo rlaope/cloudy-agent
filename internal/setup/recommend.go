@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/rlaope/cloudy/internal/config"
-	"github.com/rlaope/cloudy/internal/skills"
+	"github.com/rlaope/cloudy/internal/core/skills"
 )
 
 // Recommendation pairs a skill name with a human-readable reason for the

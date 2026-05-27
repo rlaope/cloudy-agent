@@ -3,7 +3,7 @@ package permission
 import (
 	"strings"
 
-	"github.com/rlaope/cloudy/internal/tools"
+	"github.com/rlaope/cloudy/internal/core/tools"
 )
 
 // FilterRegistry returns a new *tools.Registry containing only the tools

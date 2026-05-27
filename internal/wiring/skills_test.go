@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rlaope/cloudy/internal/skills"
-	"github.com/rlaope/cloudy/internal/tools"
+	"github.com/rlaope/cloudy/internal/core/skills"
+	"github.com/rlaope/cloudy/internal/core/tools"
 	"github.com/rlaope/cloudy/internal/wiring"
 )
 

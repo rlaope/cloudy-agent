@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/rlaope/cloudy/internal/config"
-	"github.com/rlaope/cloudy/internal/skills"
-	"github.com/rlaope/cloudy/internal/tools"
+	"github.com/rlaope/cloudy/internal/core/skills"
+	"github.com/rlaope/cloudy/internal/core/tools"
 )
 
 // BuildSkillRegistry loads built-in skills and merges any user skills found

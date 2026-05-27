@@ -1,6 +1,6 @@
 package render
 
-import "github.com/rlaope/cloudy/internal/llm"
+import "github.com/rlaope/cloudy/internal/core/llm"
 
 // Sink consumes the streaming events emitted by the agent loop. It is the
 // seam between the agent (which speaks WriteToken / BeginToolCall / ...)

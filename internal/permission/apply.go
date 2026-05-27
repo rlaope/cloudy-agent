@@ -1,6 +1,6 @@
 package permission
 
-import "github.com/rlaope/cloudy/internal/tools"
+import "github.com/rlaope/cloudy/internal/core/tools"
 
 // SetNamespaceChecker is the callback signature wiring layers expose for any
 // component (e.g. k8s.Hub) that wants per-namespace narrowing installed by

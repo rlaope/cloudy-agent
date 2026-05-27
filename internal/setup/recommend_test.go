@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/rlaope/cloudy/internal/config"
-	"github.com/rlaope/cloudy/internal/skills"
+	"github.com/rlaope/cloudy/internal/core/skills"
 )
 
 // allTestSkills returns a fake registry containing every skill name that
