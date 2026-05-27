@@ -26,7 +26,7 @@ import (
 //
 // Allow-list entries are repo-relative POSIX paths.
 var allowedPortforwardCallers = []string{
-	"internal/tools/db/client.go",
+	"internal/core/tools/db/client.go",
 }
 
 // TestOpenPortForward_CallerAllowList is the bounded-exception regression
