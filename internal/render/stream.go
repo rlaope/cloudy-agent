@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/rlaope/cloudy/internal/llm"
+	"github.com/rlaope/cloudy/internal/core/llm"
 )
 
 // Stream is an incremental writer for LLM streaming output.  It writes

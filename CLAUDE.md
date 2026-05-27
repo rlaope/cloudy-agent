@@ -2,10 +2,14 @@
 
 Read-only multi-cluster SRE monitoring AI CLI. Go module rooted at
 `github.com/rlaope/cloudy`; full-screen TUI at `cloudy`, one-shot at
-`cloudy ask "..."`. Internal layout: `cmd/cloudy`, `internal/tui`,
-`internal/agent`, `internal/tools/{k8s,prom,log,trace,db,gpu,jvm,…}`,
-`internal/llm/{anthropic,openai,moonshot,openai_compat,google}`,
-`internal/wiring`, `internal/session`.
+`cloudy ask "..."`. Internal layout is tiered:
+- `internal/core/{agent,llm/{anthropic,openai,moonshot,openai_compat,google},tools/{k8s,prom,log,trace,db,gpu,jvm,…},skills}` — domain.
+- `internal/clients/{httpapi,k8s,prom}` — shared HTTP/k8s/prom adapters
+  (package names `httpapi`, `k8sclient`, `promclient`).
+- `internal/ui/{tui,cli}` — terminal and one-shot CLI surfaces.
+- Top-level support: `internal/{config,permission,registry,render,
+  session,setup,discovery,secrets,selfupdate,transport,wiring,
+  buildinfo}`.
 
 ## Build / test / lint
 
@@ -32,7 +36,7 @@ Read-only multi-cluster SRE monitoring AI CLI. Go module rooted at
 - **Tool-call arguments must be a JSON object on every wire.** All five
   provider adapters (anthropic, openai, moonshot, openai_compat,
   google) MUST run the inbound parseSSE flush and outbound buildRequest
-  through `llm.NormalizeArguments` (`internal/llm/args.go`) — the
+  through `llm.NormalizeArguments` (`internal/core/llm/args.go`) — the
   parameter-less call class (`k8s_list_nodes` etc.) silently 4xx'd the
   next turn before this rule was in place. The helper collapses
   nil/empty/null/whitespace/partial/non-object inputs to `{}`.
@@ -42,8 +46,11 @@ Read-only multi-cluster SRE monitoring AI CLI. Go module rooted at
   Any consumer that maps a tool name to a skipped group via
   `groupPrefix` MUST also match `<group>-*` sub-keys — see
   `internal/wiring/skills.go: isInSkippedGroup`.
+
+  Note: `internal/wiring` consumes `internal/core/tools.Registry`; the
+  invariant is about that registry's key shape, not the file path.
 - **`render.Sink` writes to the session log via `tuiSink` in
-  `internal/tui/run.go`.** Tool args, observation text, and the raw
+  `internal/ui/tui/run.go`.** Tool args, observation text, and the raw
   user prompt are deliberately NOT mirrored to disk yet — the
   AfterToolCall masker isn't reachable from this seam, so persisting
   them would re-open the v0.5 M-1 redaction gap. Tool name +

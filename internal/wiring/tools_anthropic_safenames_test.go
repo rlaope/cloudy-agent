@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rlaope/cloudy/internal/tools"
+	"github.com/rlaope/cloudy/internal/core/tools"
 )
 
 // TestToolsFor_AnthropicSafeNames is the regression test for the

@@ -5,14 +5,14 @@ import (
 	"os"
 	"strings"
 
-	"github.com/rlaope/cloudy/internal/llm"
+	"github.com/rlaope/cloudy/internal/core/llm"
 
 	// Register all provider adapters via side-effect imports.
-	_ "github.com/rlaope/cloudy/internal/llm/anthropic"
-	_ "github.com/rlaope/cloudy/internal/llm/google"
-	_ "github.com/rlaope/cloudy/internal/llm/moonshot"
-	_ "github.com/rlaope/cloudy/internal/llm/openai"
-	_ "github.com/rlaope/cloudy/internal/llm/openai_compat"
+	_ "github.com/rlaope/cloudy/internal/core/llm/anthropic"
+	_ "github.com/rlaope/cloudy/internal/core/llm/google"
+	_ "github.com/rlaope/cloudy/internal/core/llm/moonshot"
+	_ "github.com/rlaope/cloudy/internal/core/llm/openai"
+	_ "github.com/rlaope/cloudy/internal/core/llm/openai_compat"
 )
 
 // ErrMissingKey is returned by BuildProvider when the required API key

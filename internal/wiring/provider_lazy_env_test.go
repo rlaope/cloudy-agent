@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/rlaope/cloudy/internal/llm"
+	"github.com/rlaope/cloudy/internal/core/llm"
 )
 
 // TestBuildProvider_PostStartupKey_NotRejectedAsMissing is the

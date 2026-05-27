@@ -16,10 +16,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/rlaope/cloudy/internal/config"
+	"github.com/rlaope/cloudy/internal/core/skills"
 	"github.com/rlaope/cloudy/internal/discovery"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/secrets"
-	"github.com/rlaope/cloudy/internal/skills"
 	"github.com/rlaope/cloudy/internal/wiring"
 )
 

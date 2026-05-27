@@ -3,7 +3,7 @@ package wiring
 import (
 	"sync/atomic"
 
-	"github.com/rlaope/cloudy/internal/tools"
+	"github.com/rlaope/cloudy/internal/core/tools"
 )
 
 // active holds the currently-installed Registry. Updated atomically by

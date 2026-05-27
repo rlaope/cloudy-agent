@@ -13,11 +13,11 @@ import (
 	// Side-effect imports: each tool package's init() registers its Detector
 	// with discovery.Register at startup. Importing them here is the only
 	// place we attach the detector graph for the wiring-level Run.
-	_ "github.com/rlaope/cloudy/internal/tools/db"
-	_ "github.com/rlaope/cloudy/internal/tools/log"
-	_ "github.com/rlaope/cloudy/internal/tools/perf"
-	_ "github.com/rlaope/cloudy/internal/tools/prom"
-	_ "github.com/rlaope/cloudy/internal/tools/trace"
+	_ "github.com/rlaope/cloudy/internal/core/tools/db"
+	_ "github.com/rlaope/cloudy/internal/core/tools/log"
+	_ "github.com/rlaope/cloudy/internal/core/tools/perf"
+	_ "github.com/rlaope/cloudy/internal/core/tools/prom"
+	_ "github.com/rlaope/cloudy/internal/core/tools/trace"
 )
 
 // DiscoveryOptions configures a single Run.

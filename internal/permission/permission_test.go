@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/rlaope/cloudy/internal/tools"
+	"github.com/rlaope/cloudy/internal/core/tools"
 )
 
 // stubTool implements tools.Tool for filter tests.

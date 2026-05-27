@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/rlaope/cloudy/internal/tools"
+	"github.com/rlaope/cloudy/internal/core/tools"
 )
 
 // resetActive returns the active pointer to nil so each test starts clean.
