@@ -136,6 +136,22 @@ func (m *Model) pumpAgentCmd() tea.Cmd {
 	}
 }
 
+// assistantBulletPrefix returns the styled "\n●  " prefix the first
+// time an assistant turn lands prose on screen, then empty for the
+// rest of the turn. The bullet was previously emitted on the first
+// Token event, which left a lonely "●" hovering above the prompt
+// for the entire streaming duration before the body arrived. Now
+// every prose-emit site (typewriter start in agentDoneMsg, ToolBegin
+// drain, error drain) calls this so the bullet appears at the same
+// moment the body does.
+func (m *Model) assistantBulletPrefix() string {
+	if m.assistantTurnStarted {
+		return ""
+	}
+	m.assistantTurnStarted = true
+	return "\n" + assistantPrefixStyle.Render("●") + " "
+}
+
 // flushPendingUserEcho returns and clears the queued user-echo chip.
 // Returns "" when no chip is pending so callers can string-concat the
 // result unconditionally. Called from the first applyAgentEvent path
@@ -165,31 +181,17 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 	}
 
 	if evt.Token != "" {
-		// Switch the thinking row from verb-cycling to "Typing" once
-		// real bytes have entered the playback pipeline. tokens is a
-		// coarse char-rate stand-in until evt.Usage from the provider
-		// gives us a true token count.
+		// Switch the thinking row from verb-cycling to "Receiving…"
+		// once real bytes have entered the playback pipeline. tokens
+		// is a coarse char-rate stand-in until evt.Usage from the
+		// provider gives us a true token count. The "●" bullet is
+		// NOT emitted here any more — it would otherwise sit alone
+		// on screen for the full streaming duration ("● [spinner]")
+		// before the body shows up. Bullet emission is deferred to
+		// the moment prose actually lands (agentDoneMsg, ToolBegin
+		// drain, or error drain) via assistantBulletPrefix.
 		m.thinking.streaming = true
 		m.thinking.tokens += approxTokens(evt.Token)
-		// First token of a turn: emit the styled "●  " bullet via
-		// the synchronous chrome path so the lipgloss-generated ANSI
-		// escape sequences land atomically. If we let those sequences
-		// flow through the rune-by-rune playback tick they could
-		// split mid-escape ("\x1b[3" + "8;5;1" + …), breaking the
-		// terminal's render of every byte that followed.
-		if !m.assistantTurnStarted {
-			m.assistantTurnStarted = true
-			prefix := "\n" + assistantPrefixStyle.Render("●") + " "
-			var prefixCmd tea.Cmd
-			m.stream, prefixCmd = m.stream.Update(streamWriteMsg(prefix))
-			cmds = append(cmds, prefixCmd)
-		}
-		// Buffer the prose silently while the LLM is still streaming;
-		// the operator only sees the "✦ Thinking…" indicator until
-		// agentDoneMsg arrives. The whole reply then lands in one
-		// synchronous write so the visible text matches the natural
-		// rhythm of "Claude finished, here's the answer" instead of
-		// dragging a slow typewriter across the response.
 		m.bufferAssistantToken(evt.Token)
 	}
 	if evt.ToolBegin != nil {
@@ -197,10 +199,12 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 		// does not visually leapfrog the prose that introduced it.
 		// We use streamWriteMsg (synchronous, immediate) rather than
 		// the typewriter so the tool can dispatch without waiting on
-		// the playback pace.
+		// the playback pace. Prepend the bullet if this is the first
+		// time assistant prose hits the screen this turn.
 		if drain := m.drainPlaybackBuffer(); drain != "" {
+			out := m.assistantBulletPrefix() + drain
 			var sCmd tea.Cmd
-			m.stream, sCmd = m.stream.Update(streamWriteMsg(drain))
+			m.stream, sCmd = m.stream.Update(streamWriteMsg(out))
 			cmds = append(cmds, sCmd)
 		}
 		var sCmd tea.Cmd
