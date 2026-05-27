@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 	promclient "github.com/rlaope/cloudy/internal/clients/prom"
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/permission"
@@ -130,13 +131,13 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 }
 
 // buildHub resolves opts.Contexts / opts.ContextName / opts.KubeconfigPath
-// into a *k8s.Hub. Single-context mode is preserved when Contexts is empty.
-func buildHub(opts Options) (*k8s.Hub, error) {
+// into a *k8sclient.Hub. Single-context mode is preserved when Contexts is empty.
+func buildHub(opts Options) (*k8sclient.Hub, error) {
 	contexts := opts.Contexts
 	if len(contexts) == 0 && opts.ContextName != "" {
 		contexts = []string{opts.ContextName}
 	}
-	return k8s.NewHub(opts.KubeconfigPath, contexts)
+	return k8sclient.NewHub(opts.KubeconfigPath, contexts)
 }
 
 // buildPromClients converts a slice of PrometheusEndpoint config entries into

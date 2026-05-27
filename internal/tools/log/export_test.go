@@ -6,12 +6,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/rlaope/cloudy/internal/tools/k8s"
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 )
 
 // SetListServicesFn replaces the package-level listServicesFn seam for tests.
 // Returns a restore function that resets it to the original value.
-func SetListServicesFn(fn func(ctx context.Context, client *k8s.Client) (*corev1.ServiceList, error)) func() {
+func SetListServicesFn(fn func(ctx context.Context, client *k8sclient.Client) (*corev1.ServiceList, error)) func() {
 	orig := listServicesFn
 	listServicesFn = fn
 	return func() { listServicesFn = orig }

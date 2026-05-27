@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"sort"
@@ -23,7 +25,7 @@ type eventsArgs struct {
 // NewEventsTool returns the k8s.events tool. Events do not fit ListResourceSpec
 // because they take involved-object selectors instead of generic label/field
 // selectors, so this tool uses Spec[eventsArgs] directly.
-func NewEventsTool(hub *Hub) tools.Tool {
+func NewEventsTool(hub *k8sclient.Hub) tools.Tool {
 	return tools.Spec[eventsArgs]{
 		Name:        "k8s.events",
 		Description: "List Kubernetes events in a namespace, optionally filtered by involved object kind/name. Results are sorted by lastTimestamp descending.",

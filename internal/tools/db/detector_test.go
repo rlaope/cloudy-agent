@@ -8,14 +8,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/discovery"
-	"github.com/rlaope/cloudy/internal/tools/k8s"
 )
 
 // fakeServiceList replaces listServices with a function returning a fixed list.
-func fakeServiceList(svcs []corev1.Service) func(ctx context.Context, client *k8s.Client) (*corev1.ServiceList, error) {
-	return func(_ context.Context, _ *k8s.Client) (*corev1.ServiceList, error) {
+func fakeServiceList(svcs []corev1.Service) func(ctx context.Context, client *k8sclient.Client) (*corev1.ServiceList, error) {
+	return func(_ context.Context, _ *k8sclient.Client) (*corev1.ServiceList, error) {
 		return &corev1.ServiceList{Items: svcs}, nil
 	}
 }
@@ -35,11 +35,11 @@ func port(name string, number int32) corev1.ServicePort {
 	return corev1.ServicePort{Name: name, Port: number}
 }
 
-// fakeHub returns a *k8s.Hub with a single default context key "" so
-// hub.Names() returns [""] and hub.Get("") returns a non-nil *k8s.Client
+// fakeHub returns a *k8sclient.Hub with a single default context key "" so
+// hub.Names() returns [""] and hub.Get("") returns a non-nil *k8sclient.Client
 // (the seam client is never actually called — listServices is replaced).
-func fakeHub() *k8s.Hub {
-	return k8s.NewHubFromClients(map[string]*k8s.Client{"": {}}, "")
+func fakeHub() *k8sclient.Hub {
+	return k8sclient.NewHubFromClients(map[string]*k8sclient.Client{"": {}}, "")
 }
 
 // TestPostgresK8s verifies a service named "orders-db-postgresql" on port 5432

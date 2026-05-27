@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"time"
@@ -13,7 +15,7 @@ import (
 )
 
 // NewListDeploymentsTool returns the k8s.list_deployments tool.
-func NewListDeploymentsTool(hub *Hub) tools.Tool {
+func NewListDeploymentsTool(hub *k8sclient.Hub) tools.Tool {
 	return ListResourceSpec[appsv1.Deployment]{
 		Name:        "k8s.list_deployments",
 		Description: "List Kubernetes Deployments (apps/v1) in a namespace with ready/desired replicas, available status, and age.",
@@ -26,7 +28,7 @@ func NewListDeploymentsTool(hub *Hub) tools.Tool {
 		Headers:        []string{"NAMESPACE", "NAME", "READY", "AVAILABLE", "AGE"},
 		Aligns:         []render.Align{render.AlignLeft, render.AlignLeft, render.AlignRight, render.AlignLeft, render.AlignRight},
 		NeedsNamespace: true,
-		Items: func(_ context.Context, client *Client, a listArgs, opts metav1.ListOptions) ([]appsv1.Deployment, any, error) {
+		Items: func(_ context.Context, client *k8sclient.Client, a listArgs, opts metav1.ListOptions) ([]appsv1.Deployment, any, error) {
 			list, err := client.Deployments(a.Namespace, opts)
 			if err != nil {
 				return nil, nil, err

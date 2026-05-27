@@ -1,9 +1,12 @@
-// Package k8s provides read-only Kubernetes tools for the cloudy SRE agent.
+// Package k8sclient is the shared read-only Kubernetes Client and multi-context
+// Hub used by every cloudy tool that talks to a cluster — the k8s.* tool group
+// for direct queries, the db / log / perf / trace / prom detectors for setup-
+// time service discovery, and wiring for the agent's per-session Hub.
 //
 // All HTTP traffic from this package flows through transport.Wrap so that the
 // read-only contract (GET/HEAD/OPTIONS only) is enforced at the transport
 // layer, in addition to the RBAC ClusterRole guard on the cluster.
-package k8s
+package k8sclient
 
 import (
 	"context"

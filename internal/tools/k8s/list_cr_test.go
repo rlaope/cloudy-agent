@@ -13,6 +13,7 @@ import (
 	corefake "k8s.io/client-go/kubernetes/fake"
 	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 	k8stool "github.com/rlaope/cloudy/internal/tools/k8s"
 )
 
@@ -29,12 +30,12 @@ var rolloutGVR = schema.GroupVersionResource{
 // rest of the Client surface still compiles. The custom GVR-to-ListKind
 // map is required because fake.NewSimpleDynamicClient cannot guess list
 // kinds for CRDs that are not registered in any runtime.Scheme.
-func newDynHub(t *testing.T, gvrToListKind map[schema.GroupVersionResource]string, objs ...runtime.Object) *k8stool.Hub {
+func newDynHub(t *testing.T, gvrToListKind map[schema.GroupVersionResource]string, objs ...runtime.Object) *k8sclient.Hub {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, gvrToListKind, objs...)
-	c := k8stool.NewTestClientWithDyn(corefake.NewSimpleClientset(), metricsfake.NewSimpleClientset(), dyn)
-	return k8stool.NewHubFromClients(map[string]*k8stool.Client{"": c}, "")
+	c := k8sclient.NewTestClientWithDyn(corefake.NewSimpleClientset(), metricsfake.NewSimpleClientset(), dyn)
+	return k8sclient.NewHubFromClients(map[string]*k8sclient.Client{"": c}, "")
 }
 
 func newRollout(ns, name, phase string, replicas int64) *unstructured.Unstructured {

@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"strconv"
@@ -20,7 +22,7 @@ type describePodArgs struct {
 }
 
 // NewDescribePodTool returns the k8s.describe_pod tool.
-func NewDescribePodTool(hub *Hub) tools.Tool {
+func NewDescribePodTool(hub *k8sclient.Hub) tools.Tool {
 	return tools.Spec[describePodArgs]{
 		Name:        "k8s.describe_pod",
 		Description: "Return a structured summary of a pod: phase, containers, restart counts, recent events, IP, node.",

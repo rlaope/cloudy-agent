@@ -16,6 +16,7 @@ import (
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	fakemetrics "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 	k8stool "github.com/rlaope/cloudy/internal/tools/k8s"
 )
 
@@ -23,7 +24,7 @@ import (
 // returns the given error for any list against nodemetricses / podmetricses,
 // matching what an apiserver without metrics-server returns
 // ("the server could not find the requested resource …").
-func newHubMetricsErr(t *testing.T, listErr error) *k8stool.Hub {
+func newHubMetricsErr(t *testing.T, listErr error) *k8sclient.Hub {
 	t.Helper()
 	fm := fakemetrics.NewSimpleClientset()
 	react := func(_ ktesting.Action) (bool, runtime.Object, error) {
@@ -31,8 +32,8 @@ func newHubMetricsErr(t *testing.T, listErr error) *k8stool.Hub {
 	}
 	fm.PrependReactor("list", "nodes", react)
 	fm.PrependReactor("list", "pods", react)
-	client := k8stool.NewTestClient(fake.NewSimpleClientset(), fm)
-	return k8stool.NewHubFromClients(map[string]*k8stool.Client{"": client}, "")
+	client := k8sclient.NewTestClient(fake.NewSimpleClientset(), fm)
+	return k8sclient.NewHubFromClients(map[string]*k8sclient.Client{"": client}, "")
 }
 
 // TestTopNodes_MetricsUnavailable verifies that a metrics-server outage is
@@ -98,8 +99,8 @@ func TestTopNodes_OK(t *testing.T) {
 			}},
 		}, nil
 	})
-	client := k8stool.NewTestClient(fake.NewSimpleClientset(), fm)
-	hub := k8stool.NewHubFromClients(map[string]*k8stool.Client{"": client}, "")
+	client := k8sclient.NewTestClient(fake.NewSimpleClientset(), fm)
+	hub := k8sclient.NewHubFromClients(map[string]*k8sclient.Client{"": client}, "")
 
 	tool := k8stool.NewTopNodesTool(hub)
 	args, _ := json.Marshal(map[string]any{})
@@ -133,8 +134,8 @@ func TestTopNodes_MetricsUnavailable_NamedContext(t *testing.T) {
 		return true, nil, apiErr
 	}
 	fm.PrependReactor("list", "nodes", react)
-	client := k8stool.NewTestClient(fake.NewSimpleClientset(), fm)
-	hub := k8stool.NewHubFromClients(map[string]*k8stool.Client{"prod": client}, "prod")
+	client := k8sclient.NewTestClient(fake.NewSimpleClientset(), fm)
+	hub := k8sclient.NewHubFromClients(map[string]*k8sclient.Client{"prod": client}, "prod")
 
 	tool := k8stool.NewTopNodesTool(hub)
 	args, _ := json.Marshal(map[string]any{})
@@ -153,7 +154,7 @@ func TestTopNodes_MetricsUnavailable_NamedContext(t *testing.T) {
 }
 
 // TestListPods_NonMetricsError_HardPath pins the contract that a non-
-// ErrMetricsUnavailable error from any ListResourceSpec.Items still falls
+// k8sclient.ErrMetricsUnavailable error from any ListResourceSpec.Items still falls
 // through the hard-error wrap (`<tool>: <err>`), so a future refactor that
 // widens the soft branch (e.g. to `if err != nil`) is caught.
 func TestListPods_NonMetricsError_HardPath(t *testing.T) {
@@ -162,8 +163,8 @@ func TestListPods_NonMetricsError_HardPath(t *testing.T) {
 	fakeCore.PrependReactor("list", "pods", func(_ ktesting.Action) (bool, runtime.Object, error) {
 		return true, nil, rbacErr
 	})
-	client := k8stool.NewTestClient(fakeCore, fakemetrics.NewSimpleClientset())
-	hub := k8stool.NewHubFromClients(map[string]*k8stool.Client{"": client}, "")
+	client := k8sclient.NewTestClient(fakeCore, fakemetrics.NewSimpleClientset())
+	hub := k8sclient.NewHubFromClients(map[string]*k8sclient.Client{"": client}, "")
 
 	tool := k8stool.NewListPodsTool(hub)
 	args, _ := json.Marshal(map[string]any{"namespace": "default"})

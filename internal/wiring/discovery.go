@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/discovery"
 	"github.com/rlaope/cloudy/internal/permission"
-	"github.com/rlaope/cloudy/internal/tools/k8s"
 	"github.com/rlaope/cloudy/internal/transport"
 
 	// Side-effect imports: each tool package's init() registers its Detector
@@ -43,7 +43,7 @@ type DiscoveryOptions struct {
 // kubeconfig) so the caller can show it to the user; the returned Findings
 // then come solely from Hints.
 func RunDiscovery(ctx context.Context, opts DiscoveryOptions) ([]discovery.Finding, string, error) {
-	hub, hubErr := k8s.NewHub(opts.KubeconfigPath, opts.Contexts)
+	hub, hubErr := k8sclient.NewHub(opts.KubeconfigPath, opts.Contexts)
 	var note string
 	if hubErr != nil {
 		note = fmt.Sprintf("kubernetes hub unavailable: %v", hubErr)

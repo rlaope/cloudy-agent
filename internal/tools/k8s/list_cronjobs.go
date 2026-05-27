@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"strconv"
@@ -14,7 +16,7 @@ import (
 )
 
 // NewListCronJobsTool returns the k8s.list_cronjobs tool.
-func NewListCronJobsTool(hub *Hub) tools.Tool {
+func NewListCronJobsTool(hub *k8sclient.Hub) tools.Tool {
 	return ListResourceSpec[batchv1.CronJob]{
 		Name:        "k8s.list_cronjobs",
 		Description: "List Kubernetes CronJobs (batch/v1) in a namespace with schedule, suspend state, last-schedule time, and age.",
@@ -27,7 +29,7 @@ func NewListCronJobsTool(hub *Hub) tools.Tool {
 		Headers:        []string{"NAMESPACE", "NAME", "SCHEDULE", "SUSPEND", "LAST SCHEDULE", "AGE"},
 		Aligns:         []render.Align{render.AlignLeft, render.AlignLeft, render.AlignLeft, render.AlignLeft, render.AlignRight, render.AlignRight},
 		NeedsNamespace: true,
-		Items: func(_ context.Context, client *Client, a listArgs, opts metav1.ListOptions) ([]batchv1.CronJob, any, error) {
+		Items: func(_ context.Context, client *k8sclient.Client, a listArgs, opts metav1.ListOptions) ([]batchv1.CronJob, any, error) {
 			list, err := client.CronJobs(a.Namespace, opts)
 			if err != nil {
 				return nil, nil, err

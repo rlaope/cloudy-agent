@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"time"
@@ -12,13 +14,13 @@ import (
 )
 
 // NewListNamespacesTool returns the k8s.list_namespaces tool.
-func NewListNamespacesTool(hub *Hub) tools.Tool {
+func NewListNamespacesTool(hub *k8sclient.Hub) tools.Tool {
 	return ListResourceSpec[corev1.Namespace]{
 		Name:        "k8s.list_namespaces",
 		Description: "List all Kubernetes namespaces in the cluster.",
 		Schema:      schema(withContextProp(map[string]any{}), nil),
 		Headers:     []string{"NAME", "STATUS", "AGE"},
-		Items: func(_ context.Context, client *Client, _ listArgs, _ metav1.ListOptions) ([]corev1.Namespace, any, error) {
+		Items: func(_ context.Context, client *k8sclient.Client, _ listArgs, _ metav1.ListOptions) ([]corev1.Namespace, any, error) {
 			list, err := client.Namespaces()
 			if err != nil {
 				return nil, nil, err

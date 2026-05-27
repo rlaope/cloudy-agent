@@ -8,8 +8,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 	"github.com/rlaope/cloudy/internal/discovery"
-	"github.com/rlaope/cloudy/internal/tools/k8s"
 )
 
 func init() { discovery.Register(&detector{}) }
@@ -23,7 +23,7 @@ func (detector) Name() string { return "tools.perf" }
 var listPerfServicesFn = defaultListPerfServices
 
 // defaultListPerfServices lists services across all namespaces for a given client.
-func defaultListPerfServices(ctx context.Context, client *k8s.Client) (*corev1.ServiceList, error) {
+func defaultListPerfServices(ctx context.Context, client *k8sclient.Client) (*corev1.ServiceList, error) {
 	return client.Services(ctx, "", metav1.ListOptions{Limit: 500})
 }
 

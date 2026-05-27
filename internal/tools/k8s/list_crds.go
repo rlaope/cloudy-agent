@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"sort"
@@ -33,7 +35,7 @@ type listCRDsArgs struct {
 // NewListCRDsTool returns the k8s.list_crds tool. CRDs do not fit
 // ListResourceSpec[T] because the underlying read is an unstructured list,
 // not a typed clientset call, so this tool uses Spec[listCRDsArgs] directly.
-func NewListCRDsTool(hub *Hub) tools.Tool {
+func NewListCRDsTool(hub *k8sclient.Hub) tools.Tool {
 	return tools.Spec[listCRDsArgs]{
 		Name:        "k8s.list_crds",
 		Description: "List installed CustomResourceDefinitions. Use this to discover which CRD-defined platform extensions (Argo Rollouts, KEDA, cert-manager, Gateway API, ServiceMonitor, etc.) are installed before driving k8s.list_cr against them.",

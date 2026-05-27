@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"time"
@@ -13,7 +15,7 @@ import (
 )
 
 // NewListJobsTool returns the k8s.list_jobs tool.
-func NewListJobsTool(hub *Hub) tools.Tool {
+func NewListJobsTool(hub *k8sclient.Hub) tools.Tool {
 	return ListResourceSpec[batchv1.Job]{
 		Name:        "k8s.list_jobs",
 		Description: "List Kubernetes Jobs (batch/v1) in a namespace with completion counts, duration, and age.",
@@ -26,7 +28,7 @@ func NewListJobsTool(hub *Hub) tools.Tool {
 		Headers:        []string{"NAMESPACE", "NAME", "COMPLETIONS", "DURATION", "AGE"},
 		Aligns:         []render.Align{render.AlignLeft, render.AlignLeft, render.AlignRight, render.AlignRight, render.AlignRight},
 		NeedsNamespace: true,
-		Items: func(_ context.Context, client *Client, a listArgs, opts metav1.ListOptions) ([]batchv1.Job, any, error) {
+		Items: func(_ context.Context, client *k8sclient.Client, a listArgs, opts metav1.ListOptions) ([]batchv1.Job, any, error) {
 			list, err := client.Jobs(a.Namespace, opts)
 			if err != nil {
 				return nil, nil, err

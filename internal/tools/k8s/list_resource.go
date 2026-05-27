@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"encoding/json"
 	"errors"
@@ -45,7 +47,7 @@ type ListResourceSpec[T any] struct {
 	NeedsNamespace bool
 	// Items fetches the resource list. Return (items, raw, err); raw becomes
 	// Observation.Raw for downstream consumers.
-	Items func(ctx context.Context, client *Client, args listArgs, opts metav1.ListOptions) ([]T, any, error)
+	Items func(ctx context.Context, client *k8sclient.Client, args listArgs, opts metav1.ListOptions) ([]T, any, error)
 	// ProjectRow turns one item into a row of strings.
 	ProjectRow func(item T) []string
 	// Summary returns the one-line text rendered above the table; optional.
@@ -53,7 +55,7 @@ type ListResourceSpec[T any] struct {
 }
 
 // Build returns a tools.Tool that drives spec through tools.Spec[listArgs].
-func (spec ListResourceSpec[T]) Build(hub *Hub) tools.Tool {
+func (spec ListResourceSpec[T]) Build(hub *k8sclient.Hub) tools.Tool {
 	s := spec
 	return tools.Spec[listArgs]{
 		Name:        s.Name,
@@ -83,7 +85,7 @@ func (spec ListResourceSpec[T]) Build(hub *Hub) tools.Tool {
 			}
 			items, raw, err := s.Items(ctx, client, a, opts)
 			if err != nil {
-				if errors.Is(err, ErrMetricsUnavailable) {
+				if errors.Is(err, k8sclient.ErrMetricsUnavailable) {
 					return tools.Observation{Text: metricsUnavailableMessage(ctxName, err)}, nil
 				}
 				return tools.Observation{}, fmt.Errorf("%s: %w", s.Name, err)
@@ -115,7 +117,7 @@ func (spec ListResourceSpec[T]) Build(hub *Hub) tools.Tool {
 }
 
 // metricsUnavailableMessage renders an actionable explanation when a Top* tool
-// hits ErrMetricsUnavailable. Returned via Observation.Text (not as an error)
+// hits k8sclient.ErrMetricsUnavailable. Returned via Observation.Text (not as an error)
 // so the LLM relays it as a normal answer instead of a tool failure.
 func metricsUnavailableMessage(ctxName string, err error) string {
 	var sb strings.Builder
