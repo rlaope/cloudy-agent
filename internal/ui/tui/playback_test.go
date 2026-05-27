@@ -43,10 +43,12 @@ func TestPlayback_BuffersTokensSilentlyDuringStream(t *testing.T) {
 	next, _ = m.Update(agentEventMsg(msg))
 	m = next.(Model)
 
-	// Bullet prefix is emitted synchronously (atomic ANSI), but the
-	// prose must stay queued — it lands only on agentDoneMsg.
-	if !strings.Contains(m.stream.content.String(), "●") {
-		t.Errorf("first token must emit the ● bullet prefix synchronously; content: %q",
+	// Neither the bullet nor the prose lands while streaming: the
+	// operator sees only the spinner. The bullet is deferred to
+	// agentDoneMsg so it never sits alone on screen waiting for the
+	// body to catch up; the prose stays queued in playbackBuf.
+	if strings.Contains(m.stream.content.String(), "●") {
+		t.Errorf("● bullet must NOT land during streaming; content: %q",
 			m.stream.content.String())
 	}
 	if strings.Contains(m.stream.content.String(), "안녕") {
@@ -55,6 +57,9 @@ func TestPlayback_BuffersTokensSilentlyDuringStream(t *testing.T) {
 	}
 	if len(m.playbackBuf) == 0 {
 		t.Error("prose must be queued in playbackBuf for the eventual drain")
+	}
+	if m.assistantTurnStarted {
+		t.Error("assistantTurnStarted must stay false until the bullet actually emits at Done")
 	}
 }
 

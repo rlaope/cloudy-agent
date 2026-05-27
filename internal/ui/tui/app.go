@@ -723,12 +723,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			drain := m.drainPlaybackBuffer()
 			m.playbackActive = false
 			m.thinking.streaming = false
-			m.assistantTurnStarted = false
 			if echoFlush != "" || drain != "" {
+				out := echoFlush
+				if drain != "" {
+					out += m.assistantBulletPrefix() + drain
+				}
 				var sCmd tea.Cmd
-				m.stream, sCmd = m.stream.Update(streamWriteMsg(echoFlush + drain))
+				m.stream, sCmd = m.stream.Update(streamWriteMsg(out))
+				m.assistantTurnStarted = false
 				return m, tea.Batch(sCmd, m.writeStream("\n"+agentError("error", msg.err)))
 			}
+			m.assistantTurnStarted = false
 			return m, m.writeStream("\n" + agentError("error", msg.err))
 		}
 		// Happy path: render the buffered markdown through glamour so
@@ -736,18 +741,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// styled text rather than literal #/`/* syntax, then start a
 		// fast typewriter drain of the rendered output. The body was
 		// queued silently during streaming so the user only saw the
-		// spinner; once Done arrives it flows in at ~1500 chars/sec.
-		// Errors and ToolBegin keep their fast-flush paths so neither
-		// feels dragged behind the typewriter.
+		// spinner; once Done arrives the bullet AND the body flow in
+		// together at ~1500 chars/sec — the bullet no longer sits
+		// alone on screen for the full streaming duration.
 		m.thinking.streaming = false
-		m.assistantTurnStarted = false
 		if len(m.playbackBuf) > 0 {
 			raw := string(m.playbackBuf)
 			rendered := m.stream.RenderAssistantMarkdown(raw)
 			rendered = strings.TrimRight(rendered, "\n")
 			rendered = indentRenderedBlock(rendered)
+			// Prepend the bullet so it lands at the same moment the
+			// body starts flowing rather than the first-Token moment
+			// when only the spinner had something visible to show.
+			rendered = m.assistantBulletPrefix() + rendered
 			m.playbackBuf = []rune(rendered)
 		}
+		m.assistantTurnStarted = false
 		m.releasePlaybackTail()
 		var cmds []tea.Cmd
 		if echoFlush != "" {
