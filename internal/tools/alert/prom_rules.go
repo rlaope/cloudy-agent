@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rlaope/cloudy/internal/clients/httpapi"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/tools"
-	"github.com/rlaope/cloudy/internal/tools/httpapi"
 )
 
 // PromRulesClient is a thin wrapper that re-uses httpapi.Client to read

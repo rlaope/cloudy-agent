@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rlaope/cloudy/internal/clients/httpapi"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/tools"
-	"github.com/rlaope/cloudy/internal/tools/httpapi"
 )
 
 // JaegerClient wraps an httpapi.Client with the Jaeger query-API layout.

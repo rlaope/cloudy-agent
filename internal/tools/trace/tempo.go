@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/rlaope/cloudy/internal/clients/httpapi"
 	"github.com/rlaope/cloudy/internal/tools"
-	"github.com/rlaope/cloudy/internal/tools/httpapi"
 )
 
 // TempoClient wraps an httpapi.Client with the Tempo endpoint layout.

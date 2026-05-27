@@ -14,9 +14,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/rlaope/cloudy/internal/clients/httpapi"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/tools"
-	"github.com/rlaope/cloudy/internal/tools/httpapi"
 )
 
 // ArgoClient wraps an httpapi.Client with the Argo CD v1 path layout.
