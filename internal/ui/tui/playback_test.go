@@ -1,11 +1,21 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// ansiSeqRe matches a CSI escape sequence (ESC `[` … final-byte). Used
+// by the typewriter-drain tests to assert on the unstyled text content
+// after agentDoneMsg has run the buffer through glamour.
+var ansiSeqRe = regexp.MustCompile("\x1b\\[[0-9;]*[@-~]")
+
+func stripANSI(s string) string {
+	return ansiSeqRe.ReplaceAllString(s, "")
+}
 
 // TestPlayback_BuffersTokensSilentlyDuringStream pins the core
 // contract of the new playback model: while the agent is still
@@ -97,25 +107,34 @@ func TestPlayback_DoneStartsTypewriterDrain(t *testing.T) {
 	if m.playbackActive {
 		t.Error("playbackActive must reset to false once the buffer is empty")
 	}
-	if !strings.Contains(m.stream.content.String(), "complete response body here.") {
-		t.Errorf("body must eventually land in stream content; got %q", m.stream.content.String())
+	plain := strings.Join(strings.Fields(stripANSI(m.stream.content.String())), " ")
+	if !strings.Contains(plain, "complete response body here.") {
+		t.Errorf("body must eventually land in stream content; got %q", plain)
 	}
 }
 
-// TestPlayback_NewlineGetsContinuationIndent pins the indent contract.
-// A token containing "\n" must be followed by assistantContIndent so
-// wrapped paragraphs stay aligned under the bullet rather than
-// flushing to column 0.
-func TestPlayback_NewlineGetsContinuationIndent(t *testing.T) {
+// TestPlayback_BufferStoresRawMarkdown pins the new buffering
+// contract: bufferAssistantToken does NOT inject continuation
+// indents during streaming any more. Glamour parses the buffered
+// content as markdown at agentDoneMsg time, and leading whitespace
+// before a paragraph would be misinterpreted as a fenced code block.
+// The continuation indent is reapplied to glamour's rendered output
+// via indentRenderedBlock instead.
+func TestPlayback_BufferStoresRawMarkdown(t *testing.T) {
 	m := NewModel(makeDeps())
 	next, _ := m.Update(windowMsg())
 	m = next.(Model)
 
 	m.bufferAssistantToken("first\nsecond")
-	got := string(m.playbackBuf)
-	want := "first\n" + assistantContIndent + "second"
-	if got != want {
-		t.Errorf("newline indent transform wrong\n got:  %q\n want: %q", got, want)
+	if got := string(m.playbackBuf); got != "first\nsecond" {
+		t.Errorf("playbackBuf must store raw tokens verbatim; got %q", got)
+	}
+
+	// indentRenderedBlock is what supplies the visual indent — applied
+	// after glamour has parsed the markdown so no leading-whitespace
+	// confusion is possible.
+	if got := indentRenderedBlock("first\nsecond"); got != "first\n"+assistantContIndent+"second" {
+		t.Errorf("indentRenderedBlock wrong; got %q", got)
 	}
 }
 

@@ -123,7 +123,12 @@ func TestAgentStream_PumpsEveryEvent(t *testing.T) {
 		t.Fatal("agentDoneMsg never arrived — pump loop terminated early")
 	}
 
-	got := m.stream.content.String()
+	// agentDoneMsg routes the buffered reply through glamour before the
+	// typewriter drains it, so the rendered bytes carry inline ANSI
+	// styling between visible characters. Strip the escape codes and
+	// collapse the glamour-introduced whitespace before asserting the
+	// raw token sequence landed in order.
+	got := strings.Join(strings.Fields(stripANSI(m.stream.content.String())), "")
 	want := strings.Join(tokens, "")
 	if !strings.Contains(got, want) {
 		t.Errorf("stream missing tokens.\n want substring: %q\n full content:   %q\n"+
