@@ -48,11 +48,11 @@ func TestPlayback_BuffersTokensSilentlyDuringStream(t *testing.T) {
 	}
 }
 
-// TestPlayback_DoneDrainsBufferAtOnce verifies the new flush contract:
-// agentDoneMsg drains the entire playback buffer in a single
-// synchronous write so the operator sees the body land naturally
-// after the spinner stops.
-func TestPlayback_DoneDrainsBufferAtOnce(t *testing.T) {
+// TestPlayback_DoneStartsTypewriterDrain pins the post-done flush
+// contract: agentDoneMsg does NOT dump the body in one go. It stops
+// the spinner, releases the playback tail, and arms a tick loop that
+// drains the buffer at typewriter pace until empty.
+func TestPlayback_DoneStartsTypewriterDrain(t *testing.T) {
 	m := NewModel(makeDeps())
 	next, _ := m.Update(windowMsg())
 	m = next.(Model)
@@ -64,17 +64,41 @@ func TestPlayback_DoneDrainsBufferAtOnce(t *testing.T) {
 	next, _ = m.Update(agentDoneMsg{})
 	m = next.(Model)
 
-	if len(m.playbackBuf) != 0 {
-		t.Errorf("agentDoneMsg must drain playbackBuf; got len=%d", len(m.playbackBuf))
-	}
-	if !strings.Contains(m.stream.content.String(), "complete response body here.") {
-		t.Errorf("body must land in stream content after Done; got %q", m.stream.content.String())
-	}
+	// Spinner/turn state retire immediately so the prompt comes back.
 	if m.running {
 		t.Error("agentDoneMsg must clear running")
 	}
 	if m.assistantTurnStarted {
 		t.Error("agentDoneMsg must reset assistantTurnStarted for the next turn")
+	}
+	// The buffer is NOT drained synchronously any more.
+	if len(m.playbackBuf) == 0 {
+		t.Fatal("playback buffer should still hold the reply, queued for typewriter drain")
+	}
+	if !m.playbackActive {
+		t.Error("playbackActive must be true so subsequent playbackTickMsg events drain")
+	}
+	if m.playbackEmittable != len(m.playbackBuf) {
+		t.Errorf("releasePlaybackTail should open the full buffer; emittable=%d len=%d",
+			m.playbackEmittable, len(m.playbackBuf))
+	}
+
+	// Drive ticks until the buffer drains. Bound the loop so a
+	// regression that leaves the drain inactive fails the test
+	// instead of spinning forever.
+	const guard = 1000
+	for i := 0; i < guard && len(m.playbackBuf) > 0; i++ {
+		next, _ = m.Update(playbackTickMsg{})
+		m = next.(Model)
+	}
+	if len(m.playbackBuf) != 0 {
+		t.Errorf("playbackTickMsg loop never drained the buffer; left=%d", len(m.playbackBuf))
+	}
+	if m.playbackActive {
+		t.Error("playbackActive must reset to false once the buffer is empty")
+	}
+	if !strings.Contains(m.stream.content.String(), "complete response body here.") {
+		t.Errorf("body must eventually land in stream content; got %q", m.stream.content.String())
 	}
 }
 
