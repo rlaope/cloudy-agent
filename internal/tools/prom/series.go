@@ -8,18 +8,19 @@ import (
 	"strings"
 	"time"
 
+	promclient "github.com/rlaope/cloudy/internal/clients/prom"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/tools"
 )
 
 // SeriesTool implements prom.series.
 type SeriesTool struct {
-	clients    map[string]*Client
+	clients    map[string]*promclient.Client
 	defaultKey string
 }
 
 // NewSeriesTool constructs a SeriesTool.
-func NewSeriesTool(clients map[string]*Client) *SeriesTool {
+func NewSeriesTool(clients map[string]*promclient.Client) *SeriesTool {
 	return &SeriesTool{clients: clients, defaultKey: firstKey(clients)}
 }
 

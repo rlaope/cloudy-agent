@@ -8,19 +8,19 @@ import (
 	"strings"
 	"time"
 
+	promclient "github.com/rlaope/cloudy/internal/clients/prom"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/tools"
-	"github.com/rlaope/cloudy/internal/tools/prom"
 )
 
 // DCGMTool implements gpu.dcgm_metrics.
 type DCGMTool struct {
-	clients    map[string]*prom.Client
+	clients    map[string]*promclient.Client
 	defaultKey string
 }
 
 // NewDCGMTool constructs a DCGMTool. clients maps endpoint names to Prom clients.
-func NewDCGMTool(clients map[string]*prom.Client) *DCGMTool {
+func NewDCGMTool(clients map[string]*promclient.Client) *DCGMTool {
 	def := ""
 	for k := range clients {
 		def = k
@@ -74,7 +74,7 @@ func (t *DCGMTool) Run(ctx context.Context, args json.RawMessage) (tools.Observa
 		return tools.Observation{}, fmt.Errorf("gpu.dcgm_metrics: unknown endpoint %q", a.Endpoint)
 	}
 
-	now := time.Time{} // zero = use current time in prom.Client.Query
+	now := time.Time{} // zero = use current time in promclient.Client.Query
 
 	// Query the four DCGM metrics. Errors are non-fatal; missing metrics yield empty columns.
 	utilVec, _ := c.Query(ctx, "DCGM_FI_DEV_GPU_UTIL", now)
