@@ -12,9 +12,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/rlaope/cloudy/internal/clients/httpapi"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/tools"
-	"github.com/rlaope/cloudy/internal/tools/httpapi"
 )
 
 // AMClient wraps an httpapi.Client with the Alertmanager v2 path layout.

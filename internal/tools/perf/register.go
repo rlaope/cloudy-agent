@@ -4,9 +4,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/rlaope/cloudy/internal/clients/httpapi"
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/tools"
-	"github.com/rlaope/cloudy/internal/tools/httpapi"
 )
 
 // Clients is the per-backend client map for the perf group.

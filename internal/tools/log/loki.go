@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rlaope/cloudy/internal/clients/httpapi"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/tools"
-	"github.com/rlaope/cloudy/internal/tools/httpapi"
 )
 
 // LokiClient wraps an httpapi.Client with the Loki query path layout.

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rlaope/cloudy/internal/tools/httpapi"
+	"github.com/rlaope/cloudy/internal/clients/httpapi"
 	"github.com/rlaope/cloudy/internal/transport"
 )
 

@@ -15,8 +15,8 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/rlaope/cloudy/internal/clients/httpapi"
 	"github.com/rlaope/cloudy/internal/tools"
-	"github.com/rlaope/cloudy/internal/tools/httpapi"
 )
 
 // PprofClient wraps an httpapi.Client with the /debug/pprof/* layout.
