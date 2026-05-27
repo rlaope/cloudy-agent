@@ -9,13 +9,13 @@ import (
 	"strings"
 )
 
-//go:embed skills/*.md
+//go:embed builtin/*.md
 var builtinFS embed.FS
 
-// LoadBuiltin loads all skills embedded at compile time from the top-level
-// skills/ directory. It returns an error if any embedded file fails to parse.
+// LoadBuiltin loads all skills embedded at compile time from the sibling
+// builtin/ directory. It returns an error if any embedded file fails to parse.
 func LoadBuiltin() ([]*Skill, error) {
-	return loadFromFS(builtinFS, "skills")
+	return loadFromFS(builtinFS, "builtin")
 }
 
 // LoadUser loads skills from dir (e.g. ~/.cloudy/skills). Files whose names
