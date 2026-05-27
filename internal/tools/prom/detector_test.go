@@ -9,9 +9,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/discovery"
-	k8stool "github.com/rlaope/cloudy/internal/tools/k8s"
 	"github.com/rlaope/cloudy/internal/tools/prom"
 	"github.com/rlaope/cloudy/internal/transport"
 )
@@ -31,8 +31,8 @@ func newFakeProxy(t *testing.T) *transport.ServiceProxy {
 // newEmptyHub builds a single-context Hub with no real kubeconfig. Used only
 // to satisfy env.Hub != nil; the listServicesFn seam replaces the actual API
 // call so the Hub never contacts a cluster.
-func newEmptyHub() *k8stool.Hub {
-	return k8stool.NewHubFromClients(map[string]*k8stool.Client{}, "")
+func newEmptyHub() *k8sclient.Hub {
+	return k8sclient.NewHubFromClients(map[string]*k8sclient.Client{}, "")
 }
 
 func promDetector(t *testing.T) discovery.Detector {
@@ -62,12 +62,12 @@ func TestDetect_K8sServiceByName(t *testing.T) {
 			},
 		},
 	}
-	restore := prom.SetListServicesFn(func(_ context.Context, _ *k8stool.Client) (*corev1.ServiceList, error) {
+	restore := prom.SetListServicesFn(func(_ context.Context, _ *k8sclient.Client) (*corev1.ServiceList, error) {
 		return svcList, nil
 	})
 	defer restore()
 
-	hub := k8stool.NewHubFromClients(map[string]*k8stool.Client{"test-ctx": {}}, "test-ctx")
+	hub := k8sclient.NewHubFromClients(map[string]*k8sclient.Client{"test-ctx": {}}, "test-ctx")
 	env := discovery.Env{Hub: hub, Proxy: newFakeProxy(t)}
 
 	found := promDetector(t).Detect(context.Background(), env)

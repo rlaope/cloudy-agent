@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"time"
@@ -13,7 +15,7 @@ import (
 )
 
 // NewListStatefulSetsTool returns the k8s.list_statefulsets tool.
-func NewListStatefulSetsTool(hub *Hub) tools.Tool {
+func NewListStatefulSetsTool(hub *k8sclient.Hub) tools.Tool {
 	return ListResourceSpec[appsv1.StatefulSet]{
 		Name:        "k8s.list_statefulsets",
 		Description: "List Kubernetes StatefulSets (apps/v1) in a namespace with ready/desired replicas and age.",
@@ -26,7 +28,7 @@ func NewListStatefulSetsTool(hub *Hub) tools.Tool {
 		Headers:        []string{"NAMESPACE", "NAME", "READY", "AVAILABLE", "AGE"},
 		Aligns:         []render.Align{render.AlignLeft, render.AlignLeft, render.AlignRight, render.AlignRight, render.AlignRight},
 		NeedsNamespace: true,
-		Items: func(_ context.Context, client *Client, a listArgs, opts metav1.ListOptions) ([]appsv1.StatefulSet, any, error) {
+		Items: func(_ context.Context, client *k8sclient.Client, a listArgs, opts metav1.ListOptions) ([]appsv1.StatefulSet, any, error) {
 			list, err := client.StatefulSets(a.Namespace, opts)
 			if err != nil {
 				return nil, nil, err

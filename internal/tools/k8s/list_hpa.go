@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"time"
@@ -13,7 +15,7 @@ import (
 )
 
 // NewListHPATool returns the k8s.list_hpa tool.
-func NewListHPATool(hub *Hub) tools.Tool {
+func NewListHPATool(hub *k8sclient.Hub) tools.Tool {
 	return ListResourceSpec[autoscalingv2.HorizontalPodAutoscaler]{
 		Name:        "k8s.list_hpa",
 		Description: "List HorizontalPodAutoscalers (autoscaling/v2) in a namespace with target ref, replica bounds, current replicas, and age.",
@@ -26,7 +28,7 @@ func NewListHPATool(hub *Hub) tools.Tool {
 		Headers:        []string{"NAMESPACE", "NAME", "REFERENCE", "MIN", "MAX", "REPLICAS", "AGE"},
 		Aligns:         []render.Align{render.AlignLeft, render.AlignLeft, render.AlignLeft, render.AlignRight, render.AlignRight, render.AlignRight, render.AlignRight},
 		NeedsNamespace: true,
-		Items: func(_ context.Context, client *Client, a listArgs, opts metav1.ListOptions) ([]autoscalingv2.HorizontalPodAutoscaler, any, error) {
+		Items: func(_ context.Context, client *k8sclient.Client, a listArgs, opts metav1.ListOptions) ([]autoscalingv2.HorizontalPodAutoscaler, any, error) {
 			list, err := client.HPAs(a.Namespace, opts)
 			if err != nil {
 				return nil, nil, err

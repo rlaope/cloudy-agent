@@ -8,9 +8,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/discovery"
-	k8stool "github.com/rlaope/cloudy/internal/tools/k8s"
 	"github.com/rlaope/cloudy/internal/tools/perf"
 	"github.com/rlaope/cloudy/internal/transport"
 
@@ -37,15 +37,15 @@ func makeService(ns, name string, ports []corev1.ServicePort) corev1.Service {
 
 // installFakeServices replaces listPerfServicesFn for the duration of the test
 // and returns the matching Hub (real client not needed since the seam bypasses it).
-func installFakeServices(t *testing.T, svcs []corev1.Service) *k8stool.Hub {
+func installFakeServices(t *testing.T, svcs []corev1.Service) *k8sclient.Hub {
 	t.Helper()
 
 	// The Hub client is only used as a routing key — the seam ignores it and
 	// returns our canned list. Pass a nil *Client; NewHubFromClients accepts it.
-	hub := k8stool.NewHubFromClients(map[string]*k8stool.Client{"test-ctx": nil}, "test-ctx")
+	hub := k8sclient.NewHubFromClients(map[string]*k8sclient.Client{"test-ctx": nil}, "test-ctx")
 
 	list := &corev1.ServiceList{Items: svcs}
-	restore := perf.SetListPerfServicesFn(func(_ context.Context, _ *k8stool.Client) (*corev1.ServiceList, error) {
+	restore := perf.SetListPerfServicesFn(func(_ context.Context, _ *k8sclient.Client) (*corev1.ServiceList, error) {
 		return list, nil
 	})
 	t.Cleanup(restore)

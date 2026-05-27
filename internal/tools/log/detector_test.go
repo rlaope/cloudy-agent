@@ -8,9 +8,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/discovery"
-	k8stool "github.com/rlaope/cloudy/internal/tools/k8s"
 	"github.com/rlaope/cloudy/internal/tools/log"
 	"github.com/rlaope/cloudy/internal/transport"
 )
@@ -30,8 +30,8 @@ func newFakeProxy(t *testing.T) *transport.ServiceProxy {
 
 // newFakeHub builds a single-context Hub with a nil client. The client is
 // never actually called because the listServicesFn seam is replaced in tests.
-func newFakeHub() *k8stool.Hub {
-	return k8stool.NewHubFromClients(map[string]*k8stool.Client{"test-ctx": nil}, "test-ctx")
+func newFakeHub() *k8sclient.Hub {
+	return k8sclient.NewHubFromClients(map[string]*k8sclient.Client{"test-ctx": nil}, "test-ctx")
 }
 
 func svcList(svcs ...*corev1.Service) *corev1.ServiceList {
@@ -71,7 +71,7 @@ func TestDetect_LokiByName(t *testing.T) {
 	sl := svcList(svc("monitoring", "loki-gateway", nil, []corev1.ServicePort{
 		{Port: 3100},
 	}))
-	restore := log.SetListServicesFn(func(_ context.Context, _ *k8stool.Client) (*corev1.ServiceList, error) {
+	restore := log.SetListServicesFn(func(_ context.Context, _ *k8sclient.Client) (*corev1.ServiceList, error) {
 		return sl, nil
 	})
 	defer restore()
@@ -116,7 +116,7 @@ func TestDetect_ElasticsearchByName(t *testing.T) {
 	sl := svcList(svc("logging", "elasticsearch-master", nil, []corev1.ServicePort{
 		{Port: 9200},
 	}))
-	restore := log.SetListServicesFn(func(_ context.Context, _ *k8stool.Client) (*corev1.ServiceList, error) {
+	restore := log.SetListServicesFn(func(_ context.Context, _ *k8sclient.Client) (*corev1.ServiceList, error) {
 		return sl, nil
 	})
 	defer restore()

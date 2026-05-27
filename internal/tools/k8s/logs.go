@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 
@@ -25,7 +27,7 @@ type logsArgs struct {
 }
 
 // NewLogsTool returns the k8s.logs tool.
-func NewLogsTool(hub *Hub) tools.Tool {
+func NewLogsTool(hub *k8sclient.Hub) tools.Tool {
 	return tools.Spec[logsArgs]{
 		Name:        "k8s.logs",
 		Description: "Fetch container logs from a pod. Defaults to the last 200 lines; maximum 5000.",

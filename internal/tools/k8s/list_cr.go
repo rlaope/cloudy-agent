@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"strings"
@@ -37,7 +39,7 @@ type listCRArgs struct {
 // JSONPath-style field projections. Per the spec, only the dotted-path 95%
 // case is supported — array indexing (status.conditions[0].status) is out
 // of scope.
-func NewListCRTool(hub *Hub) tools.Tool {
+func NewListCRTool(hub *k8sclient.Hub) tools.Tool {
 	return tools.Spec[listCRArgs]{
 		Name:        "k8s.list_cr",
 		Description: "List custom resources of the given group/version/resource using the dynamic client. Use k8s.list_crds first to discover which GVRs exist. Fields are projected via dotted JSONPath-style lookups (e.g. metadata.name, spec.replicas).",

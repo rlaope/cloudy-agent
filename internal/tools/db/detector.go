@@ -8,8 +8,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 	"github.com/rlaope/cloudy/internal/discovery"
-	"github.com/rlaope/cloudy/internal/tools/k8s"
 )
 
 func init() {
@@ -20,7 +20,7 @@ func init() {
 
 // listServices is the seam used by tests to replace the real Kubernetes
 // service-list call with a fake. Production code uses the default below.
-var listServices = func(ctx context.Context, client *k8s.Client) (*corev1.ServiceList, error) {
+var listServices = func(ctx context.Context, client *k8sclient.Client) (*corev1.ServiceList, error) {
 	return client.Services(ctx, "", metav1.ListOptions{Limit: 500})
 }
 

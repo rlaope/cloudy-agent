@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"strconv"
@@ -15,7 +17,7 @@ import (
 )
 
 // NewListServicesTool returns the k8s.list_services tool.
-func NewListServicesTool(hub *Hub) tools.Tool {
+func NewListServicesTool(hub *k8sclient.Hub) tools.Tool {
 	return ListResourceSpec[corev1.Service]{
 		Name:        "k8s.list_services",
 		Description: "List Kubernetes Services (core/v1) in a namespace with type, cluster IP, ports, and age.",
@@ -28,7 +30,7 @@ func NewListServicesTool(hub *Hub) tools.Tool {
 		Headers:        []string{"NAMESPACE", "NAME", "TYPE", "CLUSTER-IP", "PORTS", "AGE"},
 		Aligns:         []render.Align{render.AlignLeft, render.AlignLeft, render.AlignLeft, render.AlignLeft, render.AlignLeft, render.AlignRight},
 		NeedsNamespace: true,
-		Items: func(_ context.Context, client *Client, a listArgs, opts metav1.ListOptions) ([]corev1.Service, any, error) {
+		Items: func(_ context.Context, client *k8sclient.Client, a listArgs, opts metav1.ListOptions) ([]corev1.Service, any, error) {
 			list, err := client.ServicesList(a.Namespace, opts)
 			if err != nil {
 				return nil, nil, err

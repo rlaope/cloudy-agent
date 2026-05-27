@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"time"
@@ -13,7 +15,7 @@ import (
 )
 
 // NewListDaemonSetsTool returns the k8s.list_daemonsets tool.
-func NewListDaemonSetsTool(hub *Hub) tools.Tool {
+func NewListDaemonSetsTool(hub *k8sclient.Hub) tools.Tool {
 	return ListResourceSpec[appsv1.DaemonSet]{
 		Name:        "k8s.list_daemonsets",
 		Description: "List Kubernetes DaemonSets (apps/v1) in a namespace with desired/current/ready counts and age.",
@@ -26,7 +28,7 @@ func NewListDaemonSetsTool(hub *Hub) tools.Tool {
 		Headers:        []string{"NAMESPACE", "NAME", "DESIRED", "CURRENT", "READY", "AGE"},
 		Aligns:         []render.Align{render.AlignLeft, render.AlignLeft, render.AlignRight, render.AlignRight, render.AlignRight, render.AlignRight},
 		NeedsNamespace: true,
-		Items: func(_ context.Context, client *Client, a listArgs, opts metav1.ListOptions) ([]appsv1.DaemonSet, any, error) {
+		Items: func(_ context.Context, client *k8sclient.Client, a listArgs, opts metav1.ListOptions) ([]appsv1.DaemonSet, any, error) {
 			list, err := client.DaemonSets(a.Namespace, opts)
 			if err != nil {
 				return nil, nil, err

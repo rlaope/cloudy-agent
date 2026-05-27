@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"strings"
@@ -14,7 +16,7 @@ import (
 )
 
 // NewListIngressesTool returns the k8s.list_ingresses tool.
-func NewListIngressesTool(hub *Hub) tools.Tool {
+func NewListIngressesTool(hub *k8sclient.Hub) tools.Tool {
 	return ListResourceSpec[networkingv1.Ingress]{
 		Name:        "k8s.list_ingresses",
 		Description: "List Kubernetes Ingresses (networking.k8s.io/v1) in a namespace with hosts, load-balancer address, and age.",
@@ -27,7 +29,7 @@ func NewListIngressesTool(hub *Hub) tools.Tool {
 		Headers:        []string{"NAMESPACE", "NAME", "HOSTS", "ADDRESS", "AGE"},
 		Aligns:         []render.Align{render.AlignLeft, render.AlignLeft, render.AlignLeft, render.AlignLeft, render.AlignRight},
 		NeedsNamespace: true,
-		Items: func(_ context.Context, client *Client, a listArgs, opts metav1.ListOptions) ([]networkingv1.Ingress, any, error) {
+		Items: func(_ context.Context, client *k8sclient.Client, a listArgs, opts metav1.ListOptions) ([]networkingv1.Ingress, any, error) {
 			list, err := client.Ingresses(a.Namespace, opts)
 			if err != nil {
 				return nil, nil, err

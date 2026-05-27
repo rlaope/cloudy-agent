@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"sort"
@@ -15,7 +17,7 @@ import (
 )
 
 // NewListNetworkPoliciesTool returns the k8s.list_networkpolicies tool.
-func NewListNetworkPoliciesTool(hub *Hub) tools.Tool {
+func NewListNetworkPoliciesTool(hub *k8sclient.Hub) tools.Tool {
 	return ListResourceSpec[networkingv1.NetworkPolicy]{
 		Name:        "k8s.list_networkpolicies",
 		Description: "List NetworkPolicies (networking.k8s.io/v1) in a namespace with the pod selector and age.",
@@ -28,7 +30,7 @@ func NewListNetworkPoliciesTool(hub *Hub) tools.Tool {
 		Headers:        []string{"NAMESPACE", "NAME", "POD-SELECTOR", "AGE"},
 		Aligns:         []render.Align{render.AlignLeft, render.AlignLeft, render.AlignLeft, render.AlignRight},
 		NeedsNamespace: true,
-		Items: func(_ context.Context, client *Client, a listArgs, opts metav1.ListOptions) ([]networkingv1.NetworkPolicy, any, error) {
+		Items: func(_ context.Context, client *k8sclient.Client, a listArgs, opts metav1.ListOptions) ([]networkingv1.NetworkPolicy, any, error) {
 			list, err := client.NetworkPolicies(a.Namespace, opts)
 			if err != nil {
 				return nil, nil, err

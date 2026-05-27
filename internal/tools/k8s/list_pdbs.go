@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"time"
@@ -13,7 +15,7 @@ import (
 )
 
 // NewListPDBsTool returns the k8s.list_pdbs tool.
-func NewListPDBsTool(hub *Hub) tools.Tool {
+func NewListPDBsTool(hub *k8sclient.Hub) tools.Tool {
 	return ListResourceSpec[policyv1.PodDisruptionBudget]{
 		Name:        "k8s.list_pdbs",
 		Description: "List PodDisruptionBudgets (policy/v1) in a namespace with min-available, max-unavailable, disrupted-pods-allowed, and age.",
@@ -26,7 +28,7 @@ func NewListPDBsTool(hub *Hub) tools.Tool {
 		Headers:        []string{"NAMESPACE", "NAME", "MIN AVAILABLE", "MAX UNAVAILABLE", "ALLOWED DISRUPTIONS", "AGE"},
 		Aligns:         []render.Align{render.AlignLeft, render.AlignLeft, render.AlignRight, render.AlignRight, render.AlignRight, render.AlignRight},
 		NeedsNamespace: true,
-		Items: func(_ context.Context, client *Client, a listArgs, opts metav1.ListOptions) ([]policyv1.PodDisruptionBudget, any, error) {
+		Items: func(_ context.Context, client *k8sclient.Client, a listArgs, opts metav1.ListOptions) ([]policyv1.PodDisruptionBudget, any, error) {
 			list, err := client.PDBs(a.Namespace, opts)
 			if err != nil {
 				return nil, nil, err

@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"strconv"
@@ -14,7 +16,7 @@ import (
 )
 
 // NewListPodsTool returns the k8s.list_pods tool.
-func NewListPodsTool(hub *Hub) tools.Tool {
+func NewListPodsTool(hub *k8sclient.Hub) tools.Tool {
 	return ListResourceSpec[corev1.Pod]{
 		Name:        "k8s.list_pods",
 		Description: "List Kubernetes pods in a namespace with optional label/field selectors.",
@@ -27,7 +29,7 @@ func NewListPodsTool(hub *Hub) tools.Tool {
 		Headers:        []string{"NAMESPACE", "NAME", "PHASE", "READY", "RESTARTS", "AGE", "NODE"},
 		Aligns:         []render.Align{render.AlignLeft, render.AlignLeft, render.AlignLeft, render.AlignRight, render.AlignRight, render.AlignRight, render.AlignLeft},
 		NeedsNamespace: true,
-		Items: func(_ context.Context, client *Client, a listArgs, opts metav1.ListOptions) ([]corev1.Pod, any, error) {
+		Items: func(_ context.Context, client *k8sclient.Client, a listArgs, opts metav1.ListOptions) ([]corev1.Pod, any, error) {
 			list, err := client.Pods(a.Namespace, opts)
 			if err != nil {
 				return nil, nil, err

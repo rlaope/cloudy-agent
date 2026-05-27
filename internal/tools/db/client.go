@@ -22,8 +22,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 	"github.com/rlaope/cloudy/internal/config"
-	"github.com/rlaope/cloudy/internal/tools/k8s"
 	"github.com/rlaope/cloudy/internal/transport"
 )
 
@@ -114,7 +114,7 @@ const connectTimeout = 3 * time.Second
 // An entry whose connection cannot be established is dropped with its error
 // recorded in skipReasons; the caller (wiring) propagates these to the
 // Registry's skipped-group surface.
-func BuildClients(ctx context.Context, hub *k8s.Hub, eps []config.DatabaseEndpoint) (Clients, []string) {
+func BuildClients(ctx context.Context, hub *k8sclient.Hub, eps []config.DatabaseEndpoint) (Clients, []string) {
 	cs := Clients{
 		Postgres:        map[string]*PostgresClient{},
 		MySQL:           map[string]*MySQLClient{},
@@ -255,7 +255,7 @@ func parseK8sDSN(dsn string) (ctxName, namespace, svcName string, port int, ok b
 // buildK8sClient resolves a k8s:// endpoint into a SPDY port-forward then
 // dials the appropriate driver against 127.0.0.1:<local-port>, storing the
 // result (with the Forwarder attached) in cs under mu.
-func buildK8sClient(ctx context.Context, hub *k8s.Hub, ep config.DatabaseEndpoint, cs *Clients, mu *sync.Mutex) error {
+func buildK8sClient(ctx context.Context, hub *k8sclient.Hub, ep config.DatabaseEndpoint, cs *Clients, mu *sync.Mutex) error {
 	ctxName, namespace, svcName, port, ok := parseK8sDSN(ep.DSN)
 	if !ok {
 		return fmt.Errorf("malformed k8s:// DSN %q", ep.DSN)

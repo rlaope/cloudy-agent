@@ -11,11 +11,12 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	fakemetrics "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 	k8stool "github.com/rlaope/cloudy/internal/tools/k8s"
 )
 
 // newFakeClient builds a Client backed by fake clientsets seeded with objs.
-func newFakeClient(objs ...runtime.Object) *k8stool.Client {
+func newFakeClient(objs ...runtime.Object) *k8sclient.Client {
 	// Split objects by API group.
 	var coreObjs []runtime.Object
 	for _, o := range objs {
@@ -23,14 +24,14 @@ func newFakeClient(objs ...runtime.Object) *k8stool.Client {
 	}
 	fakeCore := fake.NewSimpleClientset(coreObjs...)
 	fakeMetrics := fakemetrics.NewSimpleClientset()
-	return k8stool.NewTestClient(fakeCore, fakeMetrics)
+	return k8sclient.NewTestClient(fakeCore, fakeMetrics)
 }
 
 // newSingleHub wraps newFakeClient in a single-context Hub for tests that
 // use the v0.1 default-context behaviour.
-func newSingleHub(objs ...runtime.Object) *k8stool.Hub {
+func newSingleHub(objs ...runtime.Object) *k8sclient.Hub {
 	c := newFakeClient(objs...)
-	return k8stool.NewHubFromClients(map[string]*k8stool.Client{"": c}, "")
+	return k8sclient.NewHubFromClients(map[string]*k8sclient.Client{"": c}, "")
 }
 
 func pod(ns, name, phase, node string, labels map[string]string) *corev1.Pod {
@@ -240,7 +241,7 @@ func TestHub_MultiContext_RoutesByContextArg(t *testing.T) {
 	clientA := newFakeClient(pod("default", "from-a", "Running", "node-a", nil))
 	clientB := newFakeClient(pod("default", "from-b", "Running", "node-b", nil))
 
-	h := k8stool.NewHubFromClients(map[string]*k8stool.Client{
+	h := k8sclient.NewHubFromClients(map[string]*k8sclient.Client{
 		"a": clientA,
 		"b": clientB,
 	}, "a")

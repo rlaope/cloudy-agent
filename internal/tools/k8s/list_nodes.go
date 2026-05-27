@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
+
 	"context"
 	"fmt"
 	"strings"
@@ -13,13 +15,13 @@ import (
 )
 
 // NewListNodesTool returns the k8s.list_nodes tool.
-func NewListNodesTool(hub *Hub) tools.Tool {
+func NewListNodesTool(hub *k8sclient.Hub) tools.Tool {
 	return ListResourceSpec[corev1.Node]{
 		Name:        "k8s.list_nodes",
 		Description: "List all cluster nodes with name, roles, Kubernetes version, status, age, and addresses.",
 		Schema:      schema(withContextProp(map[string]any{}), nil),
 		Headers:     []string{"NAME", "ROLES", "VERSION", "STATUS", "AGE", "ADDRESSES"},
-		Items: func(_ context.Context, client *Client, _ listArgs, _ metav1.ListOptions) ([]corev1.Node, any, error) {
+		Items: func(_ context.Context, client *k8sclient.Client, _ listArgs, _ metav1.ListOptions) ([]corev1.Node, any, error) {
 			list, err := client.Nodes()
 			if err != nil {
 				return nil, nil, err
