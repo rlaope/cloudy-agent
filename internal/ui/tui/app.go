@@ -753,7 +753,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Prepend the bullet so it lands at the same moment the
 			// body starts flowing rather than the first-Token moment
 			// when only the spinner had something visible to show.
-			rendered = m.assistantBulletPrefix() + rendered
+			// Append two newlines so the next user prompt (or tool
+			// block) gets a blank-line separator below the reply,
+			// matching the Claude Code transcript rhythm.
+			rendered = m.assistantBulletPrefix() + rendered + "\n\n"
 			m.playbackBuf = []rune(rendered)
 		}
 		m.assistantTurnStarted = false
