@@ -13,11 +13,13 @@ import (
 	"fmt"
 	"os"
 
+	dockerclient "github.com/rlaope/cloudy/internal/clients/docker"
 	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
 	promclient "github.com/rlaope/cloudy/internal/clients/prom"
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/core/tools"
 	"github.com/rlaope/cloudy/internal/core/tools/alert"
+	"github.com/rlaope/cloudy/internal/core/tools/change"
 	"github.com/rlaope/cloudy/internal/core/tools/db"
 	"github.com/rlaope/cloudy/internal/core/tools/ebpf"
 	"github.com/rlaope/cloudy/internal/core/tools/gitops"
@@ -64,6 +66,8 @@ type Options struct {
 	Alertmanager []config.AlertmanagerEndpoint
 	// ArgoCD is the list of Argo CD API endpoints.
 	ArgoCD []config.ArgoCDEndpoint
+	// DockerHosts is the list of Docker daemons cloudy may inspect.
+	DockerHosts []config.DockerHost
 }
 
 // KubeWarning is a non-fatal warning returned by BuildRegistry when the
@@ -120,6 +124,19 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 
 	ebpf.RegisterAll(reg)
 
+	// change.* spans both k8s and docker. Register when at least one backend
+	// is available; skip the whole group only when neither is.
+	dockerHub, dockerErr := buildDockerHub(opts.DockerHosts)
+	if hub == nil && dockerHub == nil {
+		reason := "no kubeconfig and no docker hosts configured"
+		if dockerErr != nil {
+			reason = fmt.Sprintf("no kubeconfig; docker hosts configured but unavailable: %v", dockerErr)
+		}
+		reg.MarkSkipped("change", reason)
+	} else {
+		change.RegisterAll(reg, hub, dockerHub)
+	}
+
 	// Single Profile application point: namespace checker on the Hub plus
 	// tool allow/deny filter on the returned registry.
 	reg = permission.Apply(reg, opts.Profile, func(check func(string) error) {
@@ -138,6 +155,18 @@ func buildHub(opts Options) (*k8sclient.Hub, error) {
 		contexts = []string{opts.ContextName}
 	}
 	return k8sclient.NewHub(opts.KubeconfigPath, contexts)
+}
+
+// buildDockerHub returns a *dockerclient.Hub for the configured Docker hosts,
+// or (nil, nil) when none are configured. A non-nil error means hosts WERE
+// configured but the hub could not be built, so callers can report an honest
+// skip reason instead of "no docker hosts configured". Client connections are
+// built lazily on first use.
+func buildDockerHub(hosts []config.DockerHost) (*dockerclient.Hub, error) {
+	if len(hosts) == 0 {
+		return nil, nil
+	}
+	return dockerclient.NewHub(hosts)
 }
 
 // buildPromClients converts a slice of PrometheusEndpoint config entries into
