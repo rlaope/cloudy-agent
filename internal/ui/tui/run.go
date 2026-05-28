@@ -52,6 +52,7 @@ func Run(ctx context.Context, deps Deps) error {
 	deps.SwapModel = makeSwapModel(ref, deps.Model)
 
 	m := NewModel(deps)
+	m.fullscreen = fullscreenRequested()
 	// Default = terminal-native mode: no alt-screen, no mouse capture.
 	// This matches Claude Code's behaviour — assistant prose lives in
 	// the main terminal buffer so the operator's native click-and-drag

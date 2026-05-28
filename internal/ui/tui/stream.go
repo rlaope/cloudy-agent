@@ -602,6 +602,44 @@ func (s StreamModel) Empty() bool {
 	return s.content.Len() == 0 && s.pendingTokens.Len() == 0
 }
 
+// ContentHeight returns the rendered row count of the live buffer. The
+// parent uses it to size the viewport snugly (min of this and the body
+// budget) so the in-flight turn sits directly above the prompt instead of
+// floating at the top of a fixed-height window with blank padding below —
+// completed turns live in native scrollback, so the live region should be
+// only as tall as the current turn.
+func (s StreamModel) ContentHeight() int {
+	c := s.content.String()
+	if c == "" {
+		return 0
+	}
+	return lipgloss.Height(c)
+}
+
+// Commit finalises any pending assistant tail + batched tokens, returns the
+// fully-rendered live-buffer text, and resets the buffer to empty. The
+// parent prints the returned string to native terminal scrollback via
+// tea.Println at turn boundaries, then the now-empty viewport collapses so
+// the next turn starts fresh below the committed history. Returns "" when
+// the buffer holds nothing to commit.
+func (s *StreamModel) Commit() string {
+	s.drainPending()
+	s.finalizeAssistantBlock()
+	out := s.content.String()
+	s.content.Reset()
+	s.pendingTokens.Reset()
+	s.mdBuf.Reset()
+	s.mdCommitted = 0
+	s.mdTailLen = 0
+	s.flushScheduled = false
+	s.pendingTool = nil
+	if s.ready {
+		s.vp.SetContent("")
+		s.vp.GotoTop()
+	}
+	return out
+}
+
 // indentObs renders a tool observation block in Claude's continuation
 // style: the first non-empty line gets the "⎿  " branch glyph, every
 // subsequent non-empty line is padded with three columns so the

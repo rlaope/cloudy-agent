@@ -27,7 +27,7 @@ func TestEscape_FromLoginChat_CancelsConversation(t *testing.T) {
 	// while the picker is up. The picker branch (not the main Esc case)
 	// catches Esc when an arrowPicker is active, so this is the path
 	// that actually fires.
-	next, _ = m.Update(arrowPickerResolveMsg{cancelled: true})
+	next, outCmd := m.Update(arrowPickerResolveMsg{cancelled: true})
 	m = next.(Model)
 	if m.loginChat != nil {
 		t.Error("loginChat should be cleared after picker cancel")
@@ -35,9 +35,9 @@ func TestEscape_FromLoginChat_CancelsConversation(t *testing.T) {
 	if m.arrowPicker != nil {
 		t.Error("arrowPicker should be cleared after cancel")
 	}
-	if !strings.Contains(m.stream.content.String(), "cancelled") {
-		t.Errorf("stream should record the cancellation, got: %q",
-			m.stream.content.String())
+	if !strings.Contains(printedText(outCmd), "cancelled") {
+		t.Errorf("scrollback should record the cancellation, got: %q",
+			printedText(outCmd))
 	}
 
 	// Now confirm the plain-Esc path works once the operator is past

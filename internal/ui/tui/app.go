@@ -194,6 +194,19 @@ type Model struct {
 	// the next SSE chunk is in flight.
 	playbackEmittable int
 
+	// fullscreen mirrors run.go's CLOUDY_FULLSCREEN opt-in (alt-screen +
+	// mouse capture). In alt-screen mode tea.Println is a no-op, so the
+	// native-scrollback path (commit finished turns into the terminal's
+	// real scrollback) would silently drop them; fullscreen therefore
+	// keeps the whole transcript in the scrollable in-app viewport
+	// instead — the wheel scrolls within it because the mouse is
+	// captured. Set once by Run.
+	fullscreen bool
+
+	// introPrinted guards the one-time header + welcome banner print so a
+	// key-skip and the splash timer don't both emit it into scrollback.
+	introPrinted bool
+
 	// pendingUserEcho is the pre-rendered "queued chip" column shown
 	// directly above the prompt between submit and the first agent
 	// event of the turn. Multiple submits while the agent is busy
@@ -260,16 +273,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(hCmd, sCmd, prCmd, paCmd)
 
 	case splashTickMsg:
+		if m.splash.done {
+			// Already dismissed (e.g. by a key-skip); stop the tick loop so
+			// it doesn't re-print the intro once the timer elapses.
+			return m, nil
+		}
 		m.splash.frame++
 		if time.Since(m.splash.start) >= splashDuration {
 			m.splash.done = true
-			// Seed the stream with the welcome banner so it scrolls up
-			// naturally as the operator starts chatting instead of
-			// disappearing on the first input. Synchronous write so
-			// the banner is visible the moment the splash dismisses.
-			var sCmd tea.Cmd
-			m.stream, sCmd = m.stream.Update(streamWriteMsg(m.welcome.View() + "\n\n"))
-			return m, sCmd
+			// Print the one-time header + welcome banner into native
+			// scrollback. They scroll away with the transcript instead of
+			// pinning chrome above the live region — the conversation flows
+			// into the terminal's real scrollback from here on.
+			return m, m.maybePrintIntro()
 		}
 		return m, splashTickCmd()
 
@@ -297,14 +313,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		chunk := m.popPlaybackRunes(playbackRunesPerTick)
 		if chunk == "" {
-			m.playbackActive = false
-			return m, nil
+			if len(m.playbackBuf) == 0 {
+				// Turn fully played back — commit it to native scrollback
+				// and collapse the live viewport so the next turn starts
+				// fresh below the committed history.
+				m.playbackActive = false
+				return m, m.commitTurn()
+			}
+			// Emittable window momentarily closed; keep the loop alive so
+			// the remaining tail still drains.
+			return m, playbackTickCmd()
 		}
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamWriteMsg(chunk))
 		if len(m.playbackBuf) == 0 {
 			m.playbackActive = false
-			return m, sCmd
+			return m, tea.Batch(sCmd, m.commitTurn())
 		}
 		return m, tea.Batch(sCmd, playbackTickCmd())
 
@@ -319,7 +343,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// safely discarded here.
 		if !m.splash.done {
 			m.splash.done = true
-			m.stream, _ = m.stream.Update(streamWriteMsg(m.welcome.View() + "\n\n"))
+			// Print the intro into scrollback, then re-enter Update with the
+			// same key now that the splash is gone so it gets normal
+			// same-frame handling. Recursion is one level deep (the branch
+			// is skipped on re-entry) and avoids threading the intro cmd
+			// through every early return below.
+			introCmd := m.maybePrintIntro()
+			nextModel, keyCmd := m.Update(msg)
+			return nextModel, tea.Batch(introCmd, keyCmd)
 		}
 
 		// Arrow picker takes the screen first: while a Claude-style HITL
@@ -432,15 +463,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.playbackBuf = m.playbackBuf[:0]
 			m.playbackEmittable = 0
 			m.playbackActive = false
-			// Move the queued user chip into history before
-			// returning to idle — otherwise the operator's
-			// question vanishes silently on Ctrl+C.
+			// Move the queued user chip + any in-flight turn content into
+			// native scrollback before returning to idle — otherwise the
+			// operator's question (and partial output) vanishes on Ctrl+C.
+			var cancelCmds []tea.Cmd
 			if flush := m.flushPendingUserEcho(); flush != "" {
 				var sCmd tea.Cmd
 				m.stream, sCmd = m.stream.Update(streamWriteMsg(flush))
-				return m, sCmd
+				cancelCmds = append(cancelCmds, sCmd)
 			}
-			return m, nil
+			if c := m.commitTurn(); c != nil {
+				cancelCmds = append(cancelCmds, c)
+			}
+			return m, tea.Batch(cancelCmds...)
 
 		case "ctrl+l":
 			// Reset the assistant-turn anchor so the next agent token
@@ -457,7 +492,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingUserEcho = ""
 			var sCmd tea.Cmd
 			m.stream, sCmd = m.stream.Update(streamClearMsg{})
-			return m, sCmd
+			// Native scrollback can't be un-printed, but clearing the
+			// visible screen gives the operator the "fresh slate" the
+			// command promises; scrolled-back history stays reachable.
+			return m, tea.Batch(sCmd, tea.ClearScreen)
 
 		case "pgup":
 			var sCmd tea.Cmd
@@ -530,6 +568,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.enterSetup()
 		}
 
+		// If the previous turn's answer is still typing out (playback
+		// active) when a new question arrives, finalise it first: drain
+		// the remaining buffer into the live viewport, commit the turn to
+		// native scrollback, and collapse the viewport. Without this the
+		// old reply dumps into and interleaves with the new turn — the
+		// "answer suddenly pops out, then shows up again below the new
+		// question" unnaturalness.
+		var finalizeCmds []tea.Cmd
+		if m.playbackActive {
+			if drain := m.drainPlaybackBuffer(); drain != "" {
+				out := m.assistantBulletPrefix() + drain
+				var dCmd tea.Cmd
+				m.stream, dCmd = m.stream.Update(streamWriteMsg(out))
+				finalizeCmds = append(finalizeCmds, dCmd)
+			}
+			m.playbackActive = false
+			m.assistantTurnStarted = false
+			if c := m.commitTurn(); c != nil {
+				finalizeCmds = append(finalizeCmds, c)
+			}
+		}
+
 		// Queue the echo as a chip above the prompt; flush into the
 		// stream on the first agent event of the turn. += (not =)
 		// so a second submit while the agent is still working stacks
@@ -557,7 +617,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			) + "\n"
 			var wCmd tea.Cmd
 			m.stream, wCmd = m.stream.Update(streamWriteMsg(flush + warn))
-			return m, wCmd
+			finalizeCmds = append(finalizeCmds, wCmd)
+			if c := m.commitTurn(); c != nil {
+				finalizeCmds = append(finalizeCmds, c)
+			}
+			return m, tea.Batch(finalizeCmds...)
 		}
 
 		// Start the in-flight thinking animation. Reset seeds a new
@@ -571,7 +635,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// in flight. Cleared in agentDoneMsg and on Esc/Ctrl+C cancel.
 		m.prompt.SetInFlight(true)
 
-		return m, tea.Batch(m.runAgent(val), thinkingTickCmd())
+		finalizeCmds = append(finalizeCmds, m.runAgent(val), thinkingTickCmd())
+		return m, tea.Batch(finalizeCmds...)
 
 	case arrowPickerResolveMsg:
 		// Single-select picker — could be /login (provider OR model step),
@@ -723,18 +788,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			drain := m.drainPlaybackBuffer()
 			m.playbackActive = false
 			m.thinking.streaming = false
-			if echoFlush != "" || drain != "" {
-				out := echoFlush
-				if drain != "" {
-					out += m.assistantBulletPrefix() + drain
-				}
-				var sCmd tea.Cmd
-				m.stream, sCmd = m.stream.Update(streamWriteMsg(out))
-				m.assistantTurnStarted = false
-				return m, tea.Batch(sCmd, m.writeStream("\n"+agentError("error", msg.err)))
+			// Assemble echo + partial prose + the error as ONE block in the
+			// live viewport, then commit it to native scrollback so the
+			// whole failed turn lands together (and in order) instead of the
+			// error racing ahead of the prose via a separate print.
+			out := echoFlush
+			if drain != "" {
+				out += m.assistantBulletPrefix() + drain
 			}
+			out += "\n" + agentError("error", msg.err)
 			m.assistantTurnStarted = false
-			return m, m.writeStream("\n" + agentError("error", msg.err))
+			var sCmd tea.Cmd
+			m.stream, sCmd = m.stream.Update(streamWriteMsg(out))
+			return m, tea.Batch(sCmd, m.commitTurn())
 		}
 		// Happy path: render the buffered markdown through glamour so
 		// headings / bold / code fences / lists land as terminal-
@@ -768,7 +834,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, fCmd)
 		}
 		if len(m.playbackBuf) == 0 {
+			// No prose to type out (e.g. a tool-only turn): commit whatever
+			// landed in the live viewport (echo + tool blocks) straight to
+			// native scrollback.
 			m.playbackActive = false
+			cmds = append(cmds, m.commitTurn())
 			return m, tea.Batch(cmds...)
 		}
 		m.playbackActive = true
@@ -834,9 +904,11 @@ func (m Model) View() string {
 		return m.renderSplash()
 	}
 
-	header := m.header.View()
 	prompt := m.prompt.View()
 	paletteView := m.palette.View()
+	// The header is printed once into scrollback at startup, so the live
+	// cost readout it used to own now rides the pinned footer.
+	m.footer.SetCost(m.usage.USD)
 	footer := m.footer.View()
 	thinking := m.renderThinkingRow()
 	pickerView := ""
@@ -871,7 +943,6 @@ func (m Model) View() string {
 	// breathing room between the prompt and the footer, one as bottom
 	// padding so the TUI doesn't sit flush against the terminal edge.
 	const chromeBottomPad = 2
-	headerH := lipgloss.Height(header)
 	promptH := lipgloss.Height(prompt)
 	paletteH := lipgloss.Height(paletteView)
 	footerH := lipgloss.Height(footer)
@@ -899,25 +970,41 @@ func (m Model) View() string {
 	// against the prompt border, which reads as "cloudy is stuck" even
 	// when the turn finished cleanly.
 	const streamBottomMargin = 1
-	bodyH := m.height - headerH - promptH - paletteH - footerH - bannerH - thinkingH - pickerH - queuedH - chromeBottomPad - streamBottomMargin
-	if bodyH < 1 {
-		bodyH = 1
+	bodyBudget := m.height - promptH - paletteH - footerH - bannerH - thinkingH - pickerH - queuedH - chromeBottomPad - streamBottomMargin
+	if bodyBudget < 1 {
+		bodyBudget = 1
 	}
-	m.stream.SetViewportSize(m.width, bodyH)
-
-	body := m.stream.View()
-	if m.stream.Empty() {
-		body = m.welcome.View() + "\n" + body
+	// The live region holds only the IN-FLIGHT turn; completed turns live
+	// in native terminal scrollback (printed via tea.Println on commit).
+	// Size the viewport to the current turn's content height, capped at the
+	// budget, so it collapses to nothing between turns and the prompt rides
+	// directly under the committed history instead of floating below a
+	// tall, mostly-blank window. A turn taller than the budget caps here and
+	// scrolls internally (GotoBottom keeps the latest line visible).
+	body := ""
+	if m.fullscreen {
+		// Alt-screen: the viewport owns the whole transcript and the
+		// mouse wheel scrolls within it, so give it the full body budget.
+		m.stream.SetViewportSize(m.width, bodyBudget)
+		body = m.stream.View()
+	} else if ch := m.stream.ContentHeight(); ch > 0 {
+		bodyH := ch
+		if bodyH > bodyBudget {
+			bodyH = bodyBudget
+		}
+		m.stream.SetViewportSize(m.width, bodyH)
+		body = m.stream.View()
 	}
 
-	// Composed bottom-up: header → body (stream/welcome) → blank margin
-	// → optional approval banner → optional thinking row → prompt →
-	// optional palette suggestions → blank separator → status footer →
-	// blank bottom padding. The trailing blank lifts the footer off the
-	// terminal edge so the chrome doesn't feel cramped; the margin
-	// between body and chrome stops the reply from butting up against
-	// the prompt.
-	parts := []string{header, body, ""}
+	// Composed bottom-up: in-flight body → blank margin → optional approval
+	// banner → thinking row → optional queued chip → prompt → optional
+	// palette suggestions → blank separator → status footer → blank bottom
+	// padding. The header + completed turns already scrolled into native
+	// scrollback above this live frame.
+	parts := []string{}
+	if body != "" {
+		parts = append(parts, body, "")
+	}
 	if banner != "" {
 		parts = append(parts, banner)
 	}
@@ -945,14 +1032,83 @@ func (m Model) View() string {
 // lines appeared in 11 branches of handlePaletteAction; collapsing them
 // makes the dispatcher scannable.
 //
-// Uses streamWriteMsg so the chrome line lands synchronously instead of
-// going through the agent-token batching path — chat diagnostics need
-// to be visible on the same Update tick they were issued on.
+// Prints the chrome line directly into native terminal scrollback via
+// tea.Println so it persists, is mouse-wheel scrollable, and is
+// drag-selectable like the rest of the transcript. If an in-flight turn
+// left uncommitted content in the live viewport, that is flushed FIRST
+// (concatenated into the same print) so ordering is preserved — two
+// separate tea.Println cmds in a Batch are not order-guaranteed.
 func (m *Model) writeStream(s string) tea.Cmd {
-	var c tea.Cmd
-	m.stream, c = m.stream.Update(streamWriteMsg(s))
 	m.prompt.SetValue("")
-	return c
+	if m.fullscreen {
+		// Alt-screen keeps the transcript in the in-app viewport.
+		var c tea.Cmd
+		m.stream, c = m.stream.Update(streamWriteMsg(s))
+		return c
+	}
+	body := strings.TrimRight(s, "\n")
+	pending := strings.TrimRight(m.stream.Commit(), "\n")
+	var combined string
+	switch {
+	case pending != "" && body != "":
+		combined = pending + "\n" + body
+	case pending != "":
+		combined = pending
+	default:
+		combined = body
+	}
+	if combined == "" {
+		return nil
+	}
+	return tea.Println(combined)
+}
+
+// commitTurn prints the live viewport's accumulated turn into native
+// terminal scrollback and collapses the viewport. Returns nil when the
+// viewport is empty. This is the seam that moves finished conversation out
+// of the in-memory live region into the terminal's real scrollback, where
+// mouse-wheel scrolling and drag-to-copy work and nothing scrolls out of
+// reach.
+func (m *Model) commitTurn() tea.Cmd {
+	if m.fullscreen {
+		// Alt-screen mode accumulates the whole transcript in the
+		// scrollable viewport (tea.Println is a no-op there), so there is
+		// nothing to commit — leave the content in place.
+		return nil
+	}
+	out := strings.TrimRight(m.stream.Commit(), "\n")
+	if out == "" {
+		return nil
+	}
+	return tea.Println(out)
+}
+
+// maybePrintIntro prints the intro exactly once per session, regardless of
+// whether the splash was dismissed by the timer or a key-skip.
+func (m *Model) maybePrintIntro() tea.Cmd {
+	if m.introPrinted {
+		return nil
+	}
+	m.introPrinted = true
+	return m.printIntro()
+}
+
+// printIntro prints the one-time header snapshot + welcome banner into
+// native scrollback at the top of the session. The header is a snapshot
+// (its live ctx/model/cost readout moved to the pinned footer), so it
+// scrolls away with the transcript like the rest of the history.
+func (m *Model) printIntro() tea.Cmd {
+	intro := strings.TrimRight(m.header.View(), "\n") + "\n\n" +
+		strings.TrimRight(m.welcome.View(), "\n")
+	if m.fullscreen {
+		// Alt-screen: seed the intro into the scrollable viewport (it
+		// scrolls with the transcript) since tea.Println does nothing
+		// when the alt-screen is active.
+		var c tea.Cmd
+		m.stream, c = m.stream.Update(streamWriteMsg(intro + "\n\n"))
+		return c
+	}
+	return tea.Println(intro)
 }
 
 // applySetupResult drains a setupResult into the TUI: writes the chat
@@ -1097,14 +1253,18 @@ func (m *Model) handleEscape() tea.Cmd {
 		m.playbackBuf = m.playbackBuf[:0]
 		m.playbackEmittable = 0
 		m.playbackActive = false
-		// Mirror Ctrl+C: preserve the queued question in history so
-		// it doesn't silently disappear on cancel.
+		// Mirror Ctrl+C: preserve the queued question + any in-flight turn
+		// content in native scrollback so it doesn't disappear on cancel.
+		var cmds []tea.Cmd
 		if flush := m.flushPendingUserEcho(); flush != "" {
 			var sCmd tea.Cmd
 			m.stream, sCmd = m.stream.Update(streamWriteMsg(flush))
-			return sCmd
+			cmds = append(cmds, sCmd)
 		}
-		return nil
+		if c := m.commitTurn(); c != nil {
+			cmds = append(cmds, c)
+		}
+		return tea.Batch(cmds...)
 	}
 	// Nothing to cancel — clear the prompt so Esc always feels like
 	// it did something instead of silently no-op'ing.
@@ -1135,7 +1295,9 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamClearMsg{})
 		m.prompt.SetValue("")
-		return sCmd
+		// Native scrollback can't be un-printed; clear the visible screen so
+		// /clear still reads as a fresh slate (history stays scrollable).
+		return tea.Batch(sCmd, tea.ClearScreen)
 
 	case "quit", "exit":
 		return tea.Quit

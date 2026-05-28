@@ -92,7 +92,7 @@ func TestModelPicker_CancelDoesNotSwap(t *testing.T) {
 	m = next.(Model)
 
 	_ = m.handlePaletteAction(paletteActionMsg{cmd: "model", arg: ""})
-	next, _ = m.Update(arrowPickerResolveMsg{cancelled: true})
+	next, outCmd := m.Update(arrowPickerResolveMsg{cancelled: true})
 	m = next.(Model)
 
 	if called {
@@ -104,8 +104,8 @@ func TestModelPicker_CancelDoesNotSwap(t *testing.T) {
 	if m.modelPickerActive {
 		t.Error("modelPickerActive must reset on cancel")
 	}
-	if !strings.Contains(m.stream.content.String(), "cancelled") {
-		t.Errorf("stream should announce the cancel, got: %q", m.stream.content.String())
+	if !strings.Contains(printedText(outCmd), "cancelled") {
+		t.Errorf("scrollback should announce the cancel, got: %q", printedText(outCmd))
 	}
 }
 

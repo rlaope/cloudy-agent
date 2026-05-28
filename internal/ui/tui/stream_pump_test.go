@@ -53,6 +53,10 @@ func TestAgentStream_PumpsEveryEvent(t *testing.T) {
 	// processed (the streaming run is complete).
 	pending := []tea.Cmd{cmd}
 	gotDone := false
+	// The turn's rendered reply is committed to native scrollback via
+	// tea.Println when playback drains (which also resets m.stream), so
+	// accumulate every printed body to assert on at the end.
+	var committed string
 	deadline := time.Now().Add(5 * time.Second)
 	for len(pending) > 0 && !gotDone {
 		if time.Now().After(deadline) {
@@ -73,6 +77,7 @@ func TestAgentStream_PumpsEveryEvent(t *testing.T) {
 			pending = append(pending, batch...)
 			continue
 		}
+		committed += collectPrinted(msg)
 		// Drop the thinking-row animation tick so it does not re-arm
 		// itself and burn 250ms per iteration. The test cares about
 		// the agent stream pump, not the cosmetic "✦ Thinking…" timer.
@@ -108,6 +113,7 @@ func TestAgentStream_PumpsEveryEvent(t *testing.T) {
 			pending = append(pending, batch...)
 			continue
 		}
+		committed += collectPrinted(msg)
 		switch msg.(type) {
 		case streamFlushTickMsg, playbackTickMsg:
 		default:
@@ -128,10 +134,10 @@ func TestAgentStream_PumpsEveryEvent(t *testing.T) {
 	// styling between visible characters. Strip the escape codes and
 	// collapse the glamour-introduced whitespace before asserting the
 	// raw token sequence landed in order.
-	got := strings.Join(strings.Fields(stripANSI(m.stream.content.String())), "")
+	got := strings.Join(strings.Fields(stripANSI(committed)), "")
 	want := strings.Join(tokens, "")
 	if !strings.Contains(got, want) {
-		t.Errorf("stream missing tokens.\n want substring: %q\n full content:   %q\n"+
+		t.Errorf("committed scrollback missing tokens.\n want substring: %q\n full content:   %q\n"+
 			"  hint: if only the first token is present, the pump-cmd regression is back",
 			want, got)
 	}

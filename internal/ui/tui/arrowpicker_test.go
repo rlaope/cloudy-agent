@@ -110,7 +110,7 @@ func TestLogin_ArrowPicker_EndToEnd(t *testing.T) {
 
 	// Simulate the operator hitting Enter on the "google" row.
 	resolveCmd := arrowPickerResolveCmd("google", false)
-	next, _ = m.Update(resolveCmd().(tea.Msg))
+	next, outCmd := m.Update(resolveCmd().(tea.Msg))
 	m = next.(Model)
 
 	if m.arrowPicker != nil {
@@ -122,9 +122,9 @@ func TestLogin_ArrowPicker_EndToEnd(t *testing.T) {
 	if m.loginChat.provider != "google" {
 		t.Errorf("loginChat.provider should be google, got %q", m.loginChat.provider)
 	}
-	if !strings.Contains(m.stream.content.String(), "GOOGLE_API_KEY") {
-		t.Errorf("stream should contain key-prompt for GOOGLE_API_KEY, got: %q",
-			m.stream.content.String())
+	if !strings.Contains(printedText(outCmd), "GOOGLE_API_KEY") {
+		t.Errorf("scrollback should contain key-prompt for GOOGLE_API_KEY, got: %q",
+			printedText(outCmd))
 	}
 }
 
@@ -140,14 +140,14 @@ func TestLogin_ArrowPicker_Cancel(t *testing.T) {
 		cmd()
 	}
 	resolveCmd := arrowPickerResolveCmd("", true)
-	next, _ = m.Update(resolveCmd().(tea.Msg))
+	next, outCmd := m.Update(resolveCmd().(tea.Msg))
 	m = next.(Model)
 
 	if m.loginChat != nil {
 		t.Error("loginChat should be cleared after cancel resolve")
 	}
-	if !strings.Contains(m.stream.content.String(), "cancelled") {
-		t.Errorf("stream should contain cancellation note, got: %q",
-			m.stream.content.String())
+	if !strings.Contains(printedText(outCmd), "cancelled") {
+		t.Errorf("scrollback should contain cancellation note, got: %q",
+			printedText(outCmd))
 	}
 }
