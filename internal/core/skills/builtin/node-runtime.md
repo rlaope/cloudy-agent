@@ -2,9 +2,9 @@
 name: node-runtime
 description: Diagnose Node.js / V8 performance — event-loop lag, garbage-collection pauses (scavenge vs. mark-sweep-compact), TurboFan deoptimisation, and CPU-bound handlers — using Prometheus runtime metrics and on-demand V8 Inspector CPU profiles. Read-only.
 triggers:
-  - node
   - nodejs
   - node.js
+  - node runtime
   - event loop
   - event loop lag
   - libuv
@@ -54,21 +54,21 @@ You are a Node.js / V8 runtime analyst. Node is single-threaded for JavaScript: 
    - `nodejs_eventloop_lag_seconds` / `nodejs_eventloop_lag_p99_seconds` — the headline signal.
    - `nodejs_gc_duration_seconds` (labelled by `kind`: `scavenge` / `markSweepCompact` / `incremental`).
    - `nodejs_heap_size_used_bytes`, `nodejs_heap_size_total_bytes`, `nodejs_external_memory_bytes`.
-   - `nodejs_active_handles_total`, `nodejs_active_requests_total` (a monotonic climb = handle/request leak).
+   - `nodejs_active_handles` / `nodejs_active_handles_total`, `nodejs_active_requests` / `nodejs_active_requests_total` — these are **gauges** (live count now, despite the `_total` suffix), so judge a *non-recovering* rise net of traffic, not raw growth.
 
 ### Step 2 — Event loop vs. GC vs. CPU
 
 1. `prom.query_range` on `nodejs_eventloop_lag_p99_seconds`. Sustained lag **> 100 ms** with container CPU **below** its limit ⇒ the loop is being blocked synchronously (not a capacity problem). This is the most common "fast but spiky" Node incident.
 2. `prom.query_range` on `rate(nodejs_gc_duration_seconds_sum{kind="markSweepCompact"}[5m])`. If mark-sweep time is a meaningful fraction of wall-clock, the latency IS the GC — correlate the pause timestamps with the lag spikes.
-3. Heap trend: `nodejs_heap_size_used_bytes` climbing toward `--max-old-space-size` (default ~1.5 GB on 64-bit unless set explicitly; Node does not reliably read the container memory limit on its own, so an unset flag in a large-limit container can still cap the old space at the V8 default) ⇒ leak or unbounded cache; expect lengthening mark-sweep pauses then OOM. Hand off to `oom-killed-triage` if it's already being killed.
-4. `nodejs_active_handles_total` / `nodejs_active_requests_total` rising without bound ⇒ unclosed sockets/timers — a leak that also degrades the loop.
+3. Heap trend: `nodejs_heap_size_used_bytes` climbing toward the old-space cap ⇒ leak or unbounded cache; expect lengthening mark-sweep pauses then OOM. The cap is whatever `--max-old-space-size` is set to; if unset, modern Node (≥ 12) derives a default from available/cgroup-visible memory (often ~2 GB+ on a sizeable container, not a fixed 1.4–1.5 GB), so confirm the actual `--max-old-space-size` flag and the container memory limit rather than assuming a number. Hand off to `oom-killed-triage` if it's already being killed.
+4. The `nodejs_active_handles*` / `nodejs_active_requests*` gauges climbing and *not receding* as traffic falls ⇒ unclosed sockets/timers — a leak that also degrades the loop.
 
 ### Step 3 — Name the hot function (V8 CPU profile)
 
 When metrics localise the problem to a process but not a call site, profile it. **`perf.v8_inspector_*` is RiskHigh — the operator must approve, and the process must expose the inspector (`node --inspect=0.0.0.0:9229`, port-forwarded).**
 
-1. `perf.v8_inspector_targets url=<inspector-host:port>` to enumerate debug targets and get the WebSocket debugger URL.
-2. `perf.v8_inspector_cpu_profile url=<ws-url> top_n=20` to capture a CPU profile. Read the top functions by `hitCount`:
+1. `perf.v8_inspector_targets name=<configured-inspector-endpoint>` (the endpoint is a named entry in `node_inspectors` config — omit `name` if exactly one is configured) to enumerate debug targets.
+2. `perf.v8_inspector_cpu_profile name=<endpoint> target_index=<n> duration_seconds=15 top_n=20` to capture a CPU profile (`target_index` picks the target from the enumerated list, default 0). Read the top functions by `hitCount`:
    - A user function dominating ⇒ a CPU-bound handler on the loop; that's the block.
    - `(garbage collector)` high ⇒ confirms the GC story from Step 2.
    - A function you'd expect to be fast sitting hot ⇒ suspect a TurboFan deopt; recommend stabilising its argument shapes / avoiding polymorphism on the hot path.

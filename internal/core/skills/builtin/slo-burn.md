@@ -62,9 +62,11 @@ For an SLO with target `T` (e.g. 99.9%) over a window `W` (e.g. 30 days):
 
 1. `prom.query_range` the error ratio over the full SLO window to integrate consumed budget: `consumed = Σ(bad) / Σ(total)` against the allowed `1 - T`.
 2. `budget_remaining_pct = (1 - consumed/(1-T)) * 100`.
-3. `time_to_exhaustion = remaining_budget / current_burn_rate`, expressed in hours/days at the *current* fast-window rate. If burn rate < 1, the budget is not draining within the window — say "not on track to breach".
+3. `time_to_exhaustion = W × remaining_budget_fraction / current_burn_rate` — the window `W` carries the time dimension, so it MUST be in the formula (burn rate is dimensionless). E.g. remaining 50% of a 30d budget at burn 4× → 30d × 0.5 / 4 = 3.75 days. If burn rate < 1, the budget is not draining within the window — say "not on track to breach".
 
 ### Step 4 — Verdict (fixed output shape)
+
+Emit this only once `T`, `W`, and the SLI type are known — from the operator or a recording rule. If they're still unknown after Step 1, do NOT fill the `<T>`/`<W>` slots with a guess; stop and ask instead (see the constraint below).
 
 ```
 SLO:           <service> <SLI type> target <T>% over <W>
@@ -81,4 +83,4 @@ Watch:         <one prom.query_range the on-call should keep open>
 - **Burn rate without a window pair is meaningless.** Never declare "page now" from a single short window — that's how you train alert fatigue. Require both halves of a pair.
 - **Don't invent the target.** If `T` and `W` aren't given and no recording rule encodes them, ask — a 99.9%/30d budget and a 99.99%/7d budget yield opposite verdicts on the same error ratio.
 - **Reuse the team's recording rules** when `alert.list_rules` exposes them; your ad-hoc PromQL must not contradict the alerts that actually page.
-- Read-only: you report the burn, you do not silence alerts or edit rules. Pivot to `incident-context` when a fast-burn coincides with firing alerts to find the proximate cause.
+- **Never silence or edit (read-only).** Do not recommend `amtool silence add`, acking/silencing the burn alert, or editing the SLO recording/alert rules to make the page stop — that hides budget loss instead of addressing it. You report the burn; a human decides what to mute. Pivot to `incident-context` when a fast-burn coincides with firing alerts to find the proximate cause.
