@@ -28,6 +28,7 @@ const (
 type FooterModel struct {
 	state string
 	model string
+	cost  float64
 	width int
 
 	brandRendered string // pre-rendered "cloudy <ver>" segment
@@ -73,15 +74,22 @@ func (f *FooterModel) SetState(s string) { f.state = orUnconfigured(s) }
 // SetModel updates the model segment.
 func (f *FooterModel) SetModel(m string) { f.model = orUnconfigured(m) }
 
+// SetCost updates the cumulative session cost segment. The header used to
+// own the live `$<cost>` readout, but the native-scrollback layout prints
+// the header once at the top (it scrolls away with the transcript), so the
+// always-visible cost moved here to the pinned footer.
+func (f *FooterModel) SetCost(c float64) { f.cost = c }
+
 // View renders the single-line footer.
 func (f FooterModel) View() string {
+	cost := fmt.Sprintf("$%.4f", f.cost)
 	if f.noColor {
 		return f.brandRendered + f.sepRendered +
 			"state: " + f.state + f.sepRendered +
-			"model: " + f.model
+			"model: " + f.model + f.sepRendered + cost
 	}
 	var b strings.Builder
-	b.Grow(len(f.brandRendered) + 64)
+	b.Grow(len(f.brandRendered) + 80)
 	b.WriteString(f.brandRendered)
 	b.WriteString(f.sepRendered)
 	b.WriteString(f.labelStyle.Render("state: "))
@@ -89,6 +97,8 @@ func (f FooterModel) View() string {
 	b.WriteString(f.sepRendered)
 	b.WriteString(f.labelStyle.Render("model: "))
 	b.WriteString(f.valueStyle.Render(f.model))
+	b.WriteString(f.sepRendered)
+	b.WriteString(f.valueStyle.Render(cost))
 	return b.String()
 }
 

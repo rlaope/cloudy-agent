@@ -66,14 +66,13 @@ func TestApplyLoginResult_InvokesSwap(t *testing.T) {
 	next, _ := m.Update(windowMsg())
 	m = next.(Model)
 
-	_ = m.applyLoginResult(loginResult{
+	out := printedText(m.applyLoginResult(loginResult{
 		out:         "✓ Saved as GOOGLE_API_KEY\n",
 		done:        true,
 		swapToModel: "gemini-2.5-flash",
-	})
-	if !strings.Contains(m.stream.content.String(), "GOOGLE_API_KEY") {
-		t.Errorf("stream should record the success line, got: %q",
-			m.stream.content.String())
+	}))
+	if !strings.Contains(out, "GOOGLE_API_KEY") {
+		t.Errorf("scrollback should record the success line, got: %q", out)
 	}
 	if calledWith != "gemini-2.5-flash" {
 		t.Errorf("SwapModel called with %q, want %q", calledWith, "gemini-2.5-flash")
@@ -99,19 +98,18 @@ func TestApplyLoginResult_SwapErrorReportedInline(t *testing.T) {
 	next, _ := m.Update(windowMsg())
 	m = next.(Model)
 
-	_ = m.applyLoginResult(loginResult{
+	out := printedText(m.applyLoginResult(loginResult{
 		out:         "✓ Saved as GOOGLE_API_KEY\n",
 		done:        true,
 		swapToModel: "gemini-2.5-flash",
-	})
+	}))
 
 	if m.deps.Model != "old-model" {
 		t.Errorf("deps.Model should stay %q on swap failure, got %q",
 			"old-model", m.deps.Model)
 	}
-	if !strings.Contains(m.stream.content.String(), "swap") {
-		t.Errorf("stream should record swap error, got: %q",
-			m.stream.content.String())
+	if !strings.Contains(out, "swap") {
+		t.Errorf("scrollback should record swap error, got: %q", out)
 	}
 }
 

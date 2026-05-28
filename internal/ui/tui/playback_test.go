@@ -100,11 +100,16 @@ func TestPlayback_DoneStartsTypewriterDrain(t *testing.T) {
 
 	// Drive ticks until the buffer drains. Bound the loop so a
 	// regression that leaves the drain inactive fails the test
-	// instead of spinning forever.
+	// instead of spinning forever. The final tick commits the turn to
+	// native scrollback (tea.Println) and resets the live viewport, so
+	// capture the printed output rather than reading m.stream.content
+	// (which is empty once committed).
 	const guard = 1000
+	var committed string
 	for i := 0; i < guard && len(m.playbackBuf) > 0; i++ {
-		next, _ = m.Update(playbackTickMsg{})
+		next, cmd := m.Update(playbackTickMsg{})
 		m = next.(Model)
+		committed += printedText(cmd)
 	}
 	if len(m.playbackBuf) != 0 {
 		t.Errorf("playbackTickMsg loop never drained the buffer; left=%d", len(m.playbackBuf))
@@ -112,9 +117,9 @@ func TestPlayback_DoneStartsTypewriterDrain(t *testing.T) {
 	if m.playbackActive {
 		t.Error("playbackActive must reset to false once the buffer is empty")
 	}
-	plain := strings.Join(strings.Fields(stripANSI(m.stream.content.String())), " ")
+	plain := strings.Join(strings.Fields(stripANSI(committed)), " ")
 	if !strings.Contains(plain, "complete response body here.") {
-		t.Errorf("body must eventually land in stream content; got %q", plain)
+		t.Errorf("body must eventually land in committed scrollback; got %q", plain)
 	}
 }
 

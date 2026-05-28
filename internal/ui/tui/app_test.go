@@ -253,13 +253,10 @@ func TestModel_HelpAction_WritesToStream(t *testing.T) {
 	m = next.(Model)
 
 	cmd := m.handlePaletteAction(paletteActionMsg{cmd: "help"})
-	if cmd != nil {
-		cmd()
-	}
 
-	// Stream content should contain "shortcuts".
-	if !strings.Contains(m.stream.content.String(), "shortcuts") {
-		t.Error("help action should write help text to stream")
+	// Help text is printed into native scrollback via tea.Println.
+	if !strings.Contains(printedText(cmd), "shortcuts") {
+		t.Error("help action should write help text to scrollback")
 	}
 }
 
@@ -269,12 +266,9 @@ func TestModel_VersionAction_WritesToStream(t *testing.T) {
 	m = next.(Model)
 
 	cmd := m.handlePaletteAction(paletteActionMsg{cmd: "version"})
-	if cmd != nil {
-		cmd()
-	}
 
-	if !strings.Contains(m.stream.content.String(), "cloudy") {
-		t.Error("version action should write version to stream")
+	if !strings.Contains(printedText(cmd), "cloudy") {
+		t.Error("version action should write version to scrollback")
 	}
 }
 
@@ -287,16 +281,14 @@ func TestModel_ScopeCmd_SetsScope(t *testing.T) {
 
 	// Simulate submitting "/scope ns=payments".
 	cmd := m.handleScopeCmd("ns=payments")
-	if cmd != nil {
-		cmd()
-	}
+	out := printedText(cmd)
 
 	sc := m.currentScope()
 	if len(sc.Namespaces) != 1 || sc.Namespaces[0] != "payments" {
 		t.Errorf("scope.Namespaces = %v, want [payments]", sc.Namespaces)
 	}
-	if !strings.Contains(m.stream.content.String(), "payments") {
-		t.Error("scope confirmation should mention the namespace in stream output")
+	if !strings.Contains(out, "payments") {
+		t.Error("scope confirmation should mention the namespace in scrollback output")
 	}
 }
 
@@ -309,16 +301,14 @@ func TestModel_ScopeCmd_Reset_ClearsScope(t *testing.T) {
 	m.handleScopeCmd("ns=payments")
 	// Reset it.
 	cmd := m.handleScopeCmd("reset")
-	if cmd != nil {
-		cmd()
-	}
+	out := printedText(cmd)
 
 	sc := m.currentScope()
 	if !sc.Empty() {
 		t.Errorf("scope should be empty after reset, got %+v", sc)
 	}
-	if !strings.Contains(m.stream.content.String(), "reset") {
-		t.Error("stream should contain reset confirmation")
+	if !strings.Contains(out, "reset") {
+		t.Error("scrollback should contain reset confirmation")
 	}
 }
 
@@ -360,12 +350,9 @@ func TestModel_ScopeCmd_InvalidArg_EmitsError(t *testing.T) {
 	m = next.(Model)
 
 	cmd := m.handleScopeCmd("badkey=foo")
-	if cmd != nil {
-		cmd()
-	}
 
-	if !strings.Contains(m.stream.content.String(), "scope error") {
-		t.Error("invalid scope key should emit error to stream")
+	if !strings.Contains(printedText(cmd), "scope error") {
+		t.Error("invalid scope key should emit error to scrollback")
 	}
 	// Scope should not change.
 	if !m.currentScope().Empty() {
@@ -519,11 +506,10 @@ func TestSetupSubmit_EntersInlineChat(t *testing.T) {
 
 	next, cmd := m.Update(submitMsg("/setup"))
 	m = next.(Model)
-	if cmd != nil {
-		cmd()
-	}
 
-	out := m.stream.content.String()
+	// firstPrintln runs only the chrome print, never the async scan cmd
+	// the greeting path batches after it.
+	out := firstPrintln(cmd)
 	hasGreeting := strings.Contains(out, "--- /setup")
 	hasNoKubeconfig := strings.Contains(out, "no kubeconfig contexts")
 	if !hasGreeting && !hasNoKubeconfig {
@@ -542,11 +528,8 @@ func TestSetupPaletteAction_EntersSetup(t *testing.T) {
 	m = next.(Model)
 
 	cmd := m.handlePaletteAction(paletteActionMsg{cmd: "setup"})
-	if cmd != nil {
-		cmd()
-	}
 
-	out := m.stream.content.String()
+	out := firstPrintln(cmd)
 	if !strings.Contains(out, "--- /setup") && !strings.Contains(out, "no kubeconfig contexts") {
 		t.Errorf("palette setup action should emit a greeting or no-kubeconfig error, got: %q", out)
 	}
@@ -617,9 +600,11 @@ func TestPaletteAction_Update_KicksSelfUpdate(t *testing.T) {
 
 	cmd := m.handlePaletteAction(paletteActionMsg{cmd: "update"})
 
-	out := m.stream.content.String()
+	// firstPrintln runs only the chrome print, never the GitHub self-update
+	// fetch the handler batches after it.
+	out := firstPrintln(cmd)
 	if !strings.Contains(out, "checking for cloudy update") {
-		t.Errorf("update action should write the intro line synchronously; got %q", out)
+		t.Errorf("update action should print the intro line to scrollback; got %q", out)
 	}
 	if cmd == nil {
 		t.Error("update action should return a non-nil cmd that kicks the selfupdate goroutine")
@@ -642,15 +627,10 @@ func TestWriteStream_TwoCallsNoPanic(t *testing.T) {
 	next, _ := m.Update(windowMsg())
 	m = next.(Model)
 
-	if c := m.writeStream("first\n"); c != nil {
-		c()
-	}
-	if c := m.writeStream("second\n"); c != nil {
-		c()
-	}
-	if !strings.Contains(m.stream.content.String(), "first") ||
-		!strings.Contains(m.stream.content.String(), "second") {
-		t.Errorf("stream missing one of the writes: %q", m.stream.content.String())
+	out1 := printedText(m.writeStream("first\n"))
+	out2 := printedText(m.writeStream("second\n"))
+	if !strings.Contains(out1, "first") || !strings.Contains(out2, "second") {
+		t.Errorf("scrollback missing one of the writes: %q / %q", out1, out2)
 	}
 }
 
@@ -662,11 +642,8 @@ func TestPaletteAction_SetUpAlias_EntersSetup(t *testing.T) {
 	m = next.(Model)
 
 	cmd := m.handlePaletteAction(paletteActionMsg{cmd: "set-up"})
-	if cmd != nil {
-		cmd()
-	}
 
-	out := m.stream.content.String()
+	out := firstPrintln(cmd)
 	if !strings.Contains(out, "--- /setup") && !strings.Contains(out, "no kubeconfig contexts") {
 		t.Errorf("set-up alias should emit a greeting or no-kubeconfig error, got: %q", out)
 	}
