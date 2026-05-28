@@ -131,6 +131,14 @@ func (t *containerLogsTool) Run(ctx context.Context, raw json.RawMessage) (tools
 		}
 		matched++
 		name := containerName(s)
+
+		// A TTY container's log stream is raw (no stdcopy framing); inspect
+		// first so we only demultiplex the multiplexed (non-TTY) stream.
+		tty := false
+		if insp, ierr := api.ContainerInspect(ctx, s.ID); ierr == nil && insp.Config != nil {
+			tty = insp.Config.Tty
+		}
+
 		stream, err := api.ContainerLogs(ctx, s.ID, opts)
 		if err != nil {
 			// Tolerate a single container's log fetch failing (e.g. it was
@@ -138,14 +146,22 @@ func (t *containerLogsTool) Run(ctx context.Context, raw json.RawMessage) (tools
 			failures = append(failures, fmt.Sprintf("%s: %v", name, err))
 			continue
 		}
-		text, derr := demux(stream)
+		text, derr := readLogStream(stream, tty)
 		stream.Close()
 		if derr != nil && text == "" {
 			failures = append(failures, fmt.Sprintf("%s: %v", name, derr))
 			continue
 		}
+		if derr != nil {
+			// Partial transcript: some lines decoded before a stream error
+			// (e.g. a daemon Systemerr frame). Keep what we have but flag it.
+			failures = append(failures, fmt.Sprintf("%s: partial: %v", name, derr))
+		}
 		logs = append(logs, containerLog{
-			Name:       name,
+			Name: name,
+			// tail is re-applied locally: the API's Tail counts log entries,
+			// while we count split lines after demux — the local cap is the
+			// authoritative bound on rendered lines.
 			Lines:      tailLines(text, tail),
 			ErrorCount: countErrorLines(text),
 		})

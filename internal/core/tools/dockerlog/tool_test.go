@@ -22,14 +22,18 @@ type mockDockerAPI struct {
 	summaries []container.Summary
 	logs      map[string][]byte
 	logsErr   map[string]error
+	tty       map[string]bool // container ID -> Config.Tty
 }
 
 func (m *mockDockerAPI) ContainerList(_ context.Context, _ container.ListOptions) ([]container.Summary, error) {
 	return m.summaries, nil
 }
 
-func (m *mockDockerAPI) ContainerInspect(_ context.Context, _ string) (container.InspectResponse, error) {
-	return container.InspectResponse{}, nil
+func (m *mockDockerAPI) ContainerInspect(_ context.Context, id string) (container.InspectResponse, error) {
+	return container.InspectResponse{
+		ContainerJSONBase: &container.ContainerJSONBase{},
+		Config:            &container.Config{Tty: m.tty[id]},
+	}, nil
 }
 
 func (m *mockDockerAPI) ImageList(_ context.Context, _ image.ListOptions) ([]image.Summary, error) {
@@ -170,6 +174,35 @@ func TestContainerLogs_TailLimitsLines(t *testing.T) {
 	}
 	if !strings.Contains(obs.Text, "l4") || !strings.Contains(obs.Text, "l5") {
 		t.Errorf("tail=2 should retain l4 and l5:\n%s", obs.Text)
+	}
+}
+
+// TestContainerLogs_TTYRawStream pins the TTY fix: a container created with a
+// TTY emits a RAW log stream (no stdcopy 8-byte framing). The tool must inspect
+// Config.Tty and read it verbatim rather than running it through StdCopy (which
+// would misread the first bytes as a frame header and corrupt/empty the output).
+func TestContainerLogs_TTYRawStream(t *testing.T) {
+	raw := "raw tty line 1\nERROR raw tty failure\n"
+	api := &mockDockerAPI{
+		summaries: []container.Summary{
+			{ID: "id-tty", Names: []string{"/web"}, Labels: map[string]string{"com.docker.compose.service": "web"}},
+		},
+		logs: map[string][]byte{
+			"id-tty": []byte(raw), // raw, NOT muxFrame
+		},
+		tty: map[string]bool{"id-tty": true},
+	}
+	tool := newTool(mockHub{api: api})
+
+	obs, err := run(t, tool, map[string]any{"workload": "web"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(obs.Text, "raw tty line 1") || !strings.Contains(obs.Text, "ERROR raw tty failure") {
+		t.Errorf("TTY raw stream must be read verbatim, got:\n%s", obs.Text)
+	}
+	if !strings.Contains(obs.Text, "(2 line(s), 1 error line(s))") {
+		t.Errorf("expected 2 lines / 1 error from raw stream, got:\n%s", obs.Text)
 	}
 }
 

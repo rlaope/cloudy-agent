@@ -14,7 +14,22 @@ import (
 // for clarity of intent; matching is substring against the lower-cased line.
 var errTokens = []string{"error", "err", "fatal", "panic", "level=error"}
 
-// demux reads a Docker log stream and returns the combined stdout+stderr text.
+// readLogStream returns the combined transcript from a container's log stream.
+// A TTY container emits a RAW byte stream with no stdcopy framing, so it is
+// read verbatim; a non-TTY stream is multiplexed and demultiplexed via stdcopy.
+// Calling StdCopy on a raw TTY stream would misread the first bytes as a frame
+// header and return empty/corrupt output, so the caller must pass the
+// container's real Tty flag (from ContainerInspect).
+func readLogStream(r io.Reader, tty bool) (string, error) {
+	if tty {
+		b, err := io.ReadAll(r)
+		return string(b), err
+	}
+	return demux(r)
+}
+
+// demux reads a multiplexed (non-TTY) Docker log stream and returns the
+// combined stdout+stderr text.
 // Docker frames stdout/stderr with an 8-byte header per chunk unless the
 // container has a TTY (then the stream is raw). stdcopy.StdCopy handles the
 // multiplexed framing; both destinations are written to the same builder so
