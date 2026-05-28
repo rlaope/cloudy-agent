@@ -56,6 +56,8 @@ var canonicalToolNames = []string{
 	"ebpf.bpftrace_oneliner",
 
 	"change.recent",
+
+	"metric.container_stats",
 }
 
 // stubTool mirrors the helper in internal/tools/registry_test.go; copied here

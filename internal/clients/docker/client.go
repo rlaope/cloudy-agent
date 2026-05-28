@@ -10,6 +10,7 @@ package dockerclient
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/docker/docker/api/types/container"
@@ -17,13 +18,14 @@ import (
 	dockersdk "github.com/docker/docker/client"
 )
 
-// ReadOnlyAPI is the minimal read surface the change-source consumes from a
-// Docker daemon. It is intentionally small so it can be mocked in tests, and
+// ReadOnlyAPI is the minimal read surface cloudy consumes from a Docker
+// daemon. It is intentionally small so it can be mocked in tests, and
 // intentionally read-only so no mutating call can leak in via this seam.
 type ReadOnlyAPI interface {
 	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
 	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
 	ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error)
+	ContainerStats(ctx context.Context, containerID string) (container.StatsResponse, error)
 }
 
 // Client is a read-only façade over one Docker daemon. It satisfies
@@ -63,4 +65,23 @@ func (c *Client) ContainerInspect(ctx context.Context, containerID string) (cont
 // ImageList lists images on the daemon.
 func (c *Client) ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error) {
 	return c.sdk.ImageList(ctx, options)
+}
+
+// ContainerStats returns a single resource-usage sample for one container.
+// It uses the SDK's one-shot endpoint (no streaming), reads the single JSON
+// document from the returned body, and closes it — so this is a read-only,
+// bounded call with no lingering connection. A read or decode failure is
+// wrapped; the body is closed in all paths.
+func (c *Client) ContainerStats(ctx context.Context, containerID string) (container.StatsResponse, error) {
+	reader, err := c.sdk.ContainerStatsOneShot(ctx, containerID)
+	if err != nil {
+		return container.StatsResponse{}, fmt.Errorf("docker: container stats: %w", err)
+	}
+	defer reader.Body.Close()
+
+	var stats container.StatsResponse
+	if err := json.NewDecoder(reader.Body).Decode(&stats); err != nil {
+		return container.StatsResponse{}, fmt.Errorf("docker: decode container stats: %w", err)
+	}
+	return stats, nil
 }
