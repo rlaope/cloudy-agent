@@ -133,6 +133,55 @@ func TestSystemPreamble_InjectsSkillCatalog(t *testing.T) {
 	}
 }
 
+// TestSystemPreamble_DropsCatalogWhenSkillActive pins the token-economy
+// rule: once a skill is active its full body is injected, so the catalog of
+// every OTHER skill is redundant noise and must be omitted. The catalog
+// only appears in the no-active-skill case (covered above).
+func TestSystemPreamble_DropsCatalogWhenSkillActive(t *testing.T) {
+	prov := &capturingProvider{}
+	reg := tools.New()
+	skillReg := skills.New([]*skills.Skill{
+		{
+			Name:         "fake-skill-one",
+			Description:  "first fake skill description",
+			AllowedTools: []string{"x.y"},
+			SystemPrompt: "irrelevant",
+		},
+	})
+	active := skills.NewStaticSkill(&skills.Skill{
+		Name:         "active-skill",
+		Description:  "the active one",
+		AllowedTools: []string{"x.y"},
+		SystemPrompt: "ACTIVE-SKILL-BODY-MARKER",
+	})
+	ag, err := agent.New(agent.Options{
+		Provider: prov,
+		Model:    "test-model",
+		Registry: reg,
+		Skills:   skillReg,
+		Skill:    active,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := ag.Run(context.Background(), "hi", render.NewStream(discardWriter{}, render.NewTheme(true))); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	sys := systemMessage(prov.captured)
+	// Assert on catalog CONTENT (the registry skill's name), not the
+	// "## Available skills" header — basePreamble's prose self-references
+	// that header phrase, so the header is present even when the catalog
+	// section is not emitted. The skill name only appears if the catalog
+	// was actually written.
+	if strings.Contains(sys, "fake-skill-one") {
+		t.Errorf("skill catalog must be dropped when a skill is active\n--- prompt ---\n%s\n--- end ---", sys)
+	}
+	if !strings.Contains(sys, "## Active skill: active-skill") || !strings.Contains(sys, "ACTIVE-SKILL-BODY-MARKER") {
+		t.Errorf("active skill body must still be injected\n--- prompt ---\n%s\n--- end ---", sys)
+	}
+}
+
 type discardWriter struct{}
 
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
