@@ -59,6 +59,8 @@ var canonicalToolNames = []string{
 	"change.recent",
 
 	"metric.container_stats",
+
+	"correlate.workload",
 }
 
 // stubTool mirrors the helper in internal/tools/registry_test.go; copied here

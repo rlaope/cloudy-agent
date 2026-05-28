@@ -424,6 +424,19 @@ type ArgoHistoryEntry struct {
 	Source     string `json:"source,omitempty"`
 }
 
+// AppHistory returns app's recent sync history, newest-first, by reading the
+// application object's .status.history (the path argo_app_history already uses
+// against every Argo CD version). Exported so cross-signal consumers — e.g.
+// the correlate group — can fold sync events into a change timeline without
+// re-implementing the v1 path layout.
+func (c *ArgoClient) AppHistory(ctx context.Context, app string) ([]ArgoHistoryEntry, error) {
+	body, err := c.RawGet(ctx, "/api/v1/applications/"+url.PathEscape(app), nil)
+	if err != nil {
+		return nil, err
+	}
+	return parseArgoHistory(body)
+}
+
 func parseArgoHistory(body []byte) ([]ArgoHistoryEntry, error) {
 	var it struct {
 		Status struct {

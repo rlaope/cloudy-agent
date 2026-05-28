@@ -20,6 +20,7 @@ import (
 	"github.com/rlaope/cloudy/internal/core/tools"
 	"github.com/rlaope/cloudy/internal/core/tools/alert"
 	"github.com/rlaope/cloudy/internal/core/tools/change"
+	"github.com/rlaope/cloudy/internal/core/tools/correlate"
 	"github.com/rlaope/cloudy/internal/core/tools/db"
 	"github.com/rlaope/cloudy/internal/core/tools/dockerlog"
 	"github.com/rlaope/cloudy/internal/core/tools/ebpf"
@@ -163,6 +164,16 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 	if dockerHub != nil {
 		dockerlog.RegisterAll(reg, dockerHub)
 		reg.UnmarkSkipped("log")
+	}
+
+	// correlate.* joins the change timeline (k8s + docker) with Argo CD sync
+	// history into one evidence chain. Register when at least one of those
+	// signal sources exists; skip the group only when none do. Reuses hub /
+	// dockerHub already built above and the Argo clients from the gitops pass.
+	if hub == nil && dockerHub == nil && len(gitopsClients.Argo) == 0 {
+		reg.MarkSkipped("correlate", "no kubeconfig, docker hosts, or Argo CD endpoint configured")
+	} else {
+		correlate.RegisterAll(reg, hub, dockerHub, gitopsClients.Argo)
 	}
 
 	// Single Profile application point: namespace checker on the Hub plus
