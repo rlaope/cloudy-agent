@@ -77,6 +77,7 @@ func metricBreachEvents(res *promclient.Result, threshold float64, query string)
 		breachTime  time.Time
 		breachValue float64
 		peakValue   float64
+		havePeak    bool
 		found       bool
 	)
 
@@ -86,8 +87,11 @@ func metricBreachEvents(res *promclient.Result, threshold float64, query string)
 			val := pt[1]
 			t := time.Unix(int64(tsSec), int64((tsSec-float64(int64(tsSec)))*1e9))
 
-			if val > peakValue {
+			// Seed the peak from the first sample so a metric whose values are
+			// all negative still reports a real peak (not a spurious 0).
+			if !havePeak || val > peakValue {
 				peakValue = val
+				havePeak = true
 			}
 			if val > threshold {
 				if !found || t.Before(breachTime) {
@@ -103,8 +107,6 @@ func metricBreachEvents(res *promclient.Result, threshold float64, query string)
 		return nil
 	}
 
-	// Re-scan to find the true peak across all series now that we know there is
-	// a breach (peakValue already set above across the full scan).
 	return []change.ChangeEvent{
 		{
 			Time:    breachTime,
