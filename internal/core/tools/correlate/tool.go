@@ -7,8 +7,12 @@ import (
 	"strings"
 	"time"
 
+	dockerclient "github.com/rlaope/cloudy/internal/clients/docker"
+	promclient "github.com/rlaope/cloudy/internal/clients/prom"
 	"github.com/rlaope/cloudy/internal/core/tools"
 	"github.com/rlaope/cloudy/internal/core/tools/change"
+	tlog "github.com/rlaope/cloudy/internal/core/tools/log"
+	"github.com/rlaope/cloudy/internal/core/tools/trace"
 )
 
 // defaultSince is used when the caller omits `since` or supplies a value that
@@ -18,46 +22,58 @@ const defaultSince = time.Hour
 // defaultLimit caps the merged timeline when the caller omits `limit`.
 const defaultLimit = 50
 
-// causeKinds is the set of state-altering change kinds that can plausibly be
-// the cause behind a symptom. "event" is excluded: a Kubernetes event is a
-// report of a condition, not the change that produced it.
-var causeKinds = map[string]bool{
-	"image":             true,
-	"rollout":           true,
-	"scale":             true,
-	"sync":              true,
-	"container_restart": true,
-	"container_create":  true,
-	"image_pull":        true,
-}
-
 type correlateArgs struct {
-	Workload  string `json:"workload"`
-	Namespace string `json:"namespace"`
-	Context   string `json:"context"`
-	Since     string `json:"since"`
-	Limit     int    `json:"limit"`
+	Workload        string  `json:"workload"`
+	Namespace       string  `json:"namespace"`
+	Context         string  `json:"context"`
+	Since           string  `json:"since"`
+	Limit           int     `json:"limit"`
+	MetricQuery     string  `json:"metric_query"`
+	MetricThreshold float64 `json:"metric_threshold"`
 }
 
-// correlateTool joins the available change sources (k8s, docker, argo) into one
-// newest-first evidence timeline for a workload and names the most recent
-// state-altering event as the likeliest correlate of a current symptom. It is
-// hand-written rather than built via Spec[Args] so it can advertise RiskLow
-// through the RiskRated interface.
+// correlateTool joins the available change sources (k8s, docker, argo) and the
+// symptom sources (metric/log/trace) into one newest-first evidence timeline
+// for a workload, and names the most recent state-altering event as the
+// likeliest correlate of a current symptom. It is hand-written rather than
+// built via Spec[Args] so it can advertise RiskLow through the RiskRated
+// interface.
+//
+// changeSources are fixed at registration; symptom sources are built per-Run
+// because the metric query/threshold arrive as call args.
 type correlateTool struct {
-	sources []change.ChangeSource
+	changeSources []change.ChangeSource
+	prom          map[string]*promclient.Client
+	logs          tlog.Clients
+	traces        trace.Clients
+	dockerHub     *dockerclient.Hub
 }
 
-// newCorrelateTool returns the correlate.workload tool bound to the supplied
-// sources. At least one source is expected.
+// NewWorkloadTool returns the correlate.workload tool. changeSources are the
+// registration-time sources (k8s/docker/argo); the remaining deps let Run build
+// the metric/log/trace symptom sources from per-call args. Any dep may be
+// zero/nil — the matching symptom source is simply omitted.
+func NewWorkloadTool(changeSources []change.ChangeSource, prom map[string]*promclient.Client, logs tlog.Clients, traces trace.Clients, dockerHub *dockerclient.Hub) tools.Tool {
+	return &correlateTool{
+		changeSources: changeSources,
+		prom:          prom,
+		logs:          logs,
+		traces:        traces,
+		dockerHub:     dockerHub,
+	}
+}
+
+// newCorrelateTool returns the correlate.workload tool bound only to the
+// supplied change sources, with no symptom backends. Used in tests; production
+// wiring goes through NewWorkloadTool.
 func newCorrelateTool(sources ...change.ChangeSource) tools.Tool {
-	return &correlateTool{sources: sources}
+	return &correlateTool{changeSources: sources}
 }
 
 func (t *correlateTool) Name() string { return "correlate.workload" }
 
 func (t *correlateTool) Description() string {
-	return "Correlate recent changes for a workload across signals — Kubernetes/Docker change history and Argo CD sync history — into one newest-first evidence timeline, and name the most recent state-altering event as the likeliest cause of a current symptom. Read-only."
+	return "Correlate recent changes and symptoms for a workload across signals — Kubernetes/Docker change history, Argo CD sync history, plus metric/log/trace symptoms — into one newest-first evidence timeline, and name the most recent state-altering event as the likeliest cause of a current symptom. Supply metric_query (PromQL) with metric_threshold to fold a metric breach onto the timeline; log and trace symptoms are added automatically when those backends are configured. Read-only."
 }
 
 func (t *correlateTool) Schema() json.RawMessage {
@@ -65,11 +81,13 @@ func (t *correlateTool) Schema() json.RawMessage {
 	s := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"workload":  str("Workload to correlate (deployment/statefulset/daemonset, container/compose service, or Argo CD application name). Required."),
-			"namespace": str("Kubernetes namespace to scope the search; ignored by the Docker and Argo sources."),
-			"context":   str("kubeconfig context, Docker host, or Argo CD endpoint name to query; empty = each backend's default."),
-			"since":     str("How far back to look, as a Go duration (e.g. \"1h\", \"90m\"); default \"1h\"."),
-			"limit":     map[string]any{"type": "integer", "description": "Maximum number of timeline events to return; default 50."},
+			"workload":         str("Workload to correlate (deployment/statefulset/daemonset, container/compose service, or Argo CD application name). Required."),
+			"namespace":        str("Kubernetes namespace to scope the change search; ignored by the Docker and Argo change sources and by the metric/log/trace symptom sources (namespace-agnostic in v2 — scope symptoms via metric_query or workload/service naming)."),
+			"context":          str("kubeconfig context, Docker host, or Argo CD endpoint name to query; empty = each backend's default."),
+			"since":            str("How far back to look, as a Go duration (e.g. \"1h\", \"90m\"); default \"1h\"."),
+			"limit":            map[string]any{"type": "integer", "description": "Maximum number of timeline events to return; default 50."},
+			"metric_query":     str("PromQL query whose breaches are folded onto the timeline as metric symptom events; empty = no metric symptom."),
+			"metric_threshold": map[string]any{"type": "number", "description": "Value a metric_query sample must exceed to count as a breach; default 0 (i.e. value > 0)."},
 		},
 		"required": []string{"workload"},
 	}
@@ -106,7 +124,22 @@ func (t *correlateTool) Run(ctx context.Context, raw json.RawMessage) (tools.Obs
 		limit = a.Limit
 	}
 
-	if len(t.sources) == 0 {
+	// Symptom sources are built per-call because the metric query/threshold are
+	// call args. nil constructors (absent backend/inputs) are skipped, then the
+	// rest join the fixed change sources on one timeline. Copy first so appends
+	// never mutate the shared t.changeSources backing array across calls.
+	sources := append([]change.ChangeSource(nil), t.changeSources...)
+	if src := newMetricSource(t.prom, a.MetricQuery, a.MetricThreshold); src != nil {
+		sources = append(sources, src)
+	}
+	if src := newLogSource(t.logs, t.dockerHub); src != nil {
+		sources = append(sources, src)
+	}
+	if src := newTraceSource(t.traces); src != nil {
+		sources = append(sources, src)
+	}
+
+	if len(sources) == 0 {
 		return tools.Observation{Text: "correlate.workload: no change sources available"}, nil
 	}
 
@@ -120,7 +153,7 @@ func (t *correlateTool) Run(ctx context.Context, raw json.RawMessage) (tools.Obs
 
 	var groups [][]change.ChangeEvent
 	var failures []string
-	for _, src := range t.sources {
+	for _, src := range sources {
 		events, err := src.RecentChanges(ctx, q)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", src.Name(), err))
@@ -141,18 +174,6 @@ func (t *correlateTool) Run(ctx context.Context, raw json.RawMessage) (tools.Obs
 	}, nil
 }
 
-// candidateCause returns the newest event whose Kind is state-altering (in
-// causeKinds), i.e. the likeliest correlate of a current symptom. events must
-// already be newest-first (MergeSorted output). Returns nil when none qualify.
-func candidateCause(events []change.ChangeEvent) *change.ChangeEvent {
-	for i := range events {
-		if causeKinds[events[i].Kind] {
-			return &events[i]
-		}
-	}
-	return nil
-}
-
 // renderCorrelation formats the evidence timeline newest-first followed by the
 // candidate-cause line. Each timeline line is
 // "RFC3339 | source | kind | target | summary | before→after"; the before→after
@@ -169,16 +190,8 @@ func renderCorrelation(workload string, since time.Duration, events []change.Cha
 		}
 		b.WriteByte('\n')
 	}
-	if cause := candidateCause(events); cause != nil {
-		fmt.Fprintf(&b, "candidate cause: %s %s on %s @ %s",
-			cause.Source, cause.Kind, cause.Target, cause.Time.UTC().Format(time.RFC3339))
-		if cause.Before != "" || cause.After != "" {
-			fmt.Fprintf(&b, " (%s→%s)", cause.Before, cause.After)
-		}
-		b.WriteByte('\n')
-	} else {
-		b.WriteString("candidate cause: none — no state-altering change in the window\n")
-	}
+	b.WriteString(candidateCauseV2(events))
+	b.WriteByte('\n')
 	if len(failures) > 0 {
 		fmt.Fprintf(&b, "note: %d source(s) failed: %s\n", len(failures), strings.Join(failures, "; "))
 	}

@@ -185,6 +185,89 @@ func newJaegerSearchTracesTool(clients map[string]*JaegerClient) tools.Tool {
 	}.Build()
 }
 
+// JaegerSpan is the minimal, read-only view of a single Jaeger span needed by
+// correlation: when it started, how long it ran, whether it failed, and the
+// operation that produced it. The existing parseJaegerSearch summary drops
+// startTime and error tags, so this struct surfaces them for callers that fold
+// traces onto a change timeline (see internal/core/tools/correlate).
+type JaegerSpan struct {
+	StartTime time.Time
+	Duration  time.Duration
+	Error     bool
+	Operation string
+}
+
+// SearchErrorSpans queries Jaeger's /api/traces for service over [start, end]
+// and returns one JaegerSpan per matched span, decoding the raw startTime
+// (microseconds since epoch) and duration (microseconds), plus an Error flag
+// derived from the span's `error=true` tag. tags, when non-empty, is passed as
+// the Jaeger tags filter (e.g. `{"error":"true"}`); limit caps matched traces.
+// This is a list/get read only — it mutates nothing.
+func (c *JaegerClient) SearchErrorSpans(ctx context.Context, service, tags string, start, end time.Time, limit int) ([]JaegerSpan, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	params := url.Values{
+		"service": {service},
+		// Jaeger expects microseconds for start/end.
+		"start": {strconv.FormatInt(start.UnixMicro(), 10)},
+		"end":   {strconv.FormatInt(end.UnixMicro(), 10)},
+		"limit": {strconv.Itoa(limit)},
+	}
+	if tags != "" {
+		params.Set("tags", tags)
+	}
+	body, err := c.RawGet(ctx, "/api/traces", params)
+	if err != nil {
+		return nil, fmt.Errorf("trace.jaeger search spans: %w", err)
+	}
+	return parseJaegerSpans(body)
+}
+
+// parseJaegerSpans flattens a Jaeger /api/traces response into JaegerSpans,
+// reading the raw startTime + duration (both microseconds) and the `error` tag.
+func parseJaegerSpans(body []byte) ([]JaegerSpan, error) {
+	var env struct {
+		Data []struct {
+			Spans []struct {
+				OperationName string `json:"operationName"`
+				StartTime     int64  `json:"startTime"`
+				Duration      int64  `json:"duration"`
+				Tags          []struct {
+					Key   string `json:"key"`
+					Value any    `json:"value"`
+				} `json:"tags"`
+			} `json:"spans"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, err
+	}
+	var out []JaegerSpan
+	for _, t := range env.Data {
+		for _, sp := range t.Spans {
+			isErr := false
+			for _, tag := range sp.Tags {
+				if tag.Key == "error" {
+					switch v := tag.Value.(type) {
+					case bool:
+						isErr = v
+					case string:
+						isErr = v == "true"
+					}
+				}
+			}
+			out = append(out, JaegerSpan{
+				StartTime: time.UnixMicro(sp.StartTime),
+				Duration:  time.Duration(sp.Duration) * time.Microsecond,
+				Error:     isErr,
+				Operation: sp.OperationName,
+			})
+		}
+	}
+	return out, nil
+}
+
 // parseJaegerSearch produces a one-line summary per matched trace
 // (traceID, span count, duration µs, root service/operation).
 func parseJaegerSearch(body []byte) (string, *render.Table, any, error) {
