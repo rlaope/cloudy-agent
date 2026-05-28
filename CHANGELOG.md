@@ -20,7 +20,7 @@
 - **Argo CD reader (3)** — `gitops.argo_list_apps`, `argo_app_status`,
   `argo_app_history`. Answers "what changed in the last 30 minutes". (#54)
 
-### Added — Skill playbooks (7 → 13)
+### Added — Skill playbooks (7 → 24)
 - **`incident-context`** — joins active alerts + recent Argo syncs + pod
   restarts + Argo Rollouts/KEDA CR state into a fixed-shape situational
   summary with explicit confidence rubric. (#54)
@@ -28,6 +28,16 @@
   **`db-latency-hunt`**, **`oom-killed-triage`**,
   **`crashloop-deep-dive`** — five new SRE skills closing gaps that
   every existing tool group needed a playbook for. (#45)
+- **SRE skill-library expansion (13 → 24)** — incident/operations
+  playbooks (`triage-orchestrator`, `deploy-regression`,
+  `capacity-scheduling`, `network-connectivity`, `slo-burn`); application
+  runtime-engine playbooks (`go-runtime`, `node-runtime`, `ruby-runtime`,
+  `dotnet-runtime`, `native-perf`); and AI-inference serving
+  (`ai-inference` — vLLM / Triton / TGI / TorchServe). All compose
+  existing tools only — no new tool groups. Skills are now sourced
+  solely from the embedded `internal/core/skills/builtin/`; the duplicate
+  top-level `skills/` mirror was removed to end the silent drift between
+  the two copies. (#94, #95)
 
 ### Added — TUI quality
 - **Typewriter playback** — assistant tokens buffer through a per-frame
@@ -40,6 +50,13 @@
   multiple submits while the agent is busy. (#45)
 - **Mouse wheel scrolls the transcript** instead of being hijacked by
   the prompt's history navigation (was an arrow-key passthrough). (#48)
+- **Native terminal scrollback** — finished turns are committed to the
+  terminal's real scrollback via `tea.Println` rather than living in an
+  in-memory viewport, so the mouse wheel scrolls the whole conversation
+  and drag-to-copy works; the header prints once at the top and the live
+  cost readout moves to the pinned footer. A new question mid-playback
+  finalises the prior reply first, ending the dump/re-render artifact.
+  `CLOUDY_FULLSCREEN=1` keeps the alt-screen in-app viewport. (#97)
 - **Stream → prompt margin + braille spinner** so the reply does not
   butt against the prompt border and the thinking row reads as alive
   during silent gaps between tool results. (#48)
