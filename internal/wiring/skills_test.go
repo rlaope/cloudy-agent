@@ -44,7 +44,7 @@ var canonicalToolNames = []string{
 	"db.redis_slowlog", "db.redis_client_list",
 
 	"perf.rbspy_dump", "perf.go_pprof_cpu", "perf.linux_perf_record",
-	"perf.v8_inspector_cpu_profile",
+	"perf.v8_inspector_targets", "perf.v8_inspector_cpu_profile",
 
 	"jvm.async_profile", "jvm.jcmd_gc", "jvm.jcmd_thread_dump", "jvm.jstat_gc",
 
