@@ -21,9 +21,12 @@ type Hub struct {
 }
 
 // NewHub constructs a Hub from the configured Docker hosts. The first entry is
-// treated as the default for calls that omit the host name. Duplicate or
-// empty-named entries are skipped. An empty hosts slice yields a Hub whose Get
-// always errors "no docker hosts configured" — callers gate on len first.
+// treated as the default for calls that omit the host name. Empty-named entries
+// are skipped and duplicate names keep the first. A named entry with an empty
+// endpoint is a configuration error and returns an error, rather than silently
+// falling back to the SDK's DOCKER_HOST default. An empty hosts slice yields a
+// Hub whose Get always errors "no docker hosts configured" — callers gate on
+// len first.
 func NewHub(hosts []config.DockerHost) (*Hub, error) {
 	h := &Hub{
 		hosts:   make(map[string]string, len(hosts)),
@@ -32,6 +35,9 @@ func NewHub(hosts []config.DockerHost) (*Hub, error) {
 	for _, dh := range hosts {
 		if dh.Name == "" {
 			continue
+		}
+		if dh.Host == "" {
+			return nil, fmt.Errorf("docker: host %q has an empty endpoint", dh.Name)
 		}
 		if _, dup := h.hosts[dh.Name]; dup {
 			continue

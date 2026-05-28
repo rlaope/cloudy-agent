@@ -63,18 +63,32 @@ func TestParseDockerTime(t *testing.T) {
 
 func TestMatchesWorkload(t *testing.T) {
 	s := container.Summary{
-		Names:  []string{"/myapp-web-1"},
-		Labels: map[string]string{"com.docker.compose.service": "web"},
+		Names: []string{"/myapp-web-1"},
+		Labels: map[string]string{
+			"com.docker.compose.service": "web",
+			"com.docker.compose.project": "myapp",
+		},
 	}
 
 	if !matchesWorkload(s, "") {
 		t.Error("empty workload should match everything")
 	}
-	if !matchesWorkload(s, "myapp") {
-		t.Error("should match via container name")
-	}
 	if !matchesWorkload(s, "web") {
 		t.Error("should match via compose service label")
+	}
+	if !matchesWorkload(s, "myapp") {
+		t.Error("should match via compose project label")
+	}
+	if !matchesWorkload(s, "myapp-web-1") {
+		t.Error("should match via exact container name")
+	}
+	// Substring matches must NOT trigger (the bug this guards against):
+	// "web" is the service, so "we" / "eb" / a prefix of the name must miss.
+	if matchesWorkload(s, "we") {
+		t.Error("substring 'we' must not match service 'web'")
+	}
+	if matchesWorkload(s, "app") {
+		t.Error("substring 'app' must not match project 'myapp' or name 'myapp-web-1'")
 	}
 	if matchesWorkload(s, "redis") {
 		t.Error("should not match unrelated workload")
@@ -86,6 +100,14 @@ func TestMatchingTags(t *testing.T) {
 	got := matchingTags(tags, "nginx")
 	if len(got) != 2 {
 		t.Fatalf("want 2 nginx tags, got %d: %v", len(got), got)
+	}
+	// Registry/org-qualified repo matches on its last path segment.
+	if len(matchingTags([]string{"my.reg/org/api:v2"}, "api")) != 1 {
+		t.Error("should match repo last segment 'api'")
+	}
+	// Substring must NOT match: "ngin" is a prefix of "nginx" but not equal.
+	if len(matchingTags(tags, "ngin")) != 0 {
+		t.Error("substring 'ngin' must not match repo 'nginx'")
 	}
 	// empty workload returns all non-placeholder tags
 	all := matchingTags(tags, "")

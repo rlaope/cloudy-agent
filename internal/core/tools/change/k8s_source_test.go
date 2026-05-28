@@ -74,8 +74,8 @@ func TestDeploymentRevisionEvents_OrderingAndImageDiff(t *testing.T) {
 }
 
 // TestControllerRevisionEvents_OwnerFilter verifies StatefulSet/DaemonSet
-// revisions are matched by owner name (kind-agnostic) and carry the revision
-// number; non-owned revisions are dropped.
+// revisions are matched by owner kind+name and carry the revision number;
+// non-owned revisions are dropped.
 func TestControllerRevisionEvents_OwnerFilter(t *testing.T) {
 	base := time.Date(2026, 5, 28, 9, 0, 0, 0, time.UTC)
 	list := &appsv1.ControllerRevisionList{Items: []appsv1.ControllerRevision{
@@ -100,11 +100,20 @@ func TestControllerRevisionEvents_OwnerFilter(t *testing.T) {
 			},
 			Revision: 1,
 		},
+		{
+			// Same name "kafka" but owned by a DaemonSet — must NOT be claimed
+			// by the StatefulSet query (kind-aware ownership).
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "kafka-ds-1", CreationTimestamp: ts(base, 3),
+				OwnerReferences: []metav1.OwnerReference{ownerRef("DaemonSet", "kafka")},
+			},
+			Revision: 1,
+		},
 	}}
 
-	got := controllerRevisionEvents("kafka", list)
+	got := controllerRevisionEvents("StatefulSet", "kafka", list)
 	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2 (kafka-owned only)", len(got))
+		t.Fatalf("len = %d, want 2 (kafka StatefulSet-owned only, not the DaemonSet)", len(got))
 	}
 	for _, e := range got {
 		if e.Kind != "rollout" || e.Target != "kafka" || e.Source != "k8s" {

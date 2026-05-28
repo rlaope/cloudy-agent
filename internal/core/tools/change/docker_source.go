@@ -73,21 +73,23 @@ func (s *DockerSource) RecentChanges(ctx context.Context, q ChangeQuery) ([]Chan
 }
 
 // matchesWorkload reports whether a container summary relates to the given
-// workload string. An empty workload matches everything. Matching is a
-// case-insensitive substring check on container Names and on the
-// com.docker.compose.service / com.docker.compose.project labels.
+// workload. An empty workload matches everything. Matching is case-insensitive
+// and EXACT against the compose service/project labels or a container name —
+// substring matching is deliberately avoided so "api" does not match
+// "api-gateway". Compose containers carry the service in a label, so querying a
+// compose service by name still resolves via the label.
 func matchesWorkload(s container.Summary, workload string) bool {
 	if workload == "" {
 		return true
 	}
 	wl := strings.ToLower(workload)
-	for _, n := range s.Names {
-		if strings.Contains(strings.ToLower(strings.TrimPrefix(n, "/")), wl) {
+	for _, key := range []string{"com.docker.compose.service", "com.docker.compose.project"} {
+		if v, ok := s.Labels[key]; ok && strings.ToLower(v) == wl {
 			return true
 		}
 	}
-	for _, key := range []string{"com.docker.compose.service", "com.docker.compose.project"} {
-		if v, ok := s.Labels[key]; ok && strings.Contains(strings.ToLower(v), wl) {
+	for _, n := range s.Names {
+		if strings.ToLower(strings.TrimPrefix(n, "/")) == wl {
 			return true
 		}
 	}
@@ -149,15 +151,20 @@ func containerInspectEvents(insp container.InspectResponse, cutoff time.Time) []
 		})
 	}
 
-	// image — record the running image at last start time
+	// image — record the running image at last start time. This is a current
+	// baseline, not a transition, so Before is left empty (setting it to the
+	// digest would render a misleading "sha256:…→tag" diff); the resolved
+	// digest goes in the summary for traceability.
 	if !startedAt.IsZero() && keep(startedAt, cutoff) {
-		imageDigest := insp.Image // raw digest field on ContainerJSONBase
+		summary := fmt.Sprintf("container %s running image %s", name, imageName)
+		if insp.Image != "" && insp.Image != imageName {
+			summary += fmt.Sprintf(" (%s)", insp.Image)
+		}
 		events = append(events, ChangeEvent{
 			Time:    startedAt,
 			Kind:    "image",
 			Target:  name,
-			Summary: fmt.Sprintf("container %s running image %s", name, imageName),
-			Before:  imageDigest,
+			Summary: summary,
 			After:   imageName,
 			Source:  "docker",
 		})
@@ -175,6 +182,11 @@ func imageListEvents(images []image.Summary, workload string, cutoff time.Time) 
 	for _, img := range images {
 		tags := matchingTags(img.RepoTags, wl)
 		if len(tags) == 0 {
+			continue
+		}
+		if img.Created <= 0 {
+			// Unset/invalid creation time (Docker stores seconds since epoch);
+			// skip rather than emit a 1970 timestamp.
 			continue
 		}
 		t := time.Unix(img.Created, 0).UTC()
@@ -200,16 +212,28 @@ func imageListEvents(images []image.Summary, workload string, cutoff time.Time) 
 	return events
 }
 
-// matchingTags returns the subset of repoTags that contain the workload
-// substring (case-insensitive). An empty workload returns all tags (excluding
-// the "<none>:<none>" placeholder).
+// matchingTags returns the subset of repoTags whose repository matches workload
+// EXACTLY — either the full repository ("registry/org/api") or its last path
+// segment ("api"). The "<none>:<none>" placeholder and empty tags are skipped.
+// An empty workload returns all real tags. Substring matching is avoided so
+// "api" does not match "rapid". workload is expected pre-lowercased.
 func matchingTags(repoTags []string, workload string) []string {
 	var out []string
 	for _, tag := range repoTags {
 		if tag == "<none>:<none>" || tag == "" {
 			continue
 		}
-		if workload == "" || strings.Contains(strings.ToLower(tag), workload) {
+		if workload == "" {
+			out = append(out, tag)
+			continue
+		}
+		repo := tag
+		if i := strings.LastIndex(tag, ":"); i >= 0 {
+			repo = tag[:i]
+		}
+		repo = strings.ToLower(repo)
+		seg := repo[strings.LastIndex(repo, "/")+1:]
+		if repo == workload || seg == workload {
 			out = append(out, tag)
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -67,7 +68,7 @@ func (s *K8sSource) RecentChanges(ctx context.Context, q ChangeQuery) ([]ChangeE
 	if sets, err := client.StatefulSets(q.Namespace, metav1.ListOptions{}); err == nil {
 		if set := findStatefulSet(sets, q.Workload); set != nil {
 			crList, _ := client.ControllerRevisions(q.Namespace, metav1.ListOptions{})
-			groups = append(groups, controllerRevisionEvents(q.Workload, crList))
+			groups = append(groups, controllerRevisionEvents("StatefulSet", q.Workload, crList))
 			groups = append(groups, statefulSetSpecEvents(set))
 		}
 	}
@@ -76,7 +77,7 @@ func (s *K8sSource) RecentChanges(ctx context.Context, q ChangeQuery) ([]ChangeE
 	if sets, err := client.DaemonSets(q.Namespace, metav1.ListOptions{}); err == nil {
 		if set := findDaemonSet(sets, q.Workload); set != nil {
 			crList, _ := client.ControllerRevisions(q.Namespace, metav1.ListOptions{})
-			groups = append(groups, controllerRevisionEvents(q.Workload, crList))
+			groups = append(groups, controllerRevisionEvents("DaemonSet", q.Workload, crList))
 			groups = append(groups, daemonSetSpecEvents(set))
 		}
 	}
@@ -87,9 +88,14 @@ func (s *K8sSource) RecentChanges(ctx context.Context, q ChangeQuery) ([]ChangeE
 	}
 
 	// Events involving the workload object (mirrors the k8s.events selector).
-	opts := metav1.ListOptions{FieldSelector: fmt.Sprintf("involvedObject.name=%s", q.Workload)}
-	if evs, err := client.Events(q.Namespace, opts); err == nil {
-		groups = append(groups, eventEvents(q.Workload, evs))
+	// A field-selector value containing ',' or '=' would be parsed as extra
+	// selector terms, so only query when the workload is a plain name (it
+	// always is for a real k8s object — guard against malformed input).
+	if isPlainSelectorValue(q.Workload) {
+		opts := metav1.ListOptions{FieldSelector: fmt.Sprintf("involvedObject.name=%s", q.Workload)}
+		if evs, err := client.Events(q.Namespace, opts); err == nil {
+			groups = append(groups, eventEvents(q.Workload, evs))
+		}
 	}
 
 	merged := MergeSorted(0, groups...)
@@ -191,18 +197,20 @@ func deploymentRevisionEvents(dep *appsv1.Deployment, rsList *appsv1.ReplicaSetL
 }
 
 // controllerRevisionEvents reconstructs rollout history from the
-// ControllerRevisions owned by the StatefulSet/DaemonSet named workload. Each
-// revision emits a "rollout" event at its creation time. ControllerRevision
-// pod-template data is opaque (runtime.RawExtension), so no image diff is
-// derivable here — Before/After are left empty.
-func controllerRevisionEvents(workload string, crList *appsv1.ControllerRevisionList) []ChangeEvent {
+// ControllerRevisions owned by the workload of the given kind
+// ("StatefulSet"/"DaemonSet") and name. Each revision emits a "rollout" event
+// at its creation time. ControllerRevision pod-template data is opaque
+// (runtime.RawExtension), so no image diff is derivable here — Before/After are
+// left empty. Ownership is matched on both kind and name so a StatefulSet and a
+// DaemonSet that share a name do not claim each other's revisions.
+func controllerRevisionEvents(kind, workload string, crList *appsv1.ControllerRevisionList) []ChangeEvent {
 	if crList == nil {
 		return nil
 	}
 	var out []ChangeEvent
 	for i := range crList.Items {
 		cr := &crList.Items[i]
-		if !ownedByName(cr.OwnerReferences, workload) {
+		if !ownedBy(cr.OwnerReferences, kind, workload) {
 			continue
 		}
 		out = append(out, ChangeEvent{
@@ -364,16 +372,14 @@ func ownedBy(refs []metav1.OwnerReference, kind, name string) bool {
 	return false
 }
 
-// ownedByName reports whether refs contains any owner with the given name
-// (kind-agnostic — used for ControllerRevisions which may be owned by either a
-// StatefulSet or a DaemonSet).
-func ownedByName(refs []metav1.OwnerReference, name string) bool {
-	for _, r := range refs {
-		if r.Name == name {
-			return true
-		}
+// isPlainSelectorValue reports whether s is safe to interpolate into a
+// field-selector value: no ',' or '=' (which start new selector terms) and no
+// whitespace. Real Kubernetes object names always satisfy this.
+func isPlainSelectorValue(s string) bool {
+	if s == "" {
+		return false
 	}
-	return false
+	return !strings.ContainsAny(s, ",= \t\n")
 }
 
 // firstContainerImage returns the image of the first container, or "".
