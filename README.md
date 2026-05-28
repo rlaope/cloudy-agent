@@ -143,9 +143,12 @@ On top of those layers cloudy adds two hardening guards:
 | Domain        | What it talks to                                   |
 | ------------- | -------------------------------------------------- |
 | Kubernetes    | apiserver (`get` / `list` / `watch` only)          |
+| Docker        | daemon API (container list / inspect / stats / logs) |
 | Metrics       | Prometheus, Thanos, VictoriaMetrics                |
 | Logs          | Loki, Elasticsearch, OpenSearch                    |
 | Traces        | Tempo, Jaeger                                      |
+| Change        | k8s rollouts / images / scale, Docker containers, Argo CD sync |
+| Correlation   | cross-signal change↔symptom evidence timeline      |
 | JVM           | jcmd, async-profiler (heap / cpu / alloc)          |
 | Python        | py-spy (sampling / dump-stacks)                    |
 | Ruby          | rbspy (sampling) — registered as `perf.rbspy_dump` |
@@ -158,7 +161,7 @@ TCP backends via in-process SPDY port-forward. A single
 `kubectl`-reachable cluster is enough — no VPN, no per-service
 ingress.
 
-### Tool surface (67 tools across 12 groups)
+### Tool surface (71 tools across 15 groups)
 
 Every probe the agent can call is a typed tool with a JSON schema.
 Tools self-register at boot — perf, eBPF, and DB groups also gate on
@@ -169,10 +172,13 @@ wired in your environment.
 | ----- | ------------- |
 | `k8s` (20) | `list_pods`, `list_nodes`, `list_namespaces`, `describe_pod`, `events`, `logs`, `top_pods`, `top_nodes`, `list_deployments`, `list_statefulsets`, `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`, `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`, `list_crds`, `list_cr` *(CRD-generic dynamic-client reader; unlocks Argo Rollouts, KEDA, cert-manager, Gateway API, Sloth SLOs, ServiceMonitor, etc. in one tool)* |
 | `prom` (4) | `query`, `query_range`, `label_values`, `series` |
-| `log` (7) | `loki_query_range`, `loki_labels`, `loki_label_values`, `loki_series`, `es_search`, `es_indices`, `es_cluster_health` |
+| `log` (8) | `loki_query_range`, `loki_labels`, `loki_label_values`, `loki_series`, `es_search`, `es_indices`, `es_cluster_health`, `container` *(Docker container logs; registers when `docker_hosts` is configured)* |
 | `trace` (7) | `tempo_get_trace`, `tempo_search`, `service_graph` *(Tempo metrics-generator service-graph edges)*, `route_red` *(Tempo metrics-generator per-route RED)*, `jaeger_services`, `jaeger_operations`, `jaeger_search_traces` |
 | `alert` (3) | `list_active`, `list_silences` *(Alertmanager v2)*, `list_rules` *(Prometheus rules API)* |
 | `gitops` (3) | `argo_list_apps`, `argo_app_status`, `argo_app_history` *(Argo CD v1 API)* |
+| `change` (1) | `recent` *(orchestrator-agnostic deploy / image / scale / rollout timeline across Kubernetes **and** Docker; registers when k8s or `docker_hosts` is available)* |
+| `metric` (1) | `container_stats` *(read-only Docker container CPU / mem / net / block-IO; k8s metrics live in `prom` + `k8s.top_*`; needs `docker_hosts`)* |
+| `correlate` (1) | `workload` *(cross-signal evidence timeline — change history + metric / log / trace symptoms — with a candidate-cause that aligns the earliest symptom to the change before it; folds in Argo CD sync)* |
 | `db` (18) | Postgres: `pg_version`, `pg_stat_activity`, `pg_stat_database`, `pg_stat_replication`, `pg_locks`, `pg_top_table_size`. MySQL: `mysql_version`, `mysql_processlist`, `mysql_global_status`, `mysql_global_variables`, `mysql_engine_innodb_status`, `mysql_top_table_size`. Redis: `redis_info`, `redis_dbsize`, `redis_scan`, `redis_inspect_key`, `redis_slowlog`, `redis_client_list` |
 | `perf` (4) | `rbspy_dump` (Ruby, always-on), `go_pprof_cpu`, `linux_perf_record`, `v8_inspector_cpu_profile` *(last three conditional on host binaries)* |
 | `jvm` (4) | `jstat_gc`, `jcmd_gc`, `jcmd_thread_dump`, `async_profile` |

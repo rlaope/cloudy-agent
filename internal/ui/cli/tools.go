@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/rlaope/cloudy/internal/config"
-	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/wiring"
 )
 
@@ -36,19 +35,13 @@ func (toolsCmd) Run(_ context.Context, args []string, stdout, stderr io.Writer) 
 		return errf("config: %w", err)
 	}
 
-	activeProfile, _ := permission.LoadActive()
-
-	reg, warn := wiring.BuildRegistry(wiring.Options{
+	// Build through wiring.Rebuild — the single owner of full-Options
+	// registry construction — so `cloudy tools` reports exactly what `cloudy
+	// ask` runs. Hand-building Options here previously drifted (it omitted
+	// DockerHosts/ArgoCD/Alertmanager), making the report under-count tools.
+	reg, warn := wiring.Rebuild(cfg, wiring.RebuildOpts{
 		KubeconfigPath: opts.base.kubeconfig,
 		ContextName:    opts.base.context,
-		Contexts:       cfg.Contexts,
-		Profile:        activeProfile,
-		PromEndpoints:  cfg.Prometheus,
-		Databases:      cfg.Databases,
-		Logs:           cfg.Logs,
-		Tracing:        cfg.Tracing,
-		Pprof:          cfg.Pprof,
-		NodeInspectors: cfg.NodeInspectors,
 	})
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
