@@ -60,10 +60,11 @@ func (s *logSource) RecentChanges(ctx context.Context, q change.ChangeQuery) ([]
 	end := now.Unix()
 	start := now.Add(-since).Unix()
 
-	// Build a simple LogQL selector: match the app label or fall back to a
-	// line filter on the workload name. Using {app="<workload>"} is the
-	// canonical k8s-via-Promtail label; the line filter is a safe fallback
-	// for clusters that use different label schemes.
+	// LogQL selector: {app="<workload>"} is the canonical k8s-via-Promtail
+	// label. v2 supports only the `app` label scheme and is namespace-agnostic;
+	// clusters using a different label (container/pod/service_name) or needing
+	// namespace scoping should query Loki via the log.* tools directly. %q
+	// escapes the workload so it cannot break out of the selector string.
 	logqlQuery := fmt.Sprintf(`{app=%q} |~ "(?i)(error|fatal|panic)"`, q.Workload)
 
 	params := url.Values{
