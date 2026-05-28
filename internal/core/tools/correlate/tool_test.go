@@ -59,6 +59,32 @@ func TestCorrelate_MergesNewestFirst(t *testing.T) {
 	}
 }
 
+// TestCorrelate_SymptomRendersAndAligns: a symptom-kind event from a symptom
+// source renders on the unified timeline, and candidate-cause v2 names the
+// change that preceded the symptom (not merely the newest change).
+func TestCorrelate_SymptomRendersAndAligns(t *testing.T) {
+	base := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	changeSrc := fakeSource{name: "k8s", events: []change.ChangeEvent{
+		{Time: base.Add(-30 * time.Minute), Kind: "image", Target: "app", Before: "v1", After: "v2", Source: "k8s"},
+	}}
+	symptomSrc := fakeSource{name: "metric", events: []change.ChangeEvent{
+		{Time: base, Kind: "metric_breach", Target: "app", Summary: "error rate > 0.2", Source: "metric"},
+	}}
+	tool := newCorrelateTool(changeSrc, symptomSrc)
+	obs, err := runCorrelate(t, tool, map[string]any{"workload": "app", "since": "24h"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Symptom line is visible on the timeline.
+	if !strings.Contains(obs.Text, "metric_breach") || !strings.Contains(obs.Text, "error rate > 0.2") {
+		t.Errorf("expected metric_breach symptom line on the timeline, got:\n%s", obs.Text)
+	}
+	// Candidate cause aligns the image change before the symptom.
+	if !strings.Contains(obs.Text, "candidate cause:") || !strings.Contains(obs.Text, "image") || !strings.Contains(obs.Text, "preceded symptom") {
+		t.Errorf("expected candidate cause aligning the image change before the symptom, got:\n%s", obs.Text)
+	}
+}
+
 // TestCorrelate_CandidateCauseSkipsEvent: the candidate cause is the newest
 // state-altering event, skipping "event" kinds even when they are newer.
 func TestCorrelate_CandidateCauseSkipsEvent(t *testing.T) {

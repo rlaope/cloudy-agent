@@ -166,14 +166,17 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 		reg.UnmarkSkipped("log")
 	}
 
-	// correlate.* joins the change timeline (k8s + docker) with Argo CD sync
-	// history into one evidence chain. Register when at least one of those
-	// signal sources exists; skip the group only when none do. Reuses hub /
-	// dockerHub already built above and the Argo clients from the gitops pass.
-	if hub == nil && dockerHub == nil && len(gitopsClients.Argo) == 0 {
-		reg.MarkSkipped("correlate", "no kubeconfig, docker hosts, or Argo CD endpoint configured")
+	// correlate.* joins the change timeline (k8s + docker + Argo CD sync) with
+	// metric/log/trace symptom signals into one evidence chain. Register when
+	// ANY signal source exists — change backends (k8s/docker/argo) or symptom
+	// backends (prom/loki/jaeger), since symptom-only setups are valid; skip the
+	// group only when none do. Reuses hub / dockerHub / Argo / prom / log /
+	// trace clients already built above.
+	if hub == nil && dockerHub == nil && len(gitopsClients.Argo) == 0 &&
+		len(promClients) == 0 && len(logClients.Loki) == 0 && len(traceClients.Jaeger) == 0 {
+		reg.MarkSkipped("correlate", "no kubeconfig, docker hosts, Argo CD, Prometheus, Loki, or Jaeger endpoint configured")
 	} else {
-		correlate.RegisterAll(reg, hub, dockerHub, gitopsClients.Argo)
+		correlate.RegisterAll(reg, hub, dockerHub, gitopsClients.Argo, promClients, logClients, traceClients)
 	}
 
 	// Single Profile application point: namespace checker on the Hub plus
