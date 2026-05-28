@@ -27,6 +27,7 @@ import (
 	"github.com/rlaope/cloudy/internal/core/tools/jvm"
 	"github.com/rlaope/cloudy/internal/core/tools/k8s"
 	tlog "github.com/rlaope/cloudy/internal/core/tools/log"
+	"github.com/rlaope/cloudy/internal/core/tools/metric"
 	"github.com/rlaope/cloudy/internal/core/tools/perf"
 	"github.com/rlaope/cloudy/internal/core/tools/prom"
 	"github.com/rlaope/cloudy/internal/core/tools/py"
@@ -135,6 +136,20 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 		reg.MarkSkipped("change", reason)
 	} else {
 		change.RegisterAll(reg, hub, dockerHub)
+	}
+
+	// metric.* is Docker-only: container-level resource sampling. The k8s
+	// metric path already lives in prom.* and k8s.top_pods/top_nodes, so the
+	// group is skipped (not an error) when no docker hosts are configured.
+	// Reuses the dockerHub already built for the change group above.
+	if dockerHub == nil {
+		reason := "no docker hosts configured (k8s metrics via prom/top_pods)"
+		if dockerErr != nil {
+			reason = fmt.Sprintf("docker hosts configured but unavailable: %v", dockerErr)
+		}
+		reg.MarkSkipped("metric", reason)
+	} else {
+		metric.RegisterAll(reg, dockerHub)
 	}
 
 	// Single Profile application point: namespace checker on the Hub plus
