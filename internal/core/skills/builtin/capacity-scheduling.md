@@ -62,7 +62,7 @@ Every Pending pod resolves to one of: **(a) no node has room** (capacity — sca
 
 1. `k8s.top_nodes` and `k8s.list_nodes`: per node, compute allocatable vs. used. A node at 95% CPU-requested cannot take a 1-core request even if its real CPU usage is low — scheduling is on **requests**, not utilisation. Make this distinction explicit.
 2. Flag nodes with conditions `MemoryPressure`, `DiskPressure`, `PIDPressure`, or `Ready != True` — these are excluded from scheduling regardless of headroom.
-3. If `prom.query` is wired, cross-check `kube_node_status_allocatable` vs. `kube_pod_container_resource_requests` summed per node for a second opinion on the requested-capacity math.
+3. If `prom.query` is wired, cross-check per resource — these kube-state-metrics series carry a `resource` label, so you MUST filter or the sum mixes cores and bytes into a meaningless number. Compare `kube_node_status_allocatable{resource="cpu"}` vs. `sum by (node) (kube_pod_container_resource_requests{resource="cpu"})`, then again with `resource="memory"`, for a second opinion on the requested-capacity math.
 
 ### Step 3 — Check the downstream blockers
 
@@ -82,7 +82,7 @@ Autoscaler:    <TriggeredScaleUp pending | NotTriggerScaleUp: reason | n/a>
 HPA:           <name> <cur>/<max> replicas, metric <value> vs target
 PDB:           <name> disruptionsAllowed=<n>  (or n/a)
 Most likely:   <one-sentence cause>
-Recommend:     <add nodes | lower requests to <value> | fix taint/affinity <detail> | raise maxReplicas | relax PDB>
+Recommend (operator-applied, read-only): <add nodes | lower requests to <value> | fix taint/affinity <detail> | raise maxReplicas | relax PDB>
 ```
 
 ## Operating Constraints

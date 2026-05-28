@@ -69,7 +69,7 @@ You are an AI inference-serving analyst. LLM serving latency is NOT one number �
 
 ### Step 3 — Find the decode bottleneck: cache, batch, or GPU
 
-1. **KV-cache**: `prom.query_range` on `gpu_cache_usage_perc` (or `kv_cache_usage_perc` on newer vLLM) — riding near 100% with rising `num_preemptions_total` is the smoking gun for throughput that won't scale and ITL spikes. The fix is more GPU memory (bigger cache), shorter `max_model_len`, quantisation, or fewer concurrent sequences.
+1. **KV-cache**: `prom.query_range` on `gpu_cache_usage_perc` (or `kv_cache_usage_perc` on newer vLLM) — note that despite the `_perc` suffix vLLM emits this as a **fraction in [0,1]**, so "saturated" is ~0.95–1.0, NOT 95–100; write thresholds against 1.0 (e.g. `> 0.9`), not 90. Riding near 1.0 with rising `num_preemptions_total` is the smoking gun for throughput that won't scale and ITL spikes. The fix is more GPU memory (bigger cache), shorter `max_model_len`, quantisation, or fewer concurrent sequences.
 2. **Batch**: `num_requests_running` / `tgi_batch_current_size` at the configured max while the queue grows ⇒ batch-saturated; more replicas or a larger batch (if GPU has headroom) is the lever.
 3. **GPU**: correlate with DCGM. `GPU_UTIL` ~100% ⇒ compute-bound (tensor-parallel / more GPUs / smaller model). `FB_USED` near total ⇒ memory-capacity-bound (OOM risk — hand context to `gpu-saturation`). Thermal throttling (`GPU_TEMP` high with clocks dropping) is a separate, infra-level cause.
 

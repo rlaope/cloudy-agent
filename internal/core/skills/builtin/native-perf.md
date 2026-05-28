@@ -55,7 +55,7 @@ A CPU-bound native hotspot is rarely "the function is just slow." It's usually o
 
 **`perf.linux_perf_record` is RiskHigh — operator must approve; it runs `perf record -g` on a PID for a duration, then renders the call graph via `perf report --stdio`. The node needs `perf` and adequate `perf_event_paranoid`.**
 
-1. `perf.linux_perf_record pid=<target-pid> duration=15` during the symptom.
+1. `perf.linux_perf_record pid=<target-pid> duration_seconds=15` during the symptom (optional `frequency_hz`, default 99).
 2. Read the call-graph report:
    - The function with the highest self (flat) percentage is the hotspot; its callers give the context.
    - Time in `memcpy`/`memmove`/allocator (`malloc`/`free`/`tcmalloc`) ⇒ allocation or copy churn — reduce copies, reuse buffers.
