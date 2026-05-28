@@ -2,7 +2,7 @@
 
 ## v0.5.0 — Unreleased
 
-### Added — Tool surface (45 → 65, 10 → 12 groups)
+### Added — Tool surface (45 → 69, 10 → 15 groups)
 - **K8s workload tools (10)** — `list_deployments`, `list_statefulsets`,
   `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`,
   `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`.
@@ -19,6 +19,32 @@
   (Prometheus rules API). Answers "what's actually paging right now". (#54)
 - **Argo CD reader (3)** — `gitops.argo_list_apps`, `argo_app_status`,
   `argo_app_history`. Answers "what changed in the last 30 minutes". (#54)
+
+### Added — Orchestrator-agnostic change / metric / log + correlation
+- **Change & deploy inquiry (`change.recent`)** — one read-only timeline of
+  recent rollouts / image bumps / scale / restart events for a workload
+  across **both Kubernetes and Docker** hosts. Adds a read-only Docker
+  client adapter and a `docker_hosts` config field. (#100)
+- **Docker container metrics (`metric.container_stats`)** — read-only CPU /
+  memory / network / block-IO via the Docker one-shot stats API (cgroup v1
+  and v2 aware). Kubernetes metrics remain in `prom` + `k8s.top_*`. (#101)
+- **Docker container logs (`log.container`)** — tail plus an error-line
+  summary off the Docker daemon, demultiplexing stdout/stderr and reading
+  TTY containers raw. (#102)
+- **Cross-signal correlation (`correlate.workload`)** — merges the change
+  timeline (k8s + Docker) with Argo CD sync history, then folds in
+  metric / log / trace symptoms (Prometheus breach, Loki error bursts,
+  Jaeger error/slow spans) and names a candidate cause: the most recent
+  change before the earliest symptom. (#103)
+- All four are read-only and RiskLow. The Docker side gates on
+  `docker_hosts`; symptom sources gate on their backends (Tempo traces and
+  Elasticsearch logs deferred).
+
+### Fixed
+- `cloudy tools` now reports the same registry that `cloudy ask` runs, by
+  routing through `wiring.Rebuild`. It previously hand-built `Options` and
+  omitted `docker_hosts` / `argocd` / `alertmanager`, so it under-reported
+  the `change` / `metric` / `log.container` / `gitops` / `alert` groups.
 
 ### Added — Skill playbooks (7 → 24)
 - **`incident-context`** — joins active alerts + recent Argo syncs + pod
