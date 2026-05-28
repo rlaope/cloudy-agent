@@ -1,6 +1,7 @@
-package metric
+package dockerlog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,12 +15,13 @@ import (
 	"github.com/rlaope/cloudy/internal/core/tools"
 )
 
-// mockDockerAPI implements dockerclient.ReadOnlyAPI with canned responses.
-// statsErr keyed by container ID forces a per-container stats failure.
+// mockDockerAPI implements the extended dockerclient.ReadOnlyAPI with canned
+// responses. logs is keyed by container ID and holds a multiplexed log buffer;
+// logsErr forces a per-container ContainerLogs failure.
 type mockDockerAPI struct {
 	summaries []container.Summary
-	stats     map[string]container.StatsResponse
-	statsErr  map[string]error
+	logs      map[string][]byte
+	logsErr   map[string]error
 }
 
 func (m *mockDockerAPI) ContainerList(_ context.Context, _ container.ListOptions) ([]container.Summary, error) {
@@ -34,28 +36,26 @@ func (m *mockDockerAPI) ImageList(_ context.Context, _ image.ListOptions) ([]ima
 	return nil, nil
 }
 
-func (m *mockDockerAPI) ContainerStats(_ context.Context, id string) (container.StatsResponse, error) {
-	if err := m.statsErr[id]; err != nil {
-		return container.StatsResponse{}, err
+func (m *mockDockerAPI) ContainerStats(_ context.Context, _ string) (container.StatsResponse, error) {
+	return container.StatsResponse{}, nil
+}
+
+func (m *mockDockerAPI) ContainerLogs(_ context.Context, id string, _ container.LogsOptions) (io.ReadCloser, error) {
+	if err := m.logsErr[id]; err != nil {
+		return nil, err
 	}
-	return m.stats[id], nil
+	return io.NopCloser(bytes.NewReader(m.logs[id])), nil
 }
 
-func (m *mockDockerAPI) ContainerLogs(_ context.Context, _ string, _ container.LogsOptions) (io.ReadCloser, error) {
-	return nil, nil
-}
-
-// mockHub satisfies the metric package's hubGetter seam without a daemon.
+// mockHub satisfies the package's hubGetter seam without a daemon.
 type mockHub struct {
 	api dockerclient.ReadOnlyAPI
 	err error
 }
 
-func (h mockHub) Get(_ string) (dockerclient.ReadOnlyAPI, error) {
-	return h.api, h.err
-}
+func (h mockHub) Get(_ string) (dockerclient.ReadOnlyAPI, error) { return h.api, h.err }
 
-func newTool(hub hubGetter) tools.Tool { return &containerStatsTool{hub: hub} }
+func newTool(hub hubGetter) tools.Tool { return &containerLogsTool{hub: hub} }
 
 func run(t *testing.T, tool tools.Tool, args map[string]any) (tools.Observation, error) {
 	t.Helper()
@@ -66,21 +66,14 @@ func run(t *testing.T, tool tools.Tool, args map[string]any) (tools.Observation,
 	return tool.Run(context.Background(), json.RawMessage(raw))
 }
 
-func cannedStats(total, preTotal, system, preSystem uint64, online uint32, mem, limit uint64) container.StatsResponse {
-	s := statsWithCPU(total, preTotal, system, preSystem, online)
-	s.MemoryStats.Usage = mem
-	s.MemoryStats.Limit = limit
-	return s
-}
-
-func TestContainerStats_RendersMatched(t *testing.T) {
+func TestContainerLogs_RendersMatchedWithErrorSummary(t *testing.T) {
 	api := &mockDockerAPI{
 		summaries: []container.Summary{
 			{ID: "id-web", Names: []string{"/web"}, Labels: map[string]string{"com.docker.compose.service": "web"}},
 			{ID: "id-db", Names: []string{"/db"}, Labels: map[string]string{"com.docker.compose.service": "db"}},
 		},
-		stats: map[string]container.StatsResponse{
-			"id-web": cannedStats(300, 100, 2000, 1000, 4, 150, 1000), // CPU 80%, mem 15%
+		logs: map[string][]byte{
+			"id-web": muxFrame(t, "started ok\nserving requests\n", "ERROR connect refused\n"),
 		},
 	}
 	tool := newTool(mockHub{api: api})
@@ -90,25 +83,28 @@ func TestContainerStats_RendersMatched(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if !strings.Contains(obs.Text, "1 container(s) for \"web\"") {
-		t.Errorf("header missing: %s", obs.Text)
+		t.Errorf("header missing:\n%s", obs.Text)
 	}
-	if !strings.Contains(obs.Text, "web | CPU 80.00%") {
-		t.Errorf("expected web CPU line, got:\n%s", obs.Text)
+	if !strings.Contains(obs.Text, "--- web (3 line(s), 1 error line(s)) ---") {
+		t.Errorf("expected web block with 3 lines / 1 error, got:\n%s", obs.Text)
+	}
+	if !strings.Contains(obs.Text, "ERROR connect refused") {
+		t.Errorf("expected stderr line rendered:\n%s", obs.Text)
 	}
 	if strings.Contains(obs.Text, "db") {
 		t.Errorf("db must not appear (only web requested):\n%s", obs.Text)
 	}
 }
 
-// TestContainerStats_ExactMatchNoSubstring is the headline regression: "api"
-// must not match "api-gateway" (no substring false positive).
-func TestContainerStats_ExactMatchNoSubstring(t *testing.T) {
+// TestContainerLogs_ExactMatchNoSubstring is the headline regression: "api"
+// must not match "api-gateway".
+func TestContainerLogs_ExactMatchNoSubstring(t *testing.T) {
 	api := &mockDockerAPI{
 		summaries: []container.Summary{
 			{ID: "id-gw", Names: []string{"/api-gateway"}, Labels: map[string]string{"com.docker.compose.service": "api-gateway"}},
 		},
-		stats: map[string]container.StatsResponse{
-			"id-gw": cannedStats(300, 100, 2000, 1000, 1, 10, 100),
+		logs: map[string][]byte{
+			"id-gw": muxFrame(t, "hello\n", ""),
 		},
 	}
 	tool := newTool(mockHub{api: api})
@@ -122,18 +118,18 @@ func TestContainerStats_ExactMatchNoSubstring(t *testing.T) {
 	}
 }
 
-// TestContainerStats_TolerantOfPerContainerError: one matched container's stats
-// call fails; the tool still renders the working one and notes the failure.
-func TestContainerStats_TolerantOfPerContainerError(t *testing.T) {
+// TestContainerLogs_TolerantOfPerContainerError: one matched container's log
+// fetch fails; the tool still renders the working one and notes the failure.
+func TestContainerLogs_TolerantOfPerContainerError(t *testing.T) {
 	api := &mockDockerAPI{
 		summaries: []container.Summary{
 			{ID: "id-1", Names: []string{"/web-1"}, Labels: map[string]string{"com.docker.compose.service": "web"}},
 			{ID: "id-2", Names: []string{"/web-2"}, Labels: map[string]string{"com.docker.compose.service": "web"}},
 		},
-		stats: map[string]container.StatsResponse{
-			"id-1": cannedStats(300, 100, 2000, 1000, 2, 10, 100),
+		logs: map[string][]byte{
+			"id-1": muxFrame(t, "web-1 up\n", ""),
 		},
-		statsErr: map[string]error{
+		logsErr: map[string]error{
 			"id-2": errors.New("container gone"),
 		},
 	}
@@ -141,9 +137,9 @@ func TestContainerStats_TolerantOfPerContainerError(t *testing.T) {
 
 	obs, err := run(t, tool, map[string]any{"workload": "web"})
 	if err != nil {
-		t.Fatalf("per-container stats error must not fail the tool: %v", err)
+		t.Fatalf("per-container log error must not fail the tool: %v", err)
 	}
-	if !strings.Contains(obs.Text, "web-1 | CPU") {
+	if !strings.Contains(obs.Text, "--- web-1 ") || !strings.Contains(obs.Text, "web-1 up") {
 		t.Errorf("expected working container web-1 rendered:\n%s", obs.Text)
 	}
 	if !strings.Contains(obs.Text, "note:") || !strings.Contains(obs.Text, "web-2") {
@@ -151,7 +147,33 @@ func TestContainerStats_TolerantOfPerContainerError(t *testing.T) {
 	}
 }
 
-func TestContainerStats_WorkloadRequired(t *testing.T) {
+func TestContainerLogs_TailLimitsLines(t *testing.T) {
+	api := &mockDockerAPI{
+		summaries: []container.Summary{
+			{ID: "id-web", Names: []string{"/web"}, Labels: map[string]string{"com.docker.compose.service": "web"}},
+		},
+		logs: map[string][]byte{
+			"id-web": muxFrame(t, "l1\nl2\nl3\nl4\nl5\n", ""),
+		},
+	}
+	tool := newTool(mockHub{api: api})
+
+	obs, err := run(t, tool, map[string]any{"workload": "web", "tail": 2})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(obs.Text, "(2 line(s)") {
+		t.Errorf("expected tail=2 to limit to 2 lines:\n%s", obs.Text)
+	}
+	if strings.Contains(obs.Text, "l1") || strings.Contains(obs.Text, "l3") {
+		t.Errorf("tail=2 should keep only the last two lines (l4,l5):\n%s", obs.Text)
+	}
+	if !strings.Contains(obs.Text, "l4") || !strings.Contains(obs.Text, "l5") {
+		t.Errorf("tail=2 should retain l4 and l5:\n%s", obs.Text)
+	}
+}
+
+func TestContainerLogs_WorkloadRequired(t *testing.T) {
 	tool := newTool(mockHub{api: &mockDockerAPI{}})
 	obs, err := run(t, tool, map[string]any{})
 	if err != nil {
@@ -162,7 +184,18 @@ func TestContainerStats_WorkloadRequired(t *testing.T) {
 	}
 }
 
-func TestContainerStats_HubGetError(t *testing.T) {
+func TestContainerLogs_InvalidSince(t *testing.T) {
+	tool := newTool(mockHub{api: &mockDockerAPI{}})
+	obs, err := run(t, tool, map[string]any{"workload": "web", "since": "soon"})
+	if err != nil {
+		t.Fatalf("invalid since should not error the tool: %v", err)
+	}
+	if !strings.Contains(obs.Text, "invalid since duration") {
+		t.Errorf("expected since guidance, got: %s", obs.Text)
+	}
+}
+
+func TestContainerLogs_HubGetError(t *testing.T) {
 	tool := newTool(mockHub{err: errors.New("no docker hosts configured")})
 	_, err := run(t, tool, map[string]any{"workload": "web"})
 	if err == nil {
@@ -173,20 +206,20 @@ func TestContainerStats_HubGetError(t *testing.T) {
 	}
 }
 
-func TestContainerStats_Risk(t *testing.T) {
+func TestContainerLogs_Risk(t *testing.T) {
 	tool := newTool(mockHub{api: &mockDockerAPI{}})
 	rr, ok := tool.(tools.RiskRated)
 	if !ok {
-		t.Fatal("metric.container_stats must implement RiskRated")
+		t.Fatal("log.container must implement RiskRated")
 	}
 	if rr.Risk() != tools.RiskLow {
 		t.Errorf("Risk = %v, want RiskLow", rr.Risk())
 	}
 }
 
-func TestContainerStats_NameAndSchema(t *testing.T) {
+func TestContainerLogs_NameAndSchema(t *testing.T) {
 	tool := newTool(mockHub{api: &mockDockerAPI{}})
-	if tool.Name() != "metric.container_stats" {
+	if tool.Name() != "log.container" {
 		t.Errorf("Name = %q", tool.Name())
 	}
 	var schema map[string]any

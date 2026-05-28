@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -26,6 +27,7 @@ type ReadOnlyAPI interface {
 	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
 	ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error)
 	ContainerStats(ctx context.Context, containerID string) (container.StatsResponse, error)
+	ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
 }
 
 // Client is a read-only façade over one Docker daemon. It satisfies
@@ -84,4 +86,13 @@ func (c *Client) ContainerStats(ctx context.Context, containerID string) (contai
 		return container.StatsResponse{}, fmt.Errorf("docker: decode container stats: %w", err)
 	}
 	return stats, nil
+}
+
+// ContainerLogs returns the log stream for one container. The returned stream
+// is the daemon's multiplexed stdout/stderr framing (8-byte header per chunk)
+// unless the container was created with a TTY, in which case it is a raw byte
+// stream; callers demultiplex with stdcopy. This reads logs only — cloudy never
+// execs into or attaches a writer to a container. The caller closes the stream.
+func (c *Client) ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error) {
+	return c.sdk.ContainerLogs(ctx, containerID, options)
 }

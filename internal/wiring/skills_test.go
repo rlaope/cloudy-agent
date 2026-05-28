@@ -27,6 +27,7 @@ var canonicalToolNames = []string{
 
 	"log.loki_query_range", "log.loki_labels", "log.loki_label_values",
 	"log.loki_series", "log.es_search", "log.es_indices", "log.es_cluster_health",
+	"log.container",
 
 	"trace.tempo_get_trace", "trace.tempo_search",
 	"trace.service_graph", "trace.route_red",
