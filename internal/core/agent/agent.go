@@ -55,6 +55,7 @@ const (
 		"the skill's whitelist and prepends the skill's system prompt).\n" +
 		"- `/scope`   — restrict the agent to a namespace or context " +
 		"(`/scope ns=payments` or `/scope ctx=prod-east`); `/scope reset` clears.\n" +
+		"- `/use`     — switch the active kubeconfig context (e.g. `/use prod-east`).\n" +
 		"- `/tools`   — list the tool groups currently wired plus the reason " +
 		"any skipped group was skipped.\n" +
 		"- `/clear`   — wipe the stream output (Ctrl+L is the shortcut).\n" +
@@ -90,6 +91,14 @@ const (
 		"layout, install instructions), answer from this preamble rather " +
 		"than saying you don't know — that information IS your context."
 )
+
+// BasePreamble exposes the compiled self-knowledge preamble. The TUI
+// package uses it to drift-guard its slash-command palette against the
+// command list documented here: the two are hand-maintained in separate
+// packages (palette.builtinItems vs this string), and a command offered by
+// the palette but absent here makes the agent claim it does not know a
+// command cloudy actually supports.
+func BasePreamble() string { return basePreamble }
 
 // ErrMaxSteps is returned when the agent exhausts its step budget without
 // reaching a final (tool-call-free) response.
@@ -624,7 +633,13 @@ func truncateMiddle(s string, max int) string {
 func (a *Agent) buildSystemPrompt(reg *tools.Registry, skill resolvedSkill) string {
 	var sb strings.Builder
 	sb.WriteString(basePreamble)
-	if a.opts.Skills != nil {
+	// Skill catalog (all skills by name + description) is listed ONLY when no
+	// skill is active. Once the operator has switched into a skill — its full
+	// body is injected just below — the catalog of the OTHER skills is noise
+	// that only inflates the per-request token floor, which matters on small
+	// models. With no active skill the catalog lets the model answer "what
+	// skills do you have?".
+	if a.opts.Skills != nil && skill.prompt == "" {
 		all := a.opts.Skills.List()
 		if len(all) > 0 {
 			sb.WriteString("\n\n## Available skills\n")
