@@ -72,6 +72,11 @@ type Config struct {
 	// agent. Empty (or missing) means "use the kubeconfig current-context".
 	Contexts []string `yaml:"contexts,omitempty"`
 
+	// DockerHosts is the list of Docker daemons cloudy may inspect for
+	// container/image change history. All access is list/inspect only —
+	// cloudy never starts, stops, creates, or removes containers.
+	DockerHosts []DockerHost `yaml:"docker_hosts,omitempty"`
+
 	// Safety contains guardrails that bound what the agent is allowed to do.
 	Safety SafetyConfig `yaml:"safety"`
 
@@ -194,6 +199,17 @@ type DatabaseEndpoint struct {
 	// PasswordEnv is the environment variable holding the connection
 	// password, when the DSN does not embed it.
 	PasswordEnv string `yaml:"password_env,omitempty"`
+}
+
+// DockerHost describes a single Docker daemon cloudy may inspect. Host is a
+// Docker endpoint, e.g. "unix:///var/run/docker.sock" or "tcp://host:2375".
+// Access is read-only; no entry here causes cloudy to auto-connect at startup.
+type DockerHost struct {
+	// Name is a human-readable label used in UI and as the host argument key.
+	Name string `yaml:"name"`
+
+	// Host is the Docker daemon endpoint (unix socket or tcp address).
+	Host string `yaml:"host"`
 }
 
 // SafetyConfig contains guardrails that bound agent behaviour.

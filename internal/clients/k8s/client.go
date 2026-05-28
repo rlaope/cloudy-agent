@@ -247,6 +247,18 @@ func (c *Client) DaemonSets(ns string, opts metav1.ListOptions) (*appsv1.DaemonS
 	return c.core.AppsV1().DaemonSets(ns).List(context.Background(), opts)
 }
 
+// ReplicaSets lists replica sets in the given namespace. Used to reconstruct
+// Deployment revision history (each rollout creates a new ReplicaSet).
+func (c *Client) ReplicaSets(ns string, opts metav1.ListOptions) (*appsv1.ReplicaSetList, error) {
+	return c.core.AppsV1().ReplicaSets(ns).List(context.Background(), opts)
+}
+
+// ControllerRevisions lists controller revisions in the given namespace. Used
+// to reconstruct StatefulSet / DaemonSet revision history.
+func (c *Client) ControllerRevisions(ns string, opts metav1.ListOptions) (*appsv1.ControllerRevisionList, error) {
+	return c.core.AppsV1().ControllerRevisions(ns).List(context.Background(), opts)
+}
+
 // Jobs lists jobs in the given namespace.
 func (c *Client) Jobs(ns string, opts metav1.ListOptions) (*batchv1.JobList, error) {
 	return c.core.BatchV1().Jobs(ns).List(context.Background(), opts)

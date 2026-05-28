@@ -54,6 +54,8 @@ var canonicalToolNames = []string{
 
 	"ebpf.biolatency", "ebpf.tcptop", "ebpf.tcprtt", "ebpf.execsnoop",
 	"ebpf.bpftrace_oneliner",
+
+	"change.recent",
 }
 
 // stubTool mirrors the helper in internal/tools/registry_test.go; copied here

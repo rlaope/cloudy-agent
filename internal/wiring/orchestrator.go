@@ -49,6 +49,7 @@ func Rebuild(cfg config.Config, opts RebuildOpts) (*tools.Registry, error) {
 		NodeInspectors: cfg.NodeInspectors,
 		Alertmanager:   cfg.Alertmanager,
 		ArgoCD:         cfg.ArgoCD,
+		DockerHosts:    cfg.DockerHosts,
 	})
 	Replace(reg)
 	return reg, warn
