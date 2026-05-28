@@ -198,6 +198,22 @@ func (r *Registry) MarkSkipped(group, reason string) {
 	r.skipped[group] = reason
 }
 
+// UnmarkSkipped clears any skip entry for group. It exists for groups whose
+// tools come from more than one backend wired in separate RegisterAll passes:
+// the first pass may MarkSkipped its backend (e.g. the HTTP "log" group when no
+// Loki/ES endpoint is configured), but a later pass can still register a tool
+// in that group (the Docker log.container tool). Leaving the stale skip entry
+// in place would make the skill validator (which reads Skipped() directly, not
+// Inventory()) wrongly suppress references to the now-registered tool.
+func (r *Registry) UnmarkSkipped(group string) {
+	if group == "" {
+		return
+	}
+	r.skippedMu.Lock()
+	defer r.skippedMu.Unlock()
+	delete(r.skipped, group)
+}
+
 // Skipped returns a copy of the skipped-group reason map.
 func (r *Registry) Skipped() map[string]string {
 	r.skippedMu.RLock()

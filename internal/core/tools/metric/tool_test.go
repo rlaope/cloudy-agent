@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -38,6 +39,10 @@ func (m *mockDockerAPI) ContainerStats(_ context.Context, id string) (container.
 		return container.StatsResponse{}, err
 	}
 	return m.stats[id], nil
+}
+
+func (m *mockDockerAPI) ContainerLogs(_ context.Context, _ string, _ container.LogsOptions) (io.ReadCloser, error) {
+	return nil, nil
 }
 
 // mockHub satisfies the metric package's hubGetter seam without a daemon.

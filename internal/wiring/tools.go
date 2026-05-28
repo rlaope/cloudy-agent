@@ -21,6 +21,7 @@ import (
 	"github.com/rlaope/cloudy/internal/core/tools/alert"
 	"github.com/rlaope/cloudy/internal/core/tools/change"
 	"github.com/rlaope/cloudy/internal/core/tools/db"
+	"github.com/rlaope/cloudy/internal/core/tools/dockerlog"
 	"github.com/rlaope/cloudy/internal/core/tools/ebpf"
 	"github.com/rlaope/cloudy/internal/core/tools/gitops"
 	"github.com/rlaope/cloudy/internal/core/tools/gpu"
@@ -150,6 +151,18 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 		reg.MarkSkipped("metric", reason)
 	} else {
 		metric.RegisterAll(reg, dockerHub)
+	}
+
+	// log.container is the Docker-host side of log inquiry; it shares the
+	// "log" namespace with the HTTP log group registered above. When a docker
+	// hub is present we register it and clear any "log" skip that the HTTP
+	// pass may have set with no Loki/ES configured — otherwise the group would
+	// be simultaneously skipped and have a registered tool, which would make
+	// the skill validator suppress references to a live tool. Reuses the
+	// dockerHub already built for the change group above.
+	if dockerHub != nil {
+		dockerlog.RegisterAll(reg, dockerHub)
+		reg.UnmarkSkipped("log")
 	}
 
 	// Single Profile application point: namespace checker on the Hub plus
