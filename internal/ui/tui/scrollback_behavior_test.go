@@ -69,6 +69,42 @@ func TestFullscreen_KeepsTranscriptInViewport(t *testing.T) {
 	}
 }
 
+// TestWriteStreamDuringPlayback_FinalizesPriorReply pins the review fix:
+// chrome that lands mid-playback (a slash command, picker resolve, or async
+// setup result — all funnel through writeStream, none of which hit the
+// submit-time finalize guard) must finalise the still-draining reply so its
+// tail commits WITH it, not leaked out below the chrome on a later tick.
+func TestWriteStreamDuringPlayback_FinalizesPriorReply(t *testing.T) {
+	m := NewModel(makeDeps())
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	m.bufferAssistantToken("prior answer body.")
+	next, _ = m.Update(agentDoneMsg{})
+	m = next.(Model)
+	if !m.playbackActive {
+		t.Fatal("setup: agentDone should have armed playback")
+	}
+
+	out := printedText(m.writeStream("[scope: ns=payments]\n"))
+
+	if m.playbackActive {
+		t.Error("writeStream must finalise an active playback before printing chrome")
+	}
+	if len(m.playbackBuf) != 0 {
+		t.Errorf("the prior playback buffer must be drained; left=%d", len(m.playbackBuf))
+	}
+	if !m.stream.Empty() {
+		t.Errorf("the viewport must be reset after the commit; got %q", m.stream.content.String())
+	}
+	if !strings.Contains(stripANSI(out), "prior answer body.") {
+		t.Errorf("the prior reply must commit WITH the chrome, not leak out later; got %q", stripANSI(out))
+	}
+	if !strings.Contains(out, "scope: ns=payments") {
+		t.Errorf("the chrome line must be present in the committed block; got %q", out)
+	}
+}
+
 // TestSubmitDuringPlayback_CommitsPreviousTurn pins the bug-#4 fix: a new
 // question that arrives while the previous reply is still typing out must
 // finalise that reply first — drain its buffer, commit it to scrollback,

@@ -350,7 +350,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// through every early return below.
 			introCmd := m.maybePrintIntro()
 			nextModel, keyCmd := m.Update(msg)
-			return nextModel, tea.Batch(introCmd, keyCmd)
+			// Sequence (not Batch): the intro must print BEFORE any
+			// scrollback the re-entered key produces, and two tea.Println
+			// cmds in a Batch have no ordering guarantee.
+			return nextModel, tea.Sequence(introCmd, keyCmd)
 		}
 
 		// Arrow picker takes the screen first: while a Claude-style HITL
@@ -569,25 +572,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// If the previous turn's answer is still typing out (playback
-		// active) when a new question arrives, finalise it first: drain
-		// the remaining buffer into the live viewport, commit the turn to
-		// native scrollback, and collapse the viewport. Without this the
-		// old reply dumps into and interleaves with the new turn — the
-		// "answer suddenly pops out, then shows up again below the new
-		// question" unnaturalness.
+		// active) when a new question arrives, finalise it first: commitTurn
+		// drains the remaining buffer into the live viewport, commits the
+		// turn to native scrollback, and collapses the viewport. Without
+		// this the old reply dumps into and interleaves with the new turn —
+		// the "answer suddenly pops out, then shows up again below the new
+		// question" unnaturalness. commitTurn is a no-op when idle.
 		var finalizeCmds []tea.Cmd
-		if m.playbackActive {
-			if drain := m.drainPlaybackBuffer(); drain != "" {
-				out := m.assistantBulletPrefix() + drain
-				var dCmd tea.Cmd
-				m.stream, dCmd = m.stream.Update(streamWriteMsg(out))
-				finalizeCmds = append(finalizeCmds, dCmd)
-			}
-			m.playbackActive = false
-			m.assistantTurnStarted = false
-			if c := m.commitTurn(); c != nil {
-				finalizeCmds = append(finalizeCmds, c)
-			}
+		if c := m.commitTurn(); c != nil {
+			finalizeCmds = append(finalizeCmds, c)
 		}
 
 		// Queue the echo as a chip above the prompt; flush into the
@@ -1046,6 +1039,10 @@ func (m *Model) writeStream(s string) tea.Cmd {
 		m.stream, c = m.stream.Update(streamWriteMsg(s))
 		return c
 	}
+	// A slash command / picker / async-setup result can land while a prior
+	// reply is still typing out; finalise it first so its tail commits with
+	// it instead of leaking out below this chrome on a later tick.
+	m.finalizeActivePlayback()
 	body := strings.TrimRight(s, "\n")
 	pending := strings.TrimRight(m.stream.Commit(), "\n")
 	var combined string
@@ -1076,11 +1073,32 @@ func (m *Model) commitTurn() tea.Cmd {
 		// nothing to commit — leave the content in place.
 		return nil
 	}
+	m.finalizeActivePlayback()
 	out := strings.TrimRight(m.stream.Commit(), "\n")
 	if out == "" {
 		return nil
 	}
 	return tea.Println(out)
+}
+
+// finalizeActivePlayback flushes a still-draining previous reply into the
+// live viewport and stops the typewriter, so a commit that follows
+// captures the WHOLE answer and no stray playbackTick re-commits its tail
+// into a later, unrelated scrollback block. No-op when nothing is playing.
+//
+// playbackActive is only ever set by the agentDoneMsg happy path, where the
+// buffered runes ALREADY carry the "● " bullet (prepended at line ~rendered
+// assembly). So the drained tail must be appended verbatim — adding another
+// assistantBulletPrefix here would inject a second bullet mid-reply.
+func (m *Model) finalizeActivePlayback() {
+	if !m.playbackActive && len(m.playbackBuf) == 0 {
+		return
+	}
+	if drain := m.drainPlaybackBuffer(); drain != "" {
+		m.stream, _ = m.stream.Update(streamWriteMsg(drain))
+	}
+	m.playbackActive = false
+	m.assistantTurnStarted = false
 }
 
 // maybePrintIntro prints the intro exactly once per session, regardless of
@@ -1178,25 +1196,27 @@ func buildAllModelsPicker() *arrowPicker {
 // would save the key to disk but the next question would still hit
 // whatever provider was wired at startup (usually Anthropic by default).
 func (m *Model) applyLoginResult(res loginResult) tea.Cmd {
-	cmds := []tea.Cmd{m.writeStream(res.out)}
 	if res.picker != nil {
 		m.arrowPicker = res.picker
 	}
 	if res.done {
 		m.loginChat = nil
 	}
+	// Accumulate chat prose + any swap error into ONE writeStream so they
+	// land as a single ordered scrollback block — two separate tea.Println
+	// cmds in a Batch are not order-guaranteed.
+	out := res.out
+	var hCmd tea.Cmd
 	if res.swapToModel != "" && m.deps.SwapModel != nil {
 		if err := m.deps.SwapModel(res.swapToModel); err != nil {
-			cmds = append(cmds, m.writeStream(agentError("swap", err)))
+			out += "\n" + agentError("swap", err)
 		} else {
 			m.deps.Model = res.swapToModel
 			m.footer.SetModel(res.swapToModel)
-			var hCmd tea.Cmd
 			m.header, hCmd = m.header.Update(headerStateMsg{model: res.swapToModel})
-			cmds = append(cmds, hCmd)
 		}
 	}
-	return tea.Batch(cmds...)
+	return tea.Batch(m.writeStream(out), hCmd)
 }
 
 // agentError formats an in-stream diagnostic line for the operator.
@@ -1454,12 +1474,13 @@ func helpText() string {
   Shift+Enter    insert newline
   Up / Down      navigate history (or palette when open)
   Ctrl+R         incremental history search
-  Ctrl+L         clear stream
+  Ctrl+L         clear the visible screen (scrollback history is preserved)
   Ctrl+C         cancel in-flight request (works even when palette is open)
   Ctrl+C×2       quit cloudy
   Esc            cancel request / close palette
   Tab            open command palette / tab-complete selected command
-  PageUp/Dn      scroll output
+  Mouse wheel    scroll the conversation (your terminal's native scrollback)
+  PageUp/Dn      scroll the live reply (use mouse wheel / terminal for history)
 
 commands (type / to open suggestions; arrow keys to pick):
   /setup              run the discovery wizard
@@ -1472,7 +1493,7 @@ commands (type / to open suggestions; arrow keys to pick):
   /scope reset        drop session scope
   /tools              list registered tool groups + skip reasons
   /replay <session>   replay session
-  /clear              clear output
+  /clear              clear the visible screen (scrollback is preserved)
   /update             upgrade cloudy to the latest GitHub release
   /help               show this text
   /version            print version
