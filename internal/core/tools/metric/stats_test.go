@@ -107,6 +107,34 @@ func TestMemory(t *testing.T) {
 			t.Errorf("got usage=%d pct=%v ok=%v", usage, pct, ok)
 		}
 	})
+
+	t.Run("cgroup v2 subtracts inactive_file when cache is absent", func(t *testing.T) {
+		var s container.StatsResponse
+		s.MemoryStats.Usage = 300
+		s.MemoryStats.Limit = 1000
+		s.MemoryStats.Stats = map[string]uint64{"inactive_file": 100} // no "cache" key
+		usage, _, pct, ok := memory(s)
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if usage != 200 {
+			t.Errorf("usage = %d, want 200 (300-100 inactive_file)", usage)
+		}
+		if pct != 20 { // 200/1000*100
+			t.Errorf("mem%% = %v, want 20", pct)
+		}
+	})
+
+	t.Run("cgroup v1 cache takes precedence over inactive_file", func(t *testing.T) {
+		var s container.StatsResponse
+		s.MemoryStats.Usage = 300
+		s.MemoryStats.Limit = 1000
+		s.MemoryStats.Stats = map[string]uint64{"cache": 50, "inactive_file": 100}
+		usage, _, _, _ := memory(s)
+		if usage != 250 { // 300-50 (cache wins), not 300-100
+			t.Errorf("usage = %d, want 250 (cache takes precedence)", usage)
+		}
+	})
 }
 
 func TestNetwork(t *testing.T) {

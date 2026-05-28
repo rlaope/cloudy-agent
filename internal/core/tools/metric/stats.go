@@ -73,12 +73,15 @@ func cpuPercent(s container.StatsResponse) (float64, bool) {
 }
 
 // memory returns usage, limit, and percent (usage/limit*100). Percent is OK
-// only when limit > 0. Usage subtracts the cache component when present, which
-// matches `docker stats`' reported figure on cgroup v1 hosts.
+// only when limit > 0. Usage subtracts the page-cache component to match
+// `docker stats`: the "cache" key on cgroup v1, or "inactive_file" on cgroup v2
+// (where "cache" is absent).
 func memory(s container.StatsResponse) (usage, limit uint64, percent float64, ok bool) {
 	usage = s.MemoryStats.Usage
 	if cache, has := s.MemoryStats.Stats["cache"]; has && cache <= usage {
 		usage -= cache
+	} else if inactive, has := s.MemoryStats.Stats["inactive_file"]; has && inactive <= usage {
+		usage -= inactive
 	}
 	limit = s.MemoryStats.Limit
 	if limit == 0 {
