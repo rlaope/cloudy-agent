@@ -183,29 +183,41 @@ wired in your environment.
 > **No `ruby` group.** rbspy is registered as `perf.rbspy_dump`. If
 > you are looking for Ruby profiling in `/tools`, search `perf`.
 
-### Skill playbooks (13 built-in)
+### Skill playbooks (24 built-in)
 
 Skills are curated multi-step playbooks the agent picks when a
 question matches their triggers. They live in
-[skills/](skills/) (mirrored under `internal/skills/skills/` for
-embedding); you can override or add by dropping a `.md` file into
-`~/.cloudy/skills/` — user files win on name conflicts.
+[`internal/core/skills/builtin/`](internal/core/skills/builtin/),
+embedded into the binary via `//go:embed`; you can override or add by
+dropping a `.md` file into `~/.cloudy/skills/` — user files win on name
+conflicts.
 
 | Skill | When it fires |
 | ----- | ------------- |
+| `triage-orchestrator` | "Just got paged — where do I start?" Breadth-first scan, ranks a hypothesis, hands off to the deep skill. |
 | `cluster-recon` | "What's running in my cluster right now?" topology dump. |
 | `incident-context` | "What's burning right now?" — cross-references firing alerts with recent Argo CD syncs and pod restarts. |
+| `deploy-regression` | "Did the last deploy break it?" Aligns Argo sync timestamps with error/latency onset and names the revision to roll back to. |
 | `k8s-incident` | First-pass triage for CrashLoopBackOff / Pending / OOMKilled / Eviction. |
 | `crashloop-deep-dive` | Beyond exit codes — previous-container logs, probe audit, init-container ordering, traces. |
 | `oom-killed-triage` | Container-limit vs. node-level OOM, sawtooth-vs-plateau working-set pattern, JVM heap flag check. |
+| `capacity-scheduling` | Why pods stay Pending — capacity vs. taints/affinity vs. stuck autoscaler / HPA-maxed / PDB block. |
+| `network-connectivity` | Why workload A can't reach B — walks DNS → Service/endpoints → NetworkPolicy → Ingress / mesh sidecar. |
+| `slo-burn` | SLO error-budget burn — multi-window multi-burn-rate, time-to-exhaustion, page-now vs. ticket. |
 | `log-spike-correlation` | Joins a Loki / ES error spike to Prom anomalies and pod events. |
 | `trace-error-pivot` | Walk a p99 / error-rate regression down to the slow span in Tempo or Jaeger and back to the pod. |
 | `db-latency-hunt` | PostgreSQL / MySQL / Redis read-only forensics for slow upstream DB calls. |
 | `prom-explorer` | Interactive PromQL composition without prior knowledge of the metric schema. |
+| `go-runtime` | Go runtime — goroutine leaks, GC pacing (GOGC), scheduler latency, pprof CPU hot paths. |
+| `node-runtime` | Node.js / V8 — event-loop lag, scavenge vs. mark-sweep GC, TurboFan deopt, V8 Inspector CPU profile. |
 | `jvm-gc` | GC pause / heap-exhaustion / old-gen growth diagnosis. |
 | `jvm-thread` | Deadlock, blocked threads, pool exhaustion. |
 | `py-perf` | GIL contention, async-loop stalls, CPU bottlenecks. |
+| `ruby-runtime` | Ruby / Rails — GVL contention, generational GC pressure, YJIT, rbspy stack sampling. |
+| `dotnet-runtime` | .NET / CLR — gen0/1/2 + LOH GC, Server-vs-Workstation mode, ThreadPool starvation, tiered JIT. |
+| `native-perf` | C / C++ / Rust — Linux perf hot paths, cache misses, branch mispredict, lock contention, missed codegen. |
 | `gpu-saturation` | GPU OOM, low utilization, thermal throttling. |
+| `ai-inference` | LLM/ML serving — TTFT / inter-token latency, throughput, KV-cache & batch saturation, GPU util (vLLM / Triton / TGI / TorchServe). |
 
 ## LLM providers
 
