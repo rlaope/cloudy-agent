@@ -60,7 +60,7 @@ You are a Node.js / V8 runtime analyst. Node is single-threaded for JavaScript: 
 
 1. `prom.query_range` on `nodejs_eventloop_lag_p99_seconds`. Sustained lag **> 100 ms** with container CPU **below** its limit ⇒ the loop is being blocked synchronously (not a capacity problem). This is the most common "fast but spiky" Node incident.
 2. `prom.query_range` on `rate(nodejs_gc_duration_seconds_sum{kind="markSweepCompact"}[5m])`. If mark-sweep time is a meaningful fraction of wall-clock, the latency IS the GC — correlate the pause timestamps with the lag spikes.
-3. Heap trend: `nodejs_heap_size_used_bytes` climbing toward `--max-old-space-size` (default ~1.5–2 GB, or the container limit if `--max-old-space-size` is unset and Node ≥ guesses from cgroup) ⇒ leak or unbounded cache; expect lengthening mark-sweep pauses then OOM. Hand off to `oom-killed-triage` if it's already being killed.
+3. Heap trend: `nodejs_heap_size_used_bytes` climbing toward `--max-old-space-size` (default ~1.5 GB on 64-bit unless set explicitly; Node does not reliably read the container memory limit on its own, so an unset flag in a large-limit container can still cap the old space at the V8 default) ⇒ leak or unbounded cache; expect lengthening mark-sweep pauses then OOM. Hand off to `oom-killed-triage` if it's already being killed.
 4. `nodejs_active_handles_total` / `nodejs_active_requests_total` rising without bound ⇒ unclosed sockets/timers — a leak that also degrades the loop.
 
 ### Step 3 — Name the hot function (V8 CPU profile)

@@ -39,7 +39,7 @@ You are a Go runtime analyst. Go's runtime exposes itself well: the `go_*` Prome
 ## The mental model
 
 - **Goroutines are cheap but not free.** A monotonically rising `go_goroutines` is the #1 Go leak: a goroutine blocked forever on a channel/lock/network read that never returns. Memory and scheduler overhead grow with it until OOM. A leak is *count never comes back down*, not *count is high*.
-- **GC is concurrent but allocation-paced.** Go's GC triggers on heap growth governed by **GOGC** (default 100 = collect when heap doubles since last GC). High allocation rate ⇒ frequent GC ⇒ CPU burned in `gc` and STW assist pauses. The lever is usually *allocate less* (reduce garbage), and only sometimes *raise GOGC* or set a `GOMEMLIMIT`.
+- **GC is concurrent but allocation-paced.** Go's GC triggers on heap growth governed by **GOGC** (default 100 = next collection when the heap grows to 2× the live set retained after the last mark — relative to the live heap, not the total heap at the previous cycle's end). High allocation rate ⇒ frequent GC ⇒ CPU burned in `gc` and STW assist pauses. The lever is usually *allocate less* (reduce garbage), and only sometimes *raise GOGC* or set a `GOMEMLIMIT`.
 - **STW is short but real.** Modern Go STW pauses are sub-ms, but **mark-assist** (mutators forced to help GC when allocation outruns the background collector) shows up as latency on allocation-heavy paths. `go_gc_duration_seconds` quantiles capture the pause distribution.
 - **Scheduler latency** (`/sched/latencies` in runtime/metrics, if exported) rises when GOMAXPROCS is throttled by the cgroup CPU limit — a container with a 1-core limit but GOMAXPROCS=many will oversubscribe and add scheduling delay. Set GOMAXPROCS to the limit (or use automaxprocs).
 
