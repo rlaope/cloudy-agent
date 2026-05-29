@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/rlaope/cloudy/internal/clients/docker"
@@ -92,11 +91,11 @@ func (t *containerStatsTool) Run(ctx context.Context, raw json.RawMessage) (tool
 	var failures []string
 	matched := 0
 	for _, s := range summaries {
-		if !matchesWorkload(s, a.Workload) {
+		if !dockerclient.MatchesWorkload(s, a.Workload) {
 			continue
 		}
 		matched++
-		name := containerName(s)
+		name := dockerclient.DisplayName(s)
 		stats, err := api.ContainerStats(ctx, s.ID)
 		if err != nil {
 			// Tolerate a single container's stats failing (e.g. it stopped
@@ -111,39 +110,4 @@ func (t *containerStatsTool) Run(ctx context.Context, raw json.RawMessage) (tool
 		Text: renderStats(a.Workload, matched, rows, failures),
 		Raw:  rows,
 	}, nil
-}
-
-// matchesWorkload reports whether a container summary relates to workload.
-// Matching is case-insensitive and EXACT against the compose service/project
-// labels or a container name — substring matching is deliberately avoided so
-// "api" does not match "api-gateway". This mirrors change/docker_source.go's
-// semantics; the small duplication keeps change's internals unexported.
-func matchesWorkload(s container.Summary, workload string) bool {
-	if workload == "" {
-		return false
-	}
-	wl := strings.ToLower(workload)
-	for _, key := range []string{"com.docker.compose.service", "com.docker.compose.project"} {
-		if v, ok := s.Labels[key]; ok && strings.ToLower(v) == wl {
-			return true
-		}
-	}
-	for _, n := range s.Names {
-		if strings.ToLower(strings.TrimPrefix(n, "/")) == wl {
-			return true
-		}
-	}
-	return false
-}
-
-// containerName returns a stable display name for a summary: the first name
-// (slash-trimmed) when present, else the short container ID.
-func containerName(s container.Summary) string {
-	if len(s.Names) > 0 {
-		return strings.TrimPrefix(s.Names[0], "/")
-	}
-	if len(s.ID) > 12 {
-		return s.ID[:12]
-	}
-	return s.ID
 }
