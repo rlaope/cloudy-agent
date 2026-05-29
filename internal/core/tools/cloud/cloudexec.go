@@ -50,8 +50,15 @@ var allowedSubcommands = map[string]map[string]struct{}{
 		"monitor metrics list-definitions": {},
 		"monitor log-analytics query":      {},
 	},
-	// gcloud intentionally omitted: it has no clean read-only time-series read
-	// command yet (see RFC open questions). GCP metric tooling is deferred.
+	"gcloud": {
+		// Cloud Logging read-only. `gcloud logging read` takes the filter as a
+		// trailing positional, so cloud tools emit `logging read` immediately
+		// followed by flags (--project …) and append the filter LAST — keeping
+		// subcommandPrefix == "logging read". GCP metric and trace reads stay
+		// deferred: `gcloud monitoring` exposes no time-series read and there is
+		// no stable `gcloud trace` read command (see docs/RFC-CLOUD-OBSERVABILITY.md).
+		"logging read": {},
+	},
 }
 
 // cloudExecRunner is the subprocess runner, a package var so tests can stub it

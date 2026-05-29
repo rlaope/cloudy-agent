@@ -18,7 +18,10 @@ func TestBuildClients_ValidatesAndSkips(t *testing.T) {
 		{Name: "az1", SubscriptionID: "sub-1"},
 		{Name: "az-bad", SubscriptionID: ""}, // missing sub → skip
 	}
-	gcp := []config.GCPProject{{Name: "g1", ProjectID: "proj"}} // deferred → skip reason
+	gcp := []config.GCPProject{
+		{Name: "g1", ProjectID: "proj"}, // valid → handle (Cloud Logging)
+		{Name: "g-bad", ProjectID: ""},  // missing project_id → skip
+	}
 
 	c, skips := BuildClients(aws, gcp, az)
 
@@ -28,8 +31,11 @@ func TestBuildClients_ValidatesAndSkips(t *testing.T) {
 	if len(c.Azure) != 1 || c.Azure["az1"] == nil {
 		t.Errorf("expected only the valid Azure account, got %v", c.Azure)
 	}
+	if len(c.GCP) != 1 || c.GCP["g1"] == nil {
+		t.Errorf("expected only the valid GCP project, got %v", c.GCP)
+	}
 	joined := strings.Join(skips, " | ")
-	for _, want := range []string{"missing name or region", "missing name or subscription_id", "gcp project"} {
+	for _, want := range []string{"missing name or region", "missing name or subscription_id", "missing name or project_id"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("skip reasons missing %q; got: %s", want, joined)
 		}
@@ -40,7 +46,7 @@ func TestRegisterAll_RegistersExpectedToolNames(t *testing.T) {
 	reg := tools.New()
 	c, _ := BuildClients(
 		[]config.AWSAccount{{Name: "prod", Region: "us-east-1"}},
-		nil,
+		[]config.GCPProject{{Name: "gprod", ProjectID: "proj-1"}},
 		[]config.AzureAccount{{Name: "az1", SubscriptionID: "sub-1"}},
 	)
 	RegisterAll(reg, c, nil)
@@ -54,6 +60,7 @@ func TestRegisterAll_RegistersExpectedToolNames(t *testing.T) {
 		"cloud.azure_monitor_metric_definitions",
 		"cloud.azure_monitor_metrics",
 		"cloud.azure_log_analytics_query",
+		"cloud.gcp_logging_read",
 	}
 	got := map[string]bool{}
 	for _, tl := range reg.List() {

@@ -30,16 +30,27 @@ type azureAccount struct {
 	subscriptionID string
 }
 
+// gcpProject is a validated GCP project handle. Only Cloud Logging is wired —
+// GCP metric/trace reads have no clean read-only gcloud command (see RFC).
+type gcpProject struct {
+	name          string
+	projectID     string
+	configuration string
+}
+
 // Clients holds the per-provider account handles. These are not SDK clients —
 // each handle just carries the CLI flags for its account; the actual work is
 // an allowlisted CloudExec shell-out at call time.
 type Clients struct {
 	AWS   map[string]*awsAccount
 	Azure map[string]*azureAccount
+	GCP   map[string]*gcpProject
 }
 
 // Empty reports whether no provider has a usable account wired.
-func (c Clients) Empty() bool { return len(c.AWS) == 0 && len(c.Azure) == 0 }
+func (c Clients) Empty() bool {
+	return len(c.AWS) == 0 && len(c.Azure) == 0 && len(c.GCP) == 0
+}
 
 // BuildClients validates the configured cloud accounts into handle maps and
 // returns per-entry skip reasons surfaced through the registry. No CLI is
@@ -49,6 +60,7 @@ func BuildClients(awsAccts []config.AWSAccount, gcpProjs []config.GCPProject, az
 	cs := Clients{
 		AWS:   map[string]*awsAccount{},
 		Azure: map[string]*azureAccount{},
+		GCP:   map[string]*gcpProject{},
 	}
 	var skips []string
 
@@ -68,13 +80,14 @@ func BuildClients(awsAccts []config.AWSAccount, gcpProjs []config.GCPProject, az
 		cs.Azure[a.Name] = &azureAccount{name: a.Name, subscriptionID: a.SubscriptionID}
 	}
 
-	// GCP metric query is deferred (no clean read-only gcloud time-series read).
-	// Surface configured-but-unwired projects honestly rather than silently.
+	// GCP wires Cloud Logging only; metric/trace reads remain deferred (no clean
+	// read-only gcloud command — see docs/RFC-CLOUD-OBSERVABILITY.md).
 	for _, p := range gcpProjs {
-		if p.ProjectID == "" {
+		if p.Name == "" || p.ProjectID == "" {
+			skips = append(skips, "cloud: gcp project "+strconv.Quote(p.Name)+": missing name or project_id")
 			continue
 		}
-		skips = append(skips, "cloud: gcp project "+strconv.Quote(p.Name)+": metric query not yet implemented (see docs/RFC-CLOUD-OBSERVABILITY.md)")
+		cs.GCP[p.Name] = &gcpProject{name: p.Name, projectID: p.ProjectID, configuration: p.Configuration}
 	}
 
 	return cs, skips
@@ -85,7 +98,7 @@ func BuildClients(awsAccts []config.AWSAccount, gcpProjs []config.GCPProject, az
 // composed from any per-account failures.
 func RegisterAll(reg *tools.Registry, c Clients, skipReasons []string) {
 	if c.Empty() {
-		reason := "no cloud accounts configured (cloud_aws / cloud_azure)"
+		reason := "no cloud accounts configured (cloud_aws / cloud_gcp / cloud_azure)"
 		if len(skipReasons) > 0 {
 			reason = "no usable cloud accounts: " + strings.Join(skipReasons, "; ")
 		}
@@ -99,5 +112,8 @@ func RegisterAll(reg *tools.Registry, c Clients, skipReasons []string) {
 	if len(c.Azure) > 0 {
 		reg.MustRegister(newAzureMetricTools(c.Azure)...)
 		reg.MustRegister(newAzureLogTools(c.Azure)...)
+	}
+	if len(c.GCP) > 0 {
+		reg.MustRegister(newGCPLogTools(c.GCP)...)
 	}
 }

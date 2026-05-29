@@ -75,3 +75,7 @@ func oneAWS() map[string]*awsAccount {
 func oneAzure() map[string]*azureAccount {
 	return map[string]*azureAccount{"prod": {name: "prod", subscriptionID: "sub-123"}}
 }
+
+func oneGCP() map[string]*gcpProject {
+	return map[string]*gcpProject{"prod": {name: "prod", projectID: "proj-id"}}
+}

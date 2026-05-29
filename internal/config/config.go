@@ -82,9 +82,10 @@ type Config struct {
 	// secrets — credentials resolve from the CLI's own chain.
 	CloudAWS []AWSAccount `yaml:"cloud_aws,omitempty"`
 
-	// CloudGCP is the list of GCP projects. Parsed and surfaced today; the
-	// metric query tool is deferred (the `gcloud` CLI has no clean read-only
-	// time-series command — see docs/RFC-CLOUD-OBSERVABILITY.md).
+	// CloudGCP is the list of GCP projects cloudy may query read-only via the
+	// operator's `gcloud` CLI. Cloud Logging is wired; metric and trace reads
+	// are deferred (gcloud has no clean read-only time-series or trace read
+	// command — see docs/RFC-CLOUD-OBSERVABILITY.md).
 	CloudGCP []GCPProject `yaml:"cloud_gcp,omitempty"`
 
 	// CloudAzure is the list of Azure subscriptions cloudy may query read-only
@@ -246,9 +247,10 @@ type AWSAccount struct {
 	Profile string `yaml:"profile,omitempty"`
 }
 
-// GCPProject describes one GCP project. Config is accepted today so the shape
-// is stable, but the metric query tool is not yet wired (the `gcloud` CLI has
-// no clean read-only time-series read command).
+// GCPProject describes one GCP project cloudy may query read-only by shelling
+// out to the operator's `gcloud` CLI. Cloud Logging (`gcloud logging read`) is
+// wired; metric and trace reads stay deferred because gcloud exposes no clean
+// read-only time-series or trace read command (see docs/RFC-CLOUD-OBSERVABILITY.md).
 type GCPProject struct {
 	// Name is a human-readable label.
 	Name string `yaml:"name"`
