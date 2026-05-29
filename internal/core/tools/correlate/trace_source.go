@@ -40,14 +40,15 @@ func (s *traceSource) Name() string { return "trace" }
 
 // RecentChanges searches recent Jaeger traces for q.Workload (used as the
 // service name) over the window [now-Since, now] (default 1h), filtered to
-// error spans via the `error=true` tag, and emits trace symptom events. An
-// empty q.Context resolves to the single configured Jaeger endpoint (or errors
-// when ambiguous). Per-source errors are returned for the caller to tolerate.
+// error spans via the `error=true` tag, and emits trace symptom events. The
+// Jaeger backend is chosen by deterministic default (PickDefaultEndpoint)
+// rather than from q.Context, which carries the k8s context, not an endpoint
+// name. Per-source errors are returned for the caller to tolerate.
 func (s *traceSource) RecentChanges(ctx context.Context, q change.ChangeQuery) ([]change.ChangeEvent, error) {
 	if len(s.traces.Jaeger) == 0 {
 		return nil, nil
 	}
-	client, err := tools.PickEndpoint(s.traces.Jaeger, q.Context, "correlate", "jaeger endpoint")
+	_, client, err := tools.PickDefaultEndpoint(s.traces.Jaeger, "correlate", "jaeger endpoint")
 	if err != nil {
 		return nil, err
 	}

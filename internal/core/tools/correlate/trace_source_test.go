@@ -1,12 +1,64 @@
 package correlate
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/rlaope/cloudy/internal/clients/httpapi"
+	"github.com/rlaope/cloudy/internal/core/tools/change"
 	"github.com/rlaope/cloudy/internal/core/tools/trace"
 )
+
+// TestTraceSource_MultiEndpointPicksDefault verifies that with more than one
+// Jaeger endpoint configured, RecentChanges no longer errors (it used to pass
+// q.Context as the endpoint name) and queries the deterministic default — the
+// sorted-first key.
+func TestTraceSource_MultiEndpointPicksDefault(t *testing.T) {
+	emptyData := `{"data":[]}`
+
+	hit := ""
+	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = "jaeger-1"
+		_, _ = w.Write([]byte(emptyData))
+	}))
+	defer srv1.Close()
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = "jaeger-2"
+		_, _ = w.Write([]byte(emptyData))
+	}))
+	defer srv2.Close()
+
+	c1, err := httpapi.NewClient("jaeger-1", srv1.URL, httpapi.Auth{})
+	if err != nil {
+		t.Fatalf("NewClient jaeger-1: %v", err)
+	}
+	c2, err := httpapi.NewClient("jaeger-2", srv2.URL, httpapi.Auth{})
+	if err != nil {
+		t.Fatalf("NewClient jaeger-2: %v", err)
+	}
+
+	traces := trace.Clients{Jaeger: map[string]*trace.JaegerClient{
+		"jaeger-2": {Client: c2},
+		"jaeger-1": {Client: c1},
+	}}
+	src := newTraceSource(traces)
+	if src == nil {
+		t.Fatal("newTraceSource returned nil")
+	}
+
+	// q.Context is the k8s context, NOT an endpoint name — this used to error.
+	_, err = src.RecentChanges(context.Background(), change.ChangeQuery{Context: "kind-cloudy-test", Workload: "api"})
+	if err != nil {
+		t.Fatalf("RecentChanges errored on multi-endpoint map: %v", err)
+	}
+	if hit != "jaeger-1" {
+		t.Errorf("queried endpoint = %q, want sorted-first %q", hit, "jaeger-1")
+	}
+}
 
 func TestTraceSymptomEvents(t *testing.T) {
 	base := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
