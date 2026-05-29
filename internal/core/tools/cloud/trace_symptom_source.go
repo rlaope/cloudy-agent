@@ -117,6 +117,13 @@ func cloudTraceSymptomEvents(summaries []xrayTraceSummary, workload string) []ch
 
 	for _, t := range summaries {
 		ts := xrayTraceStartTime(t.ID)
+		// A trace we cannot time-locate (malformed Id) must not anchor the
+		// timeline: a zero time sorts before every real time and would hijack
+		// candidateCauseV2's "earliest symptom" pick. X-Ray Ids are well-formed
+		// in practice, so skipping these is safe and keeps the symptom placeable.
+		if ts.IsZero() {
+			continue
+		}
 		if t.HasError || t.HasFault || t.HasThrottle {
 			errCount++
 			if !haveErr || ts.Before(earliestErrTime) {
