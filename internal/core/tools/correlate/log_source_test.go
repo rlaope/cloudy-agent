@@ -1,9 +1,63 @@
 package correlate
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/rlaope/cloudy/internal/clients/httpapi"
+	"github.com/rlaope/cloudy/internal/core/tools/change"
+	tlog "github.com/rlaope/cloudy/internal/core/tools/log"
 )
+
+// TestLogSource_MultiEndpointPicksDefault verifies that with more than one Loki
+// endpoint configured, RecentChanges no longer errors (it used to pass
+// q.Context as the endpoint name) and queries the deterministic default — the
+// sorted-first key.
+func TestLogSource_MultiEndpointPicksDefault(t *testing.T) {
+	emptyResult := `{"data":{"result":[]}}`
+
+	hit := ""
+	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = "loki-1"
+		_, _ = w.Write([]byte(emptyResult))
+	}))
+	defer srv1.Close()
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = "loki-2"
+		_, _ = w.Write([]byte(emptyResult))
+	}))
+	defer srv2.Close()
+
+	c1, err := httpapi.NewClient("loki-1", srv1.URL, httpapi.Auth{})
+	if err != nil {
+		t.Fatalf("NewClient loki-1: %v", err)
+	}
+	c2, err := httpapi.NewClient("loki-2", srv2.URL, httpapi.Auth{})
+	if err != nil {
+		t.Fatalf("NewClient loki-2: %v", err)
+	}
+
+	logs := tlog.Clients{Loki: map[string]*tlog.LokiClient{
+		"loki-2": {Client: c2},
+		"loki-1": {Client: c1},
+	}}
+	src := newLogSource(logs, nil)
+	if src == nil {
+		t.Fatal("newLogSource returned nil")
+	}
+
+	// q.Context is the k8s context, NOT an endpoint name — this used to error.
+	_, err = src.RecentChanges(context.Background(), change.ChangeQuery{Context: "kind-cloudy-test", Workload: "api"})
+	if err != nil {
+		t.Fatalf("RecentChanges errored on multi-endpoint map: %v", err)
+	}
+	if hit != "loki-1" {
+		t.Errorf("queried endpoint = %q, want sorted-first %q", hit, "loki-1")
+	}
+}
 
 func TestIsErrorLine(t *testing.T) {
 	cases := []struct {

@@ -23,8 +23,10 @@ type argoHistory interface {
 }
 
 // argoSource adapts an Argo CD endpoint to change.ChangeSource. The query's
-// Workload is treated as an Argo Application name; Context selects the
-// configured endpoint (first/default when empty).
+// Workload is treated as an Argo Application name. correlate has no per-source
+// endpoint argument (q.Context is the Kubernetes context, not an Argo endpoint
+// name), so the endpoint is resolved by default: the single configured client,
+// or a deterministic first-by-name default when several are wired.
 type argoSource struct {
 	clients map[string]argoHistory
 }
@@ -44,12 +46,13 @@ func newArgoSource(clients map[string]*gitops.ArgoClient) *argoSource {
 
 func (s *argoSource) Name() string { return "argo" }
 
-// RecentChanges fetches q.Workload's sync history from the selected Argo
+// RecentChanges fetches q.Workload's sync history from the default Argo
 // endpoint and converts each entry into a "sync" ChangeEvent, applying the
-// q.Since window. An empty q.Context resolves to the single configured
-// endpoint (or errors when ambiguous).
+// q.Since window. The endpoint is resolved by default (single configured
+// client, or deterministic first-by-name when several) — q.Context is the
+// Kubernetes context and never selects the Argo endpoint here.
 func (s *argoSource) RecentChanges(ctx context.Context, q change.ChangeQuery) ([]change.ChangeEvent, error) {
-	client, err := tools.PickEndpoint(s.clients, q.Context, "correlate", "argo cd endpoint")
+	_, client, err := tools.PickDefaultEndpoint(s.clients, "correlate", "argo cd endpoint")
 	if err != nil {
 		return nil, err
 	}

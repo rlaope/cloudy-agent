@@ -60,6 +60,30 @@ func PickEndpoint[V any](m map[string]V, name, group, kind string) (V, error) {
 	return v, nil
 }
 
+// PickDefaultEndpoint resolves an endpoint when the caller has no endpoint
+// argument to honor (e.g. correlate's symptom sources, which only receive a
+// k8s context). It returns the single configured endpoint, or — when several
+// are configured — a deterministic default (first by sorted key) so the call
+// always succeeds rather than erroring on ambiguity. The chosen key is
+// returned so callers can surface which endpoint they queried. It errors only
+// when the map is empty.
+//
+// group is the tool-group prefix ("correlate"); kind is the backend within
+// that group ("prometheus endpoint", "loki endpoint", etc.).
+func PickDefaultEndpoint[V any](m map[string]V, group, kind string) (string, V, error) {
+	var zero V
+	if len(m) == 0 {
+		return "", zero, fmt.Errorf("%s: no %s configured", group, kind)
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	key := keys[0]
+	return key, m[key], nil
+}
+
 // joinKeys returns the keys of m as a comma-separated, sorted string. Sorted
 // to keep error messages stable across calls.
 func joinKeys[V any](m map[string]V) string {

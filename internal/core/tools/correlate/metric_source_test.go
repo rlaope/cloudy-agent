@@ -1,11 +1,58 @@
 package correlate
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	promclient "github.com/rlaope/cloudy/internal/clients/prom"
+	"github.com/rlaope/cloudy/internal/core/tools/change"
 )
+
+// TestMetricSource_MultiEndpointPicksDefault verifies that with more than one
+// Prometheus endpoint configured, RecentChanges no longer errors (it used to
+// pass q.Context as the endpoint name) and queries the deterministic default —
+// the sorted-first key.
+func TestMetricSource_MultiEndpointPicksDefault(t *testing.T) {
+	emptyMatrix := `{"status":"success","data":{"resultType":"matrix","result":[]}}`
+
+	hit := ""
+	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = "prom-1"
+		_, _ = w.Write([]byte(emptyMatrix))
+	}))
+	defer srv1.Close()
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = "prom-2"
+		_, _ = w.Write([]byte(emptyMatrix))
+	}))
+	defer srv2.Close()
+
+	c1, err := promclient.NewClient(srv1.URL, "", "", "")
+	if err != nil {
+		t.Fatalf("NewClient prom-1: %v", err)
+	}
+	c2, err := promclient.NewClient(srv2.URL, "", "", "")
+	if err != nil {
+		t.Fatalf("NewClient prom-2: %v", err)
+	}
+
+	src := newMetricSource(map[string]*promclient.Client{"prom-2": c2, "prom-1": c1}, "up", 1.0)
+	if src == nil {
+		t.Fatal("newMetricSource returned nil")
+	}
+
+	// q.Context is the k8s context, NOT an endpoint name — this used to error.
+	_, err = src.RecentChanges(context.Background(), change.ChangeQuery{Context: "kind-cloudy-test", Workload: "api"})
+	if err != nil {
+		t.Fatalf("RecentChanges errored on multi-endpoint map: %v", err)
+	}
+	if hit != "prom-1" {
+		t.Errorf("queried endpoint = %q, want sorted-first %q", hit, "prom-1")
+	}
+}
 
 func TestMetricBreachEvents_SingleBreach(t *testing.T) {
 	// Series crosses threshold at T=1000 (value 5.0 > threshold 4.0).

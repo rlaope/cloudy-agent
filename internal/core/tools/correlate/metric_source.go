@@ -34,10 +34,11 @@ func (s *metricSource) Name() string { return "metric" }
 
 // RecentChanges range-queries the PromQL expression over the window derived
 // from q.Since and emits a single "metric_breach" ChangeEvent at the earliest
-// timestamp where the value exceeds the threshold. An empty q.Context resolves
-// to the single configured endpoint (or errors when ambiguous).
+// timestamp where the value exceeds the threshold. The Prometheus backend is
+// chosen by deterministic default (PickDefaultEndpoint) rather than from
+// q.Context, which carries the k8s context, not an endpoint name.
 func (s *metricSource) RecentChanges(ctx context.Context, q change.ChangeQuery) ([]change.ChangeEvent, error) {
-	client, err := tools.PickEndpoint(s.clients, q.Context, "correlate", "prometheus endpoint")
+	_, client, err := tools.PickDefaultEndpoint(s.clients, "correlate", "prometheus endpoint")
 	if err != nil {
 		return nil, err
 	}

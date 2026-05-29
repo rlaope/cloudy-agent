@@ -47,7 +47,7 @@ func (s *logSource) RecentChanges(ctx context.Context, q change.ChangeQuery) ([]
 		return nil, nil
 	}
 
-	client, err := tools.PickEndpoint(s.logs.Loki, q.Context, "correlate", "loki endpoint")
+	_, client, err := tools.PickDefaultEndpoint(s.logs.Loki, "correlate", "loki endpoint")
 	if err != nil {
 		return nil, err
 	}
