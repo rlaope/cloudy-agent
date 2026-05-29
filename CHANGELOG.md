@@ -2,8 +2,8 @@
 
 ## v0.5.0 — Unreleased
 
-### Added — Tool surface (45 → 101, 10 → 16 groups)
-- **Cloud observability group (`cloud`, 13 tools)** — read-only AWS + Azure + GCP
+### Added — Tool surface (45 → 110, 10 → 16 groups)
+- **Cloud observability group (`cloud`, 22 tools)** — read-only AWS + Azure + GCP
   telemetry via the operator's already-configured `aws` / `az` / `gcloud` CLIs.
   cloudy stores no cloud secrets; credentials resolve from the CLI's own chain.
   Read-only is re-established for the shell-out path (which bypasses the HTTP
@@ -23,10 +23,21 @@
     trace summaries, full segments, service-dependency graph);
     `cloud.azure_appinsights_query` (Application Insights KQL over
     requests/dependencies/traces).
+  - **Inventory / managed-service health (Phase 4)** —
+    `cloud.aws_rds_describe_instances`, `cloud.aws_lambda_list_functions`,
+    `cloud.aws_eks_list_clusters` (AWS);
+    `cloud.azure_sql_server_list`, `cloud.azure_functionapp_list`,
+    `cloud.azure_aks_list` (Azure);
+    `cloud.gcp_sql_instances_list`, `cloud.gcp_run_services_list`,
+    `cloud.gcp_container_clusters_list` (GCP). Managed databases, serverless
+    functions, and managed-Kubernetes inventory across all three providers via
+    read-only Describe/List verbs. GCP inventory list commands are first-class
+    read-only `gcloud` verbs (unlike its absent metric/trace reads).
   - **GCP path locked** — Cloud Logging is the only clean read-only `gcloud`
-    signal; metric and trace reads stay deferred (gcloud exposes no
-    time-series or trace read command). See §9–§10 of the RFC.
-  - Phases 0–3 of docs/RFC-CLOUD-OBSERVABILITY.md (AWS + Azure traces; GCP
+    *telemetry* signal; metric and trace reads stay deferred (gcloud exposes no
+    time-series or trace read command). Inventory list verbs (`sql/run/container
+    … list`) are available and wired. See §9–§11 of the RFC.
+  - Phases 0–4 of docs/RFC-CLOUD-OBSERVABILITY.md (AWS + Azure traces; GCP
     trace deferred). Wiring cloud traces into `correlate` is a follow-up.
 - **K8s workload tools (10)** — `list_deployments`, `list_statefulsets`,
   `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`,

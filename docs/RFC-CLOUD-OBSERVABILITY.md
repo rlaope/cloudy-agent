@@ -136,10 +136,13 @@ internal/core/tools/cloud/
 ├── aws.go              // cloud.aws_cw_list_metrics, cloud.aws_cw_get_metric_statistics
 ├── aws_logs.go         // cloud.aws_logs_{describe_groups,filter_events,insights_query}
 ├── aws_xray.go         // cloud.aws_xray_{trace_summaries,batch_get_traces,service_graph}
+├── aws_inventory.go    // cloud.aws_{rds_describe_instances,lambda_list_functions,eks_list_clusters}
 ├── azure.go            // cloud.azure_monitor_{metric_definitions,metrics}
 ├── azure_logs.go       // cloud.azure_log_analytics_query
 ├── azure_appinsights.go// cloud.azure_appinsights_query
+├── azure_inventory.go  // cloud.azure_{sql_server_list,functionapp_list,aks_list}
 ├── gcp_logs.go         // cloud.gcp_logging_read   (Cloud Logging only — see §9)
+├── gcp_inventory.go    // cloud.gcp_{sql_instances_list,run_services_list,container_clusters_list}
 └── *_test.go           // stub-runner unit tests; allowlist refuses mutating verbs
 ```
 
@@ -177,9 +180,10 @@ secret entry and no config edits**.
   X-Ray (trace summaries / batch-get-traces / service-graph) and Azure
   Application Insights KQL; GCP Cloud Trace deferred for the same reason as GCP
   metrics (no read-only gcloud command). Feeds `correlate`.
-- **Phase 4 — Inventory / managed-service health.** Describe/List (RDS,
-  CloudSQL, Azure SQL; Lambda, CloudRun, Functions; EKS, GKE, AKS) → extend
-  `change.recent` across cloud.
+- **Phase 4 — Inventory / managed-service health.** *(delivered, see §11)*
+  Describe/List (RDS, CloudSQL, Azure SQL; Lambda, CloudRun, Functions; EKS,
+  GKE, AKS). Extending `change.recent` across cloud (CloudTrail / Cloud Audit
+  Logs / Activity Log) remains the cross-cutting follow-up.
 - **Phase 5 — FinOps / cost.** Cost Explorer / Billing / Cost Management
   (read-only) → cost-anomaly inquiry.
 - **Cross-cutting.** `correlate.workload` ingests cloud symptoms;
@@ -285,3 +289,39 @@ service graph and App Insights dependency table both map onto cloudy's existing
 topology mental model. Wiring cloud traces into `correlate` is the remaining
 cross-cutting follow-up (the tools exist; the symptom-source adapter does not
 yet consume them).
+
+## 11. Phase 4 — inventory / managed-service health (delivered, all three providers)
+
+Inventory answers "what managed services exist and are they healthy?" — the
+context an incident needs the moment it leaves the cluster. Unlike GCP
+metrics/traces, the managed-service **list** verbs are first-class read-only on
+all three CLIs, so Phase 4 ships complete across AWS, GCP, and Azure. Three
+resource families, one tool per family per provider (9 tools):
+
+| Family | AWS | GCP | Azure |
+| --- | --- | --- | --- |
+| Managed DB | `cloud.aws_rds_describe_instances` (`rds describe-db-instances`) | `cloud.gcp_sql_instances_list` (`sql instances list`) | `cloud.azure_sql_server_list` (`sql server list`) |
+| Serverless | `cloud.aws_lambda_list_functions` (`lambda list-functions`) | `cloud.gcp_run_services_list` (`run services list`) | `cloud.azure_functionapp_list` (`functionapp list`) |
+| Managed k8s | `cloud.aws_eks_list_clusters` (`eks list-clusters`) | `cloud.gcp_container_clusters_list` (`container clusters list`) | `cloud.azure_aks_list` (`aks list`) |
+
+All take only an optional `account` selector — no required arguments — so the
+agent can sweep an account's inventory in one call. Each surfaces the
+health-relevant columns (status/state, version, sizing, node count) and the raw
+JSON. `aws eks list-clusters` returns only cluster names; deeper EKS inspection
+is left to the existing `k8s` tools once a cluster is selected.
+
+Allowlist additions (read verbs only): `rds describe-db-instances`,
+`lambda list-functions`, `eks list-clusters` (aws); `sql server list`,
+`functionapp list`, `aks list` (az); `sql instances list`, `run services list`,
+`container clusters list` (gcloud). A dedicated test asserts that the mutating
+counterparts (`rds delete-db-instance`, `eks delete-cluster`,
+`sql instances delete`, `container clusters delete`, `aks delete`) are refused
+before exec.
+
+### 11.1 Cross-cutting (still open)
+
+Extending `change.recent` across cloud audit logs (CloudTrail `LookupEvents`,
+Cloud Audit Logs, Azure Activity Log) is deferred: it needs a `ChangeSource`
+adapter and a `change.RegisterAll` wiring change, distinct from the inventory
+read tools delivered here. Tracked alongside the `correlate` cloud-trace adapter
+(§10.4) as the cloud cross-cutting follow-ups.

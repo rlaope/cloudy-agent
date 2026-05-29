@@ -60,11 +60,20 @@ func TestRegisterAll_RegistersExpectedToolNames(t *testing.T) {
 		"cloud.aws_xray_trace_summaries",
 		"cloud.aws_xray_batch_get_traces",
 		"cloud.aws_xray_service_graph",
+		"cloud.aws_rds_describe_instances",
+		"cloud.aws_lambda_list_functions",
+		"cloud.aws_eks_list_clusters",
 		"cloud.azure_monitor_metric_definitions",
 		"cloud.azure_monitor_metrics",
 		"cloud.azure_log_analytics_query",
 		"cloud.azure_appinsights_query",
+		"cloud.azure_sql_server_list",
+		"cloud.azure_functionapp_list",
+		"cloud.azure_aks_list",
 		"cloud.gcp_logging_read",
+		"cloud.gcp_sql_instances_list",
+		"cloud.gcp_run_services_list",
+		"cloud.gcp_container_clusters_list",
 	}
 	got := map[string]bool{}
 	for _, tl := range reg.List() {

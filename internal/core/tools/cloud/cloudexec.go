@@ -49,6 +49,10 @@ var allowedSubcommands = map[string]map[string]struct{}{
 		"xray get-trace-summaries": {},
 		"xray batch-get-traces":    {},
 		"xray get-service-graph":   {},
+		// Inventory / managed-service health (read-only Describe/List).
+		"rds describe-db-instances": {},
+		"lambda list-functions":     {},
+		"eks list-clusters":         {},
 	},
 	"az": {
 		"monitor metrics list":             {},
@@ -56,8 +60,18 @@ var allowedSubcommands = map[string]map[string]struct{}{
 		"monitor log-analytics query":      {},
 		// Application Insights KQL query (read-only; KQL cannot mutate).
 		"monitor app-insights query": {},
+		// Inventory / managed-service health (read-only list verbs).
+		"sql server list":  {},
+		"functionapp list": {},
+		"aks list":         {},
 	},
 	"gcloud": {
+		// Inventory / managed-service health (read-only list verbs). Unlike
+		// gcloud's absent metric/trace reads, these list commands are first-class
+		// read-only and JSON-capable.
+		"sql instances list":      {},
+		"run services list":       {},
+		"container clusters list": {},
 		// Cloud Logging read-only. `gcloud logging read` takes the filter as a
 		// trailing positional, so cloud tools emit `logging read` immediately
 		// followed by flags (--project …) and append the filter LAST — keeping
