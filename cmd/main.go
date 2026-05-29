@@ -26,6 +26,11 @@ import (
 )
 
 func main() {
+	// Export any persisted credentials before dispatch so EVERY command —
+	// the TUI and one-shot subcommands like `ask` — resolves provider keys
+	// and *_env config fields from ~/.cloudy/secrets. Previously this only ran
+	// inside bootTUI, so `cloudy ask` reported the key as unset.
+	_ = secrets.Load()
 	if err := cli.Run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, bootTUI); err != nil {
 		fmt.Fprintln(os.Stderr, "cloudy:", err)
 		os.Exit(1)
@@ -39,10 +44,6 @@ func bootTUI(stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, `cloudy: not a TTY — run cloudy ask "<prompt>" for one-shot mode`)
 		return nil
 	}
-
-	// Export any persisted credentials before building provider clients so
-	// that *_env config fields resolve correctly.
-	_ = secrets.Load()
 
 	// Detect first run: config file is absent when os.Stat returns not-exist.
 	cfgPath := config.Path()
