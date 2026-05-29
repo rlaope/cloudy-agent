@@ -38,6 +38,11 @@ type Options struct {
 	// ConfigPath is the path to config.yaml (used for future checks).
 	ConfigPath string
 
+	// KubeconfigPath is the Kubernetes kubeconfig to validate (the
+	// --kubeconfig flag). Empty falls back to clientcmd's defaults
+	// (KUBECONFIG / ~/.kube/config). This is NOT cloudy's config.yaml.
+	KubeconfigPath string
+
 	// ProfilePath is the path to profile.yaml.
 	ProfilePath string
 
