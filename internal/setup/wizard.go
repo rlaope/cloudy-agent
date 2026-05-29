@@ -650,8 +650,8 @@ func (m *WizardModel) parseAndStoreHint(line string) error {
 
 func (m *WizardModel) initFillIn() {
 	model := textinput.New()
-	model.Placeholder = "claude-3-5-sonnet-20241022"
-	model.SetValue("claude-3-5-sonnet-20241022")
+	model.Placeholder = "claude-opus-4-8"
+	model.SetValue("claude-opus-4-8")
 
 	tokens := textinput.New()
 	tokens.Placeholder = "100000 (0 = unlimited)"
