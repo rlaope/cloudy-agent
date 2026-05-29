@@ -161,7 +161,7 @@ TCP backends via in-process SPDY port-forward. A single
 `kubectl`-reachable cluster is enough — no VPN, no per-service
 ingress.
 
-### Tool surface (96 tools across 16 groups)
+### Tool surface (97 tools across 16 groups)
 
 Every probe the agent can call is a typed tool with a JSON schema.
 Tools self-register at boot — perf, eBPF, and DB groups also gate on
@@ -176,7 +176,7 @@ wired in your environment.
 | `trace` (7) | `tempo_get_trace`, `tempo_search`, `service_graph` *(Tempo metrics-generator service-graph edges)*, `route_red` *(Tempo metrics-generator per-route RED)*, `jaeger_services`, `jaeger_operations`, `jaeger_search_traces` |
 | `alert` (3) | `list_active`, `list_silences` *(Alertmanager v2)*, `list_rules` *(Prometheus rules API)* |
 | `gitops` (3) | `argo_list_apps`, `argo_app_status`, `argo_app_history` *(Argo CD v1 API)* |
-| `cloud` (8) | CloudWatch metrics: `aws_cw_list_metrics`, `aws_cw_get_metric_statistics`. CloudWatch Logs: `aws_logs_describe_groups`, `aws_logs_filter_events`, `aws_logs_insights_query` *(Logs Insights, start+poll)*. Azure Monitor: `azure_monitor_metric_definitions`, `azure_monitor_metrics`. Azure Log Analytics: `azure_log_analytics_query` *(KQL)*. Read-only via the operator's `aws`/`az` CLIs; no stored secrets. Registers when a `cloud_aws:` / `cloud_azure:` block is configured. GCP read is deferred (see `docs/RFC-CLOUD-OBSERVABILITY.md`) |
+| `cloud` (9) | CloudWatch metrics: `aws_cw_list_metrics`, `aws_cw_get_metric_statistics`. CloudWatch Logs: `aws_logs_describe_groups`, `aws_logs_filter_events`, `aws_logs_insights_query` *(Logs Insights, start+poll)*. Azure Monitor: `azure_monitor_metric_definitions`, `azure_monitor_metrics`. Azure Log Analytics: `azure_log_analytics_query` *(KQL)*. GCP Cloud Logging: `gcp_logging_read` *(`gcloud logging read`, Logging query language)*. Read-only via the operator's `aws`/`az`/`gcloud` CLIs; no stored secrets. Registers when a `cloud_aws:` / `cloud_gcp:` / `cloud_azure:` block is configured. GCP metric/trace read is deferred (see `docs/RFC-CLOUD-OBSERVABILITY.md`) |
 | `change` (1) | `recent` *(orchestrator-agnostic deploy / image / scale / rollout timeline across Kubernetes **and** Docker; registers when k8s or `docker_hosts` is available)* |
 | `metric` (1) | `container_stats` *(read-only Docker container CPU / mem / net / block-IO; k8s metrics live in `prom` + `k8s.top_*`; needs `docker_hosts`)* |
 | `correlate` (1) | `workload` *(cross-signal evidence timeline — change history + metric / log / trace symptoms — with a candidate-cause that aligns the earliest symptom to the change before it; folds in Argo CD sync)* |

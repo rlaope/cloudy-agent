@@ -2,13 +2,13 @@
 
 ## v0.5.0 — Unreleased
 
-### Added — Tool surface (45 → 96, 10 → 16 groups)
-- **Cloud observability group (`cloud`, 8 tools)** — read-only AWS + Azure
-  telemetry via the operator's already-configured `aws` / `az` CLIs. cloudy
-  stores no cloud secrets; credentials resolve from the CLI's own chain.
+### Added — Tool surface (45 → 97, 10 → 16 groups)
+- **Cloud observability group (`cloud`, 9 tools)** — read-only AWS + Azure + GCP
+  telemetry via the operator's already-configured `aws` / `az` / `gcloud` CLIs.
+  cloudy stores no cloud secrets; credentials resolve from the CLI's own chain.
   Read-only is re-established for the shell-out path (which bypasses the HTTP
   transport guard) by an argv-only `cloudexec` sub-command allowlist.
-  Configured via `cloud_aws:` / `cloud_azure:`. GCP read deferred.
+  Configured via `cloud_aws:` / `cloud_gcp:` / `cloud_azure:`.
   - **Metrics (Phase 1)** — `cloud.aws_cw_list_metrics`,
     `cloud.aws_cw_get_metric_statistics` (CloudWatch);
     `cloud.azure_monitor_metric_definitions`, `cloud.azure_monitor_metrics`
@@ -16,8 +16,12 @@
   - **Logs (Phase 2)** — `cloud.aws_logs_describe_groups`,
     `cloud.aws_logs_filter_events`, `cloud.aws_logs_insights_query`
     (CloudWatch Logs + Logs Insights start/poll);
-    `cloud.azure_log_analytics_query` (Azure Log Analytics KQL).
-  - Phase 0–2 of docs/RFC-CLOUD-OBSERVABILITY.md.
+    `cloud.azure_log_analytics_query` (Azure Log Analytics KQL);
+    `cloud.gcp_logging_read` (`gcloud logging read`, Logging query language).
+  - **GCP path locked** — Cloud Logging is the only clean read-only `gcloud`
+    signal; metric and trace reads stay deferred (gcloud exposes no
+    time-series or trace read command). See §9–§10 of the RFC.
+  - Phase 0–2 of docs/RFC-CLOUD-OBSERVABILITY.md (+ Phase 3 traces design).
 - **K8s workload tools (10)** — `list_deployments`, `list_statefulsets`,
   `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`,
   `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`.

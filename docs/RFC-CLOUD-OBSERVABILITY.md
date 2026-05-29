@@ -131,12 +131,14 @@ provider+account handles around the `cloudexec` helper, not SDK clients.
 
 ```
 internal/core/tools/cloud/
-├── register.go      // BuildClients(aws,gcp,azure) + RegisterAll + MarkSkipped("cloud", …)
-├── cloudexec.go     // argv-only exec, sub-command allowlist, JSON+timeout+byte-cap  ← security core
-├── cloudexec_test.go// asserts mutating sub-commands are rejected
-├── aws_metrics.go   // cloud.aws_cw_get_metric_data, cloud.aws_cw_list_metrics
-├── gcp_metrics.go   // cloud.gcp_monitoring_query
-└── azure_metrics.go // cloud.azure_monitor_metrics
+├── register.go    // BuildClients(aws,gcp,azure) + RegisterAll + MarkSkipped("cloud", …)
+├── cloudexec.go   // argv-only exec, sub-command allowlist, JSON+timeout+byte-cap  ← security core
+├── aws.go         // cloud.aws_cw_list_metrics, cloud.aws_cw_get_metric_statistics
+├── aws_logs.go    // cloud.aws_logs_{describe_groups,filter_events,insights_query}
+├── azure.go       // cloud.azure_monitor_{metric_definitions,metrics}
+├── azure_logs.go  // cloud.azure_log_analytics_query
+├── gcp_logs.go    // cloud.gcp_logging_read   (Cloud Logging only — see §9)
+└── *_test.go      // stub-runner unit tests; allowlist refuses mutating verbs
 ```
 
 ### 5.3 Wiring (`internal/wiring/tools.go`)
@@ -163,13 +165,16 @@ secret entry and no config edits**.
 - **Phase 1 — Metrics.** CloudWatch (`get-metric-data`, PromQL/Metrics
   Insights), Cloud Monitoring, Azure Monitor. Reuse `prom` mental model.
   *(this delivery)*
-- **Phase 2 — Logs.** *(delivered for AWS + Azure)* CloudWatch Logs
+- **Phase 2 — Logs.** *(delivered for AWS + Azure + GCP)* CloudWatch Logs
   (`describe-log-groups`, `filter-log-events`) + Logs Insights
   (`start-query`/`get-query-results`, wrapped synchronously); Azure Log
-  Analytics KQL (`az monitor log-analytics query`). GCP Cloud Logging deferred
-  with the rest of the GCP path.
-- **Phase 3 — Traces + topology.** X-Ray / Cloud Trace / App Insights → feed
-  `correlate`.
+  Analytics KQL (`az monitor log-analytics query`); **GCP Cloud Logging
+  (`gcloud logging read`, delivered) — see §9 for why logging is the only clean
+  read-only gcloud signal.**
+- **Phase 3 — Traces + topology.** *(designed, see §10)* AWS X-Ray and Azure
+  Application Insights are implementable read-only today; GCP Cloud Trace is
+  deferred for the same reason as GCP metrics (no read-only gcloud command).
+  Feeds `correlate`.
 - **Phase 4 — Inventory / managed-service health.** Describe/List (RDS,
   CloudSQL, Azure SQL; Lambda, CloudRun, Functions; EKS, GKE, AKS) → extend
   `change.recent` across cloud.
@@ -189,9 +194,89 @@ secret entry and no config edits**.
 
 ## 8. Open questions
 
-- GCP metric reads via `gcloud` are awkward (no clean PromQL CLI today) — may
-  need `gcloud monitoring` time-series list with server-side filters; confirm
-  the cleanest read-only invocation per provider during Phase 1.
+- ~~GCP metric reads via `gcloud` are awkward~~ **Resolved in §9.** `gcloud`
+  has no read-only time-series read at all; GCP delivers Cloud Logging only.
 - Multi-account/region fan-out ergonomics: one tool call per account vs an
-  account selector argument.
+  account selector argument. *(current: account selector arg, default when one
+  account is configured.)*
 - Caching CLI identity probes to avoid re-shelling on every discovery run.
+
+## 9. GCP path decision (locked)
+
+The original RFC flagged GCP metric reads as "awkward." Confirmed against the
+2026 `gcloud` reference: it is not awkward, it is **absent**.
+
+- **`gcloud monitoring`** manages dashboards / alerting policies / snoozes /
+  uptime checks — there is **no `time-series list` (metric data read)**
+  sub-command. Reading metric points requires the Monitoring API
+  (`projects.timeSeries.list`) directly.
+- **Cloud Trace** has no stable `gcloud trace` read command either; trace reads
+  go through the Trace API (`projects.traces.list`).
+- **`gcloud logging read`** *is* a clean, first-class read-only command with
+  JSON output and the Logging query language — directly analogous to
+  CloudWatch `filter-log-events`.
+
+**Decision:** wire **GCP Cloud Logging only** (`cloud.gcp_logging_read`), and
+keep GCP metric + trace **deferred**. We deliberately do **not** reach for the
+REST APIs with `gcloud auth print-access-token`, because that would:
+(a) break the "shell out to the operator's CLI, store no secrets" mechanism by
+putting a bearer token in cloudy's process, and (b) introduce a bespoke
+HTTP-signing path the other providers don't need. If GCP metric/trace coverage
+becomes a priority, the cleanest future option is a raw Monitoring/Trace API
+**GET** through cloudy's existing `transport/readonly.go` guard (which already
+whitelists GET), authenticated by a short-lived token — tracked as a separate
+RFC, not folded in here.
+
+**Allowlist impact:** `gcloud` is added to `allowedSubcommands` with exactly one
+entry, `logging read`. Because `gcloud logging read` takes its filter as a
+trailing positional, cloud tools emit `logging read` immediately followed by
+flags (`--project …`) and append the filter LAST, so `subcommandPrefix` stays
+`logging read` and the allowlist match is exact. A unit test asserts a mutating
+`gcloud compute instances delete` is refused.
+
+## 10. Phase 3 design — traces (AWS + Azure now, GCP deferred)
+
+Traces are the third Observability-2.0 signal and the natural feed into
+`correlate.workload`. Two of three providers expose clean read-only CLIs today.
+
+### 10.1 AWS X-Ray (implementable)
+
+All read-only, JSON output, fit the existing `awsAccount.baseArgs()` shape:
+
+- `cloud.aws_xray_trace_summaries` → `aws xray get-trace-summaries`
+  `--start-time --end-time [--filter-expression]`. Returns trace IDs + latency /
+  error / fault annotations for a window. (Times are epoch seconds.)
+- `cloud.aws_xray_batch_get_traces` → `aws xray batch-get-traces --trace-ids …`
+  (≤5 IDs/call). Full segment documents for IDs surfaced by the summary tool —
+  the documented two-step X-Ray workflow.
+- `cloud.aws_xray_service_graph` → `aws xray get-service-graph
+  --start-time --end-time`. Service-dependency topology + per-edge health; a
+  strong `correlate` input.
+
+Allowlist additions (read verbs only): `xray get-trace-summaries`,
+`xray batch-get-traces`, `xray get-service-graph`.
+
+### 10.2 Azure Application Insights (implementable)
+
+Reuses the Azure account + KQL pattern already proven by
+`cloud.azure_log_analytics_query`:
+
+- `cloud.azure_appinsights_query` → `az monitor app-insights query --app
+  --analytics-query [--offset]` against the `requests` / `dependencies` /
+  `traces` tables. KQL is read-only by construction.
+
+Allowlist addition: `monitor app-insights query` (the `az monitor
+app-insights` extension; degrades to a `MarkSkipped` reason if the extension
+isn't installed, matching the missing-CLI convention).
+
+### 10.3 GCP Cloud Trace (deferred)
+
+Same blocker as GCP metrics (§9): no read-only `gcloud trace` command. Deferred
+to the future Monitoring/Trace-API-GET RFC.
+
+### 10.4 Cross-cutting
+
+`correlate.workload` gains an optional cloud-trace symptom source; the X-Ray
+service graph and App Insights dependency table both map onto cloudy's existing
+topology mental model. **Phase 3 is design-only in this delivery** — the GCP
+path (this PR) lands first; X-Ray/App-Insights implementation is the next unit.
