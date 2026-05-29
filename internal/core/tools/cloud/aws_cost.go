@@ -42,7 +42,7 @@ func newAWSCostAndUsageTool(accts map[string]*awsAccount) tools.Tool {
 	})
 	return tools.Spec[args]{
 		Name:        "cloud.aws_ce_cost_and_usage",
-		Description: "Fetch AWS cost and usage over a date window from Cost Explorer (read-only `aws ce get-cost-and-usage`). Provide start/end dates, a granularity, and an optional group_by dimension (e.g. SERVICE) for cost-anomaly inquiry.",
+		Description: "Fetch AWS cost and usage over a date window from Cost Explorer (read-only `aws ce get-cost-and-usage`). Provide start/end dates, a granularity, and an optional group_by dimension (e.g. SERVICE) for cost-anomaly inquiry. The table shows the first metric; any additional metrics are in the raw result.",
 		Schema:      schema,
 		Run: func(ctx context.Context, a args) (tools.Observation, error) {
 			acct, err := pickAWS(accts, a.Account)

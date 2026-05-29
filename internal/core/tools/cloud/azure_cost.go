@@ -49,8 +49,10 @@ func newAzureConsumptionUsageTool(accts map[string]*azureAccount) tools.Tool {
 			if (a.StartDate == "") != (a.EndDate == "") {
 				return tools.Observation{}, fmt.Errorf("cloud.azure_consumption_usage: start_date and end_date must be set together")
 			}
-			if a.Top <= 0 || a.Top > 1000 {
+			if a.Top <= 0 {
 				a.Top = 50
+			} else if a.Top > 1000 {
+				a.Top = 1000
 			}
 			cmd := append([]string{"consumption", "usage", "list"}, acct.baseArgs()...)
 			cmd = append(cmd, "--top", strconv.Itoa(a.Top))
