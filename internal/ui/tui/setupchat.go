@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -34,6 +35,7 @@ type setupChat struct {
 	contexts      []string
 	selected      []string
 	findings      []discovery.Finding
+	cloudIDs      []discovery.CloudIdentity
 	groupKinds    []string // unique kinds in detection order
 	selectedKinds map[string]bool
 }
@@ -50,6 +52,7 @@ type setupScanDoneMsg struct {
 	findings []discovery.Finding
 	note     string
 	err      error
+	cloudIDs []discovery.CloudIdentity
 }
 
 // setupSaveDoneMsg arrives after the registry hot-swap and config
@@ -220,6 +223,7 @@ func (s *setupChat) Apply(msg tea.Msg) setupResult {
 			return setupResult{out: fmt.Sprintf("[scan error: %v]\n", m.err), done: true}
 		}
 		s.findings = m.findings
+		s.cloudIDs = m.cloudIDs
 		s.groupKinds = uniqueKinds(m.findings)
 		// Default-select every detected kind.
 		for _, k := range s.groupKinds {
@@ -262,11 +266,29 @@ func (s *setupChat) promptFindings(note string) string {
 	if note != "" {
 		fmt.Fprintf(&b, "  note: %s\n", note)
 	}
+	if len(s.cloudIDs) > 0 {
+		b.WriteString("  Cloud identities:\n")
+		for _, id := range s.cloudIDs {
+			b.WriteString(renderCloudIdentityRow(id))
+		}
+		b.WriteString("\n")
+	}
 	if len(s.groupKinds) == 0 {
 		b.WriteString("Discovered backends: (none)\n")
 		return b.String()
 	}
 	return b.String()
+}
+
+// renderCloudIdentityRow formats one CloudIdentity as an informational line.
+// Available identities show the principal and account; unavailable ones show
+// the reason. This mirrors the wizard's step-3 rendering.
+func renderCloudIdentityRow(id discovery.CloudIdentity) string {
+	provider := strings.ToUpper(string(id.Provider))
+	if id.Available {
+		return fmt.Sprintf("  ✓ %-5s  %s  (account %s)\n", provider, id.Principal, id.Account)
+	}
+	return fmt.Sprintf("  · %-5s  not detected (%s)\n", provider, id.Reason)
 }
 
 // --- async commands ---
@@ -276,11 +298,27 @@ func (s *setupChat) runScan() tea.Cmd {
 	kubeconfigPath := s.kubeconfig
 	contexts := append([]string(nil), s.selected...)
 	return func() tea.Msg {
-		findings, note, err := wiring.RunDiscovery(ctx, wiring.DiscoveryOptions{
-			KubeconfigPath: kubeconfigPath,
-			Contexts:       contexts,
-		})
-		return setupScanDoneMsg{findings: findings, note: note, err: err}
+		var (
+			findings []discovery.Finding
+			note     string
+			err      error
+			cloudIDs []discovery.CloudIdentity
+			wg       sync.WaitGroup
+		)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			findings, note, err = wiring.RunDiscovery(ctx, wiring.DiscoveryOptions{
+				KubeconfigPath: kubeconfigPath,
+				Contexts:       contexts,
+			})
+		}()
+		go func() {
+			defer wg.Done()
+			cloudIDs = discovery.ProbeCloudIdentities(ctx)
+		}()
+		wg.Wait()
+		return setupScanDoneMsg{findings: findings, note: note, err: err, cloudIDs: cloudIDs}
 	}
 }
 

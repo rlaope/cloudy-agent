@@ -103,6 +103,7 @@ type scanDoneMsg struct {
 	results  []ContextResult
 	findings []discovery.Finding
 	note     string
+	cloudIDs []discovery.CloudIdentity
 }
 
 type saveDoneMsg struct{ err error }
@@ -131,6 +132,7 @@ type WizardModel struct {
 	scanResults   []ContextResult
 	findings      []discovery.Finding
 	discoveryNote string
+	cloudIDs      []discovery.CloudIdentity
 
 	// Step 3 — discovered findings (grouped checkbox)
 	findingGroups      []findingGroup // sorted by Kind
@@ -235,6 +237,7 @@ func (m *WizardModel) Update(msg tea.Msg) (*WizardModel, tea.Cmd) {
 		m.scanResults = msg.results
 		m.findings = msg.findings
 		m.discoveryNote = msg.note
+		m.cloudIDs = msg.cloudIDs
 		m.initDiscovered()
 		m.step = stepDiscovered
 		return m, nil
@@ -317,12 +320,28 @@ func (m *WizardModel) startScan() tea.Cmd {
 	kubeconfigPath := m.opts.KubeconfigPath
 	contexts := append([]string(nil), m.selectedContexts...)
 	return func() tea.Msg {
-		results := scanContextsConcurrent(ctx, kubeconfigPath, contexts, 30*time.Second)
-		findings, note, _ := wiring.RunDiscovery(ctx, wiring.DiscoveryOptions{
-			KubeconfigPath: kubeconfigPath,
-			Contexts:       contexts,
-		})
-		return scanDoneMsg{results: results, findings: findings, note: note}
+		var (
+			results  []ContextResult
+			findings []discovery.Finding
+			note     string
+			cloudIDs []discovery.CloudIdentity
+			wg       sync.WaitGroup
+		)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			results = scanContextsConcurrent(ctx, kubeconfigPath, contexts, 30*time.Second)
+			findings, note, _ = wiring.RunDiscovery(ctx, wiring.DiscoveryOptions{
+				KubeconfigPath: kubeconfigPath,
+				Contexts:       contexts,
+			})
+		}()
+		go func() {
+			defer wg.Done()
+			cloudIDs = discovery.ProbeCloudIdentities(ctx)
+		}()
+		wg.Wait()
+		return scanDoneMsg{results: results, findings: findings, note: note, cloudIDs: cloudIDs}
 	}
 }
 
@@ -811,6 +830,13 @@ func (m *WizardModel) viewDiscovered() string {
 	if m.discoveryNote != "" {
 		b.WriteString("  note: " + m.discoveryNote + "\n\n")
 	}
+	if len(m.cloudIDs) > 0 {
+		b.WriteString("  Cloud identities:\n")
+		for _, id := range m.cloudIDs {
+			b.WriteString(renderCloudIdentityRow(id))
+		}
+		b.WriteString("\n")
+	}
 	if len(m.findingGroups) == 0 {
 		b.WriteString("  (no backends discovered)\n")
 		return b.String()
@@ -846,6 +872,14 @@ func (m *WizardModel) viewDiscovered() string {
 			detail = strings.Join(labels, ", ")
 		}
 		b.WriteString(fmt.Sprintf("%s%s %-10s (%d)  %s\n", cursor, checked, g.Kind, count, detail))
+	}
+	// Advisory: if any cloud identity is available, remind the operator that
+	// they can add a cloud_aws / cloud_gcp / cloud_azure block to cloudy.yaml.
+	for _, id := range m.cloudIDs {
+		if id.Available {
+			b.WriteString("\n  Tip: one or more cloud identities detected. Add a cloud_aws: / cloud_gcp: / cloud_azure: block to cloudy.yaml to enable cloud tools.\n")
+			break
+		}
 	}
 	return b.String()
 }
@@ -1205,6 +1239,17 @@ func scanContextsConcurrent(ctx context.Context, kubeconfigPath string, contexts
 	}
 	wg.Wait()
 	return results
+}
+
+// renderCloudIdentityRow formats one CloudIdentity as an informational line for
+// the setup wizard's step-3 view. Available identities show the principal and
+// account; unavailable ones show the reason so the operator can diagnose.
+func renderCloudIdentityRow(id discovery.CloudIdentity) string {
+	provider := strings.ToUpper(string(id.Provider))
+	if id.Available {
+		return fmt.Sprintf("  ✓ %-5s  %s  (account %s)\n", provider, id.Principal, id.Account)
+	}
+	return fmt.Sprintf("  · %-5s  not detected (%s)\n", provider, id.Reason)
 }
 
 // buildProfileFromScans assembles a config.Profile from scan results.

@@ -50,6 +50,9 @@ func Rebuild(cfg config.Config, opts RebuildOpts) (*tools.Registry, error) {
 		Alertmanager:   cfg.Alertmanager,
 		ArgoCD:         cfg.ArgoCD,
 		DockerHosts:    cfg.DockerHosts,
+		CloudAWS:       cfg.CloudAWS,
+		CloudGCP:       cfg.CloudGCP,
+		CloudAzure:     cfg.CloudAzure,
 	})
 	Replace(reg)
 	return reg, warn

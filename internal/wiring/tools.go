@@ -20,6 +20,7 @@ import (
 	"github.com/rlaope/cloudy/internal/core/tools"
 	"github.com/rlaope/cloudy/internal/core/tools/alert"
 	"github.com/rlaope/cloudy/internal/core/tools/change"
+	"github.com/rlaope/cloudy/internal/core/tools/cloud"
 	"github.com/rlaope/cloudy/internal/core/tools/correlate"
 	"github.com/rlaope/cloudy/internal/core/tools/db"
 	"github.com/rlaope/cloudy/internal/core/tools/dockerlog"
@@ -71,6 +72,11 @@ type Options struct {
 	ArgoCD []config.ArgoCDEndpoint
 	// DockerHosts is the list of Docker daemons cloudy may inspect.
 	DockerHosts []config.DockerHost
+	// CloudAWS / CloudGCP / CloudAzure are the cloud-provider accounts cloudy
+	// may query read-only via the operator's aws/gcloud/az CLIs.
+	CloudAWS   []config.AWSAccount
+	CloudGCP   []config.GCPProject
+	CloudAzure []config.AzureAccount
 }
 
 // KubeWarning is a non-fatal warning returned by BuildRegistry when the
@@ -121,6 +127,9 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 
 	gitopsClients, gitopsSkips := gitops.BuildClients(opts.ArgoCD)
 	gitops.RegisterAll(reg, gitopsClients, gitopsSkips)
+
+	cloudClients, cloudSkips := cloud.BuildClients(opts.CloudAWS, opts.CloudGCP, opts.CloudAzure)
+	cloud.RegisterAll(reg, cloudClients, cloudSkips)
 
 	perfClients, perfSkips := perf.BuildClients(opts.Pprof, opts.NodeInspectors)
 	perf.RegisterAll(reg, perfClients, perfSkips)
