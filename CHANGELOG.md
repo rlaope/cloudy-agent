@@ -45,8 +45,14 @@
     verbs (`sql/run/container … list`) are available and wired. See §9–§12 of
     the RFC.
   - Phases 0–5 of docs/RFC-CLOUD-OBSERVABILITY.md (AWS + Azure traces and cost;
-    GCP trace + cost deferred). Wiring cloud traces into `correlate` and cloud
-    audit into `change.recent` are the cross-cutting follow-ups.
+    GCP trace + cost deferred).
+  - **Cross-cutting: `correlate.workload` cloud-trace symptoms** — AWS X-Ray
+    error/slow traces (scoped to the workload via the `service(...)` filter) now
+    fold onto the correlate evidence timeline as `trace_error` / `trace_slow`
+    symptoms (Source `cloud_trace`), built by the wiring layer as a plain
+    `change.ChangeSource` so `correlate` stays decoupled from `cloud`. Azure App
+    Insights (needs an app id) and GCP Cloud Trace (no gcloud command) deferred.
+    Folding cloud audit logs into `change.recent` remains the other follow-up.
 - **K8s workload tools (10)** — `list_deployments`, `list_statefulsets`,
   `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`,
   `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`.

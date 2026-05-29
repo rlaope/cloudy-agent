@@ -13,12 +13,17 @@ import (
 
 // RegisterAll adds the correlate.workload tool to reg. The change sources are
 // fixed at registration: a k8s change source when k8sHub is non-nil, a docker
-// change source when dockerHub is non-nil, and an Argo CD sync source when at
-// least one Argo client is wired. The symptom backends (prom/logs/traces) are
-// threaded through so the tool can build metric/log/trace symptom sources from
-// per-call args at Run time. With no change source AND no symptom backend this
-// is a no-op — the wiring layer marks the "correlate" group skipped instead.
-func RegisterAll(reg *tools.Registry, k8sHub *k8sclient.Hub, dockerHub *dockerclient.Hub, argo map[string]*gitops.ArgoClient, prom map[string]*promclient.Client, logs tlog.Clients, traces trace.Clients) {
+// change source when dockerHub is non-nil, an Argo CD sync source when at least
+// one Argo client is wired, and a cloud-trace symptom source (cloudTrace) when
+// non-nil. The symptom backends (prom/logs/traces) are threaded through so the
+// tool can build metric/log/trace symptom sources from per-call args at Run
+// time. With no change source AND no symptom backend this is a no-op — the
+// wiring layer marks the "correlate" group skipped instead.
+//
+// cloudTrace is built by the wiring layer (cloud.NewTraceSymptomSource) and
+// passed in as a plain change.ChangeSource so this package does not depend on
+// the cloud package; nil means no AWS X-Ray account is configured.
+func RegisterAll(reg *tools.Registry, k8sHub *k8sclient.Hub, dockerHub *dockerclient.Hub, argo map[string]*gitops.ArgoClient, prom map[string]*promclient.Client, logs tlog.Clients, traces trace.Clients, cloudTrace change.ChangeSource) {
 	var sources []change.ChangeSource
 	if k8sHub != nil {
 		sources = append(sources, change.NewK8sSource(k8sHub))
@@ -28,6 +33,9 @@ func RegisterAll(reg *tools.Registry, k8sHub *k8sclient.Hub, dockerHub *dockercl
 	}
 	if src := newArgoSource(argo); src != nil {
 		sources = append(sources, src)
+	}
+	if cloudTrace != nil {
+		sources = append(sources, cloudTrace)
 	}
 	// Register when any change source OR any symptom backend exists; a
 	// symptom-only setup (e.g. prom + loki, no k8s/docker/argo) is still valid.
