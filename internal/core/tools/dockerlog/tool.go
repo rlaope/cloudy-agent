@@ -126,11 +126,11 @@ func (t *containerLogsTool) Run(ctx context.Context, raw json.RawMessage) (tools
 	var failures []string
 	matched := 0
 	for _, s := range summaries {
-		if !matchesWorkload(s, a.Workload) {
+		if !dockerclient.MatchesWorkload(s, a.Workload) {
 			continue
 		}
 		matched++
-		name := containerName(s)
+		name := dockerclient.DisplayName(s)
 
 		// A TTY container's log stream is raw (no stdcopy framing); inspect
 		// first so we only demultiplex the multiplexed (non-TTY) stream.
@@ -187,39 +187,4 @@ func parseSince(s string) (string, error) {
 		return "", fmt.Errorf("invalid since duration %q (e.g. \"15m\", \"2h\")", s)
 	}
 	return fmt.Sprintf("%d", time.Now().Add(-d).Unix()), nil
-}
-
-// matchesWorkload reports whether a container summary relates to workload.
-// Matching is case-insensitive and EXACT against the compose service/project
-// labels or a container name — substring matching is deliberately avoided so
-// "api" does not match "api-gateway". Mirrors metric/tool.go's semantics; the
-// small duplication keeps each tool group's internals unexported.
-func matchesWorkload(s container.Summary, workload string) bool {
-	if workload == "" {
-		return false
-	}
-	wl := strings.ToLower(workload)
-	for _, key := range []string{"com.docker.compose.service", "com.docker.compose.project"} {
-		if v, ok := s.Labels[key]; ok && strings.ToLower(v) == wl {
-			return true
-		}
-	}
-	for _, n := range s.Names {
-		if strings.ToLower(strings.TrimPrefix(n, "/")) == wl {
-			return true
-		}
-	}
-	return false
-}
-
-// containerName returns a stable display name for a summary: the first name
-// (slash-trimmed) when present, else the short container ID.
-func containerName(s container.Summary) string {
-	if len(s.Names) > 0 {
-		return strings.TrimPrefix(s.Names[0], "/")
-	}
-	if len(s.ID) > 12 {
-		return s.ID[:12]
-	}
-	return s.ID
 }
