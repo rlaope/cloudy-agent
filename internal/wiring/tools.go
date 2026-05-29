@@ -181,11 +181,16 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 	// backends (prom/loki/jaeger), since symptom-only setups are valid; skip the
 	// group only when none do. Reuses hub / dockerHub / Argo / prom / log /
 	// trace clients already built above.
+	// cloudTrace folds AWS X-Ray trace symptoms onto the correlate timeline;
+	// nil when no AWS account is configured. Built from the cloudClients already
+	// constructed above so an AWS-only setup still lights up correlate.
+	cloudTrace := cloud.NewTraceSymptomSource(cloudClients)
 	if hub == nil && dockerHub == nil && len(gitopsClients.Argo) == 0 &&
-		len(promClients) == 0 && len(logClients.Loki) == 0 && len(traceClients.Jaeger) == 0 {
-		reg.MarkSkipped("correlate", "no kubeconfig, docker hosts, Argo CD, Prometheus, Loki, or Jaeger endpoint configured")
+		len(promClients) == 0 && len(logClients.Loki) == 0 && len(traceClients.Jaeger) == 0 &&
+		cloudTrace == nil {
+		reg.MarkSkipped("correlate", "no kubeconfig, docker hosts, Argo CD, Prometheus, Loki, Jaeger, or AWS X-Ray endpoint configured")
 	} else {
-		correlate.RegisterAll(reg, hub, dockerHub, gitopsClients.Argo, promClients, logClients, traceClients)
+		correlate.RegisterAll(reg, hub, dockerHub, gitopsClients.Argo, promClients, logClients, traceClients, cloudTrace)
 	}
 
 	// Single Profile application point: namespace checker on the Hub plus

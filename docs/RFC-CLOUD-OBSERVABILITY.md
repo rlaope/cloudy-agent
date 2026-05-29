@@ -288,11 +288,19 @@ to the future Monitoring/Trace-API-GET RFC.
 
 ### 10.4 Cross-cutting
 
-`correlate.workload` gains an optional cloud-trace symptom source; the X-Ray
-service graph and App Insights dependency table both map onto cloudy's existing
-topology mental model. Wiring cloud traces into `correlate` is the remaining
-cross-cutting follow-up (the tools exist; the symptom-source adapter does not
-yet consume them).
+`correlate.workload` gains a cloud-trace symptom source (**delivered**):
+`cloud.NewTraceSymptomSource` runs `aws xray get-trace-summaries` scoped to the
+workload via the `service("<workload>")` filter and folds the earliest failing
+trace and the earliest slow trace onto the timeline as `trace_error` /
+`trace_slow` symptoms (Source `cloud_trace`), reusing the same symptom kinds
+`candidateCauseV2` already understands. The source is built in the wiring layer
+and passed into `correlate.RegisterAll` as a plain `change.ChangeSource`, so the
+`correlate` package does not depend on the `cloud` package. **AWS X-Ray only**:
+Azure Application Insights needs an explicit app id (not derivable from a
+workload name) and GCP Cloud Trace has no read-only `gcloud` command — both are
+deferred, mirroring how the Jaeger `traceSource` deferred Tempo. The X-Ray
+service-graph tool remains available for explicit topology queries; only the
+trace-summaries path feeds `correlate` automatically.
 
 ## 11. Phase 4 — inventory / managed-service health (delivered, all three providers)
 
