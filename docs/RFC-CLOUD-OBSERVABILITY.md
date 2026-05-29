@@ -330,13 +330,35 @@ counterparts (`rds delete-db-instance`, `eks delete-cluster`,
 `sql instances delete`, `container clusters delete`, `aks delete`) are refused
 before exec.
 
-### 11.1 Cross-cutting (still open)
+### 11.1 Cross-cutting — `change.recent` cloud audit (delivered, all three providers)
 
-Extending `change.recent` across cloud audit logs (CloudTrail `LookupEvents`,
-Cloud Audit Logs, Azure Activity Log) is deferred: it needs a `ChangeSource`
-adapter and a `change.RegisterAll` wiring change, distinct from the inventory
-read tools delivered here. Tracked alongside the `correlate` cloud-trace adapter
-(§10.4) as the cloud cross-cutting follow-ups.
+`change.recent` now folds cloud control-plane audit events onto its timeline via
+`cloud.NewAuditChangeSource`, a `change.ChangeSource` built in the wiring layer
+and passed into `change.RegisterAll` (so `change` keeps no dependency on
+`cloud`). Events carry Kind `cloud_audit` and a provider-tagged Source
+(`cloud_audit_aws` / `cloud_audit_gcp` / `cloud_audit_azure`):
+
+- **AWS CloudTrail** — `cloudtrail lookup-events`, filtered server-side to the
+  workload via the `ResourceName` lookup attribute. (EventTime decodes from the
+  JSON epoch-number form, tolerating an RFC3339 string too.)
+- **GCP Cloud Audit Logs** — reuses the already-allowlisted `gcloud logging
+  read` with a `logName:"cloudaudit.googleapis.com" AND
+  protoPayload.resourceName:"<workload>"` filter (trailing positional, so the
+  allowlist prefix stays `logging read`).
+- **Azure Activity Log** — `monitor activity-log list` over the window, filtered
+  **client-side** (the CLI has no free-text resource-name filter) by matching
+  the workload against each record's resource id or operation name.
+
+Each provider is queried independently and a per-provider failure is tolerated
+as long as another yields events. Allowlist additions (read verbs only):
+`cloudtrail lookup-events` (aws), `monitor activity-log list` (az); GCP needs no
+new entry. A test asserts the mutating counterparts (`cloudtrail delete-trail`,
+`monitor activity-log alert create`) are refused before exec.
+
+The remaining cloud cross-cutting idea — also feeding these audit events into
+`correlate.workload` as candidate *causes* — is a natural next step (it would
+add `cloud_audit` to `correlate`'s `changeKinds`), but is intentionally left out
+here to keep `change.recent` and `correlate` changes separate.
 
 ## 12. Phase 5 — FinOps / cost (AWS + Azure delivered, GCP deferred)
 
