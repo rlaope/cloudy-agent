@@ -37,10 +37,18 @@ var allowedSubcommands = map[string]map[string]struct{}{
 		"cloudwatch list-metrics":          {},
 		"cloudwatch get-metric-statistics": {},
 		"cloudwatch get-metric-data":       {},
+		// CloudWatch Logs (read-only): describe + filter, plus Logs Insights
+		// start-query/get-query-results. logs:StartQuery is a read permission —
+		// it executes an ephemeral query job, it does not mutate any resource.
+		"logs describe-log-groups": {},
+		"logs filter-log-events":   {},
+		"logs start-query":         {},
+		"logs get-query-results":   {},
 	},
 	"az": {
 		"monitor metrics list":             {},
 		"monitor metrics list-definitions": {},
+		"monitor log-analytics query":      {},
 	},
 	// gcloud intentionally omitted: it has no clean read-only time-series read
 	// command yet (see RFC open questions). GCP metric tooling is deferred.
