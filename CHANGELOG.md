@@ -2,7 +2,7 @@
 
 ## v0.5.0 — Unreleased
 
-### Added — Tool surface (45 → 69, 10 → 15 groups)
+### Added — Tool surface (45 → 88, 10 → 15 groups)
 - **K8s workload tools (10)** — `list_deployments`, `list_statefulsets`,
   `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`,
   `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`.
