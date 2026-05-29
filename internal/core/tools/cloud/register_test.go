@@ -57,9 +57,13 @@ func TestRegisterAll_RegistersExpectedToolNames(t *testing.T) {
 		"cloud.aws_logs_describe_groups",
 		"cloud.aws_logs_filter_events",
 		"cloud.aws_logs_insights_query",
+		"cloud.aws_xray_trace_summaries",
+		"cloud.aws_xray_batch_get_traces",
+		"cloud.aws_xray_service_graph",
 		"cloud.azure_monitor_metric_definitions",
 		"cloud.azure_monitor_metrics",
 		"cloud.azure_log_analytics_query",
+		"cloud.azure_appinsights_query",
 		"cloud.gcp_logging_read",
 	}
 	got := map[string]bool{}
