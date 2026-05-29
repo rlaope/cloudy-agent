@@ -161,7 +161,7 @@ TCP backends via in-process SPDY port-forward. A single
 `kubectl`-reachable cluster is enough — no VPN, no per-service
 ingress.
 
-### Tool surface (71 tools across 15 groups)
+### Tool surface (88 tools across 15 groups)
 
 Every probe the agent can call is a typed tool with a JSON schema.
 Tools self-register at boot — perf, eBPF, and DB groups also gate on
@@ -180,7 +180,7 @@ wired in your environment.
 | `metric` (1) | `container_stats` *(read-only Docker container CPU / mem / net / block-IO; k8s metrics live in `prom` + `k8s.top_*`; needs `docker_hosts`)* |
 | `correlate` (1) | `workload` *(cross-signal evidence timeline — change history + metric / log / trace symptoms — with a candidate-cause that aligns the earliest symptom to the change before it; folds in Argo CD sync)* |
 | `db` (18) | Postgres: `pg_version`, `pg_stat_activity`, `pg_stat_database`, `pg_stat_replication`, `pg_locks`, `pg_top_table_size`. MySQL: `mysql_version`, `mysql_processlist`, `mysql_global_status`, `mysql_global_variables`, `mysql_engine_innodb_status`, `mysql_top_table_size`. Redis: `redis_info`, `redis_dbsize`, `redis_scan`, `redis_inspect_key`, `redis_slowlog`, `redis_client_list` |
-| `perf` (4) | `rbspy_dump` (Ruby, always-on), `go_pprof_cpu`, `linux_perf_record`, `v8_inspector_cpu_profile` *(last three conditional on host binaries)* |
+| `perf` (9) | `rbspy_dump` (Ruby, always-on), `go_pprof_cpu`, `go_pprof_goroutine`, `go_pprof_heap`, `go_pprof_allocs`, `go_pprof_threadcreate` *(Go pprof; gated on `pprof` endpoints)*, `v8_inspector_targets`, `v8_inspector_cpu_profile` *(Node.js V8; gated on `node_inspectors`)*, `linux_perf_record` *(gated on host `perf` binary)* |
 | `jvm` (4) | `jstat_gc`, `jcmd_gc`, `jcmd_thread_dump`, `async_profile` |
 | `py` (2) | `spy_dump`, `spy_top_snapshot` |
 | `gpu` (2) | `nvidia_smi`, `dcgm_metrics` |
