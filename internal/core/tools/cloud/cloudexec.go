@@ -53,6 +53,8 @@ var allowedSubcommands = map[string]map[string]struct{}{
 		"rds describe-db-instances": {},
 		"lambda list-functions":     {},
 		"eks list-clusters":         {},
+		// FinOps / cost (read-only): Cost Explorer get-cost-and-usage.
+		"ce get-cost-and-usage": {},
 	},
 	"az": {
 		"monitor metrics list":             {},
@@ -64,6 +66,8 @@ var allowedSubcommands = map[string]map[string]struct{}{
 		"sql server list":  {},
 		"functionapp list": {},
 		"aks list":         {},
+		// FinOps / cost (read-only): consumption usage details.
+		"consumption usage list": {},
 	},
 	"gcloud": {
 		// Inventory / managed-service health (read-only list verbs). Unlike
