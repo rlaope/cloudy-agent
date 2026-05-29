@@ -22,6 +22,8 @@ func TestCloudExec_RejectsMutatingSubcommand(t *testing.T) {
 		{"ec2", "terminate-instances", "--instance-ids", "i-0abc"},
 		{"cloudwatch", "put-metric-alarm", "--alarm-name", "x"},
 		{"cloudwatch", "delete-alarms"},
+		{"logs", "delete-log-group", "--log-group-name", "x"},
+		{"logs", "put-log-events", "--log-group-name", "x"},
 	}
 	for _, args := range mutating {
 		_, err := CloudExec(context.Background(), "aws", args)
@@ -70,6 +72,31 @@ func TestCloudExec_AllowsReadOnlySubcommand(t *testing.T) {
 	}
 	if gotBin != "aws" || len(gotArgs) != len(args) {
 		t.Errorf("runner got (%q, %v), want (aws, %v)", gotBin, gotArgs, args)
+	}
+}
+
+// TestCloudExec_AllowsLogReadVerbs confirms the Phase-2 read-only log verbs are
+// allowlisted across both clouds.
+func TestCloudExec_AllowsLogReadVerbs(t *testing.T) {
+	cloudExecRunner = func(_ context.Context, _ string, _ []string) ([]byte, error) {
+		return []byte(`[]`), nil
+	}
+	t.Cleanup(func() { cloudExecRunner = runCloudExec })
+
+	allowed := []struct {
+		bin  string
+		args []string
+	}{
+		{"aws", []string{"logs", "describe-log-groups", "--limit", "1"}},
+		{"aws", []string{"logs", "filter-log-events", "--log-group-name", "x"}},
+		{"aws", []string{"logs", "start-query", "--query-string", "fields @message"}},
+		{"aws", []string{"logs", "get-query-results", "--query-id", "q1"}},
+		{"az", []string{"monitor", "log-analytics", "query", "--workspace", "w", "--analytics-query", "X"}},
+	}
+	for _, c := range allowed {
+		if _, err := CloudExec(context.Background(), c.bin, c.args); err != nil {
+			t.Errorf("CloudExec(%s %v) should be allowed, got: %v", c.bin, c.args, err)
+		}
 	}
 }
 

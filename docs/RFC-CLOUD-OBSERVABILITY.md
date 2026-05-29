@@ -163,8 +163,11 @@ secret entry and no config edits**.
 - **Phase 1 — Metrics.** CloudWatch (`get-metric-data`, PromQL/Metrics
   Insights), Cloud Monitoring, Azure Monitor. Reuse `prom` mental model.
   *(this delivery)*
-- **Phase 2 — Logs.** CloudWatch Logs Insights / Cloud Logging / Log
-  Analytics (KQL).
+- **Phase 2 — Logs.** *(delivered for AWS + Azure)* CloudWatch Logs
+  (`describe-log-groups`, `filter-log-events`) + Logs Insights
+  (`start-query`/`get-query-results`, wrapped synchronously); Azure Log
+  Analytics KQL (`az monitor log-analytics query`). GCP Cloud Logging deferred
+  with the rest of the GCP path.
 - **Phase 3 — Traces + topology.** X-Ray / Cloud Trace / App Insights → feed
   `correlate`.
 - **Phase 4 — Inventory / managed-service health.** Describe/List (RDS,
