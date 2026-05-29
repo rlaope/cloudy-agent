@@ -2,7 +2,16 @@
 
 ## v0.5.0 — Unreleased
 
-### Added — Tool surface (45 → 88, 10 → 15 groups)
+### Added — Tool surface (45 → 92, 10 → 16 groups)
+- **Cloud observability group (`cloud`, 4 tools)** — read-only AWS CloudWatch
+  (`cloud.aws_cw_list_metrics`, `cloud.aws_cw_get_metric_statistics`) and Azure
+  Monitor (`cloud.azure_monitor_metric_definitions`, `cloud.azure_monitor_metrics`)
+  via the operator's already-configured `aws` / `az` CLIs. cloudy stores no
+  cloud secrets; credentials resolve from the CLI's own chain. Read-only is
+  re-established for the shell-out path (which bypasses the HTTP transport
+  guard) by an argv-only `cloudexec` sub-command allowlist. Configured via
+  `cloud_aws:` / `cloud_azure:`. GCP metric read deferred. Phase 0+1 of
+  docs/RFC-CLOUD-OBSERVABILITY.md.
 - **K8s workload tools (10)** — `list_deployments`, `list_statefulsets`,
   `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`,
   `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`.

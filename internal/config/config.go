@@ -77,6 +77,20 @@ type Config struct {
 	// cloudy never starts, stops, creates, or removes containers.
 	DockerHosts []DockerHost `yaml:"docker_hosts,omitempty"`
 
+	// CloudAWS is the list of AWS accounts/regions cloudy may query read-only
+	// via the operator's already-configured `aws` CLI. cloudy stores no AWS
+	// secrets — credentials resolve from the CLI's own chain.
+	CloudAWS []AWSAccount `yaml:"cloud_aws,omitempty"`
+
+	// CloudGCP is the list of GCP projects. Parsed and surfaced today; the
+	// metric query tool is deferred (the `gcloud` CLI has no clean read-only
+	// time-series command — see docs/RFC-CLOUD-OBSERVABILITY.md).
+	CloudGCP []GCPProject `yaml:"cloud_gcp,omitempty"`
+
+	// CloudAzure is the list of Azure subscriptions cloudy may query read-only
+	// via the operator's already-configured `az` CLI.
+	CloudAzure []AzureAccount `yaml:"cloud_azure,omitempty"`
+
 	// Safety contains guardrails that bound what the agent is allowed to do.
 	Safety SafetyConfig `yaml:"safety"`
 
@@ -210,6 +224,53 @@ type DockerHost struct {
 
 	// Host is the Docker daemon endpoint (unix socket or tcp address).
 	Host string `yaml:"host"`
+}
+
+// AWSAccount describes one AWS account/region cloudy may query read-only by
+// shelling out to the operator's `aws` CLI. cloudy stores no AWS secrets:
+// credentials resolve from the CLI's own chain (env vars, SSO, assume-role,
+// instance/workload identity). Attach a read-only IAM policy to the principal
+// (ReadOnlyAccess, or scoped cloudwatch:GetMetricData / cloudwatch:ListMetrics
+// / cloudwatch:GetMetricStatistics). The CLI sub-command allowlist in
+// internal/core/tools/cloud/cloudexec.go is the read-only boundary for the
+// shell-out path, which bypasses the HTTP transport guard.
+type AWSAccount struct {
+	// Name is a human-readable label used as the tool's `account` argument key.
+	Name string `yaml:"name"`
+
+	// Region is the AWS region (e.g. "us-east-1"), passed as `aws --region`.
+	Region string `yaml:"region"`
+
+	// Profile is the named credentials profile, passed as `aws --profile`
+	// (optional; empty uses the CLI's default credential resolution).
+	Profile string `yaml:"profile,omitempty"`
+}
+
+// GCPProject describes one GCP project. Config is accepted today so the shape
+// is stable, but the metric query tool is not yet wired (the `gcloud` CLI has
+// no clean read-only time-series read command).
+type GCPProject struct {
+	// Name is a human-readable label.
+	Name string `yaml:"name"`
+
+	// ProjectID is the GCP project id.
+	ProjectID string `yaml:"project_id"`
+
+	// Configuration is the named gcloud configuration, passed as
+	// `gcloud --configuration` (optional).
+	Configuration string `yaml:"configuration,omitempty"`
+}
+
+// AzureAccount describes one Azure subscription cloudy may query read-only by
+// shelling out to the operator's `az` CLI. cloudy stores no Azure secrets;
+// credentials resolve from the CLI's own session. Attach the `Monitoring
+// Reader` + `Reader` roles to the principal.
+type AzureAccount struct {
+	// Name is a human-readable label used as the tool's `account` argument key.
+	Name string `yaml:"name"`
+
+	// SubscriptionID is the Azure subscription id, passed as `az --subscription`.
+	SubscriptionID string `yaml:"subscription_id"`
 }
 
 // SafetyConfig contains guardrails that bound agent behaviour.
