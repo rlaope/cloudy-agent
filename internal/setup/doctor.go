@@ -23,8 +23,9 @@ type Check struct {
 func Doctor(ctx context.Context, opts Options) ([]Check, error) {
 	var checks []Check
 
-	// 1. Kubeconfig parseable.
-	checks = append(checks, checkKubeconfig(opts.ConfigPath))
+	// 1. Kubeconfig parseable. Validate the Kubernetes kubeconfig (NOT
+	// cloudy's config.yaml) — empty path falls back to clientcmd defaults.
+	checks = append(checks, checkKubeconfig(opts.KubeconfigPath))
 
 	// 2. Profile file exists and is valid (reuse EnsureReady logic).
 	gateResult, err := EnsureReady(ctx, ModeOneShot, opts)

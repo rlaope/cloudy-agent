@@ -31,8 +31,9 @@ func (doctorCmd) Run(ctx context.Context, args []string, stdout, stderr io.Write
 		return err
 	}
 	checks, err := setup.Doctor(ctx, setup.Options{
-		ConfigPath:  config.Path(),
-		ProfilePath: config.ProfilePath(),
+		ConfigPath:     config.Path(),
+		KubeconfigPath: opts.base.kubeconfig,
+		ProfilePath:    config.ProfilePath(),
 	})
 	if err != nil {
 		return errf("doctor: %w", err)
