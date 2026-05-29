@@ -111,12 +111,25 @@ func TestArgoSource_RecentChanges(t *testing.T) {
 		}
 	})
 
-	t.Run("ambiguous endpoint errors when context empty", func(t *testing.T) {
-		src := &argoSource{clients: map[string]argoHistory{
-			"a": &mockArgoHistory{}, "b": &mockArgoHistory{},
+	t.Run("multiple endpoints resolve to the deterministic default", func(t *testing.T) {
+		// correlate has no endpoint argument, so multiple endpoints must not
+		// error: PickDefaultEndpoint picks the first by sorted name ("a").
+		a := &mockArgoHistory{entries: []gitops.ArgoHistoryEntry{
+			{Revision: "from-a", DeployedAt: "2026-05-28T12:00:00Z"},
 		}}
-		if _, err := src.RecentChanges(context.Background(), change.ChangeQuery{Workload: "app"}); err == nil {
-			t.Fatal("expected error selecting among multiple endpoints with empty context")
+		b := &mockArgoHistory{entries: []gitops.ArgoHistoryEntry{
+			{Revision: "from-b", DeployedAt: "2026-05-28T12:00:00Z"},
+		}}
+		src := &argoSource{clients: map[string]argoHistory{"a": a, "b": b}}
+		got, err := src.RecentChanges(context.Background(), change.ChangeQuery{Workload: "app"})
+		if err != nil {
+			t.Fatalf("RecentChanges should not error with multiple endpoints: %v", err)
+		}
+		if a.gotApp != "app" || b.gotApp != "" {
+			t.Errorf("expected only the sorted-first endpoint 'a' to be queried; a.gotApp=%q b.gotApp=%q", a.gotApp, b.gotApp)
+		}
+		if len(got) != 1 || got[0].After != "from-a" {
+			t.Fatalf("expected the 'a' endpoint's history, got %+v", got)
 		}
 	})
 }
