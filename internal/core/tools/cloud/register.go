@@ -108,10 +108,12 @@ func RegisterAll(reg *tools.Registry, c Clients, skipReasons []string) {
 	if len(c.AWS) > 0 {
 		reg.MustRegister(newAWSMetricTools(c.AWS)...)
 		reg.MustRegister(newAWSLogTools(c.AWS)...)
+		reg.MustRegister(newAWSTraceTools(c.AWS)...)
 	}
 	if len(c.Azure) > 0 {
 		reg.MustRegister(newAzureMetricTools(c.Azure)...)
 		reg.MustRegister(newAzureLogTools(c.Azure)...)
+		reg.MustRegister(newAzureTraceTools(c.Azure)...)
 	}
 	if len(c.GCP) > 0 {
 		reg.MustRegister(newGCPLogTools(c.GCP)...)

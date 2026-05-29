@@ -133,12 +133,14 @@ provider+account handles around the `cloudexec` helper, not SDK clients.
 internal/core/tools/cloud/
 ├── register.go    // BuildClients(aws,gcp,azure) + RegisterAll + MarkSkipped("cloud", …)
 ├── cloudexec.go   // argv-only exec, sub-command allowlist, JSON+timeout+byte-cap  ← security core
-├── aws.go         // cloud.aws_cw_list_metrics, cloud.aws_cw_get_metric_statistics
-├── aws_logs.go    // cloud.aws_logs_{describe_groups,filter_events,insights_query}
-├── azure.go       // cloud.azure_monitor_{metric_definitions,metrics}
-├── azure_logs.go  // cloud.azure_log_analytics_query
-├── gcp_logs.go    // cloud.gcp_logging_read   (Cloud Logging only — see §9)
-└── *_test.go      // stub-runner unit tests; allowlist refuses mutating verbs
+├── aws.go              // cloud.aws_cw_list_metrics, cloud.aws_cw_get_metric_statistics
+├── aws_logs.go         // cloud.aws_logs_{describe_groups,filter_events,insights_query}
+├── aws_xray.go         // cloud.aws_xray_{trace_summaries,batch_get_traces,service_graph}
+├── azure.go            // cloud.azure_monitor_{metric_definitions,metrics}
+├── azure_logs.go       // cloud.azure_log_analytics_query
+├── azure_appinsights.go// cloud.azure_appinsights_query
+├── gcp_logs.go         // cloud.gcp_logging_read   (Cloud Logging only — see §9)
+└── *_test.go           // stub-runner unit tests; allowlist refuses mutating verbs
 ```
 
 ### 5.3 Wiring (`internal/wiring/tools.go`)
@@ -171,10 +173,10 @@ secret entry and no config edits**.
   Analytics KQL (`az monitor log-analytics query`); **GCP Cloud Logging
   (`gcloud logging read`, delivered) — see §9 for why logging is the only clean
   read-only gcloud signal.**
-- **Phase 3 — Traces + topology.** *(designed, see §10)* AWS X-Ray and Azure
-  Application Insights are implementable read-only today; GCP Cloud Trace is
-  deferred for the same reason as GCP metrics (no read-only gcloud command).
-  Feeds `correlate`.
+- **Phase 3 — Traces + topology.** *(delivered for AWS + Azure, see §10)* AWS
+  X-Ray (trace summaries / batch-get-traces / service-graph) and Azure
+  Application Insights KQL; GCP Cloud Trace deferred for the same reason as GCP
+  metrics (no read-only gcloud command). Feeds `correlate`.
 - **Phase 4 — Inventory / managed-service health.** Describe/List (RDS,
   CloudSQL, Azure SQL; Lambda, CloudRun, Functions; EKS, GKE, AKS) → extend
   `change.recent` across cloud.
@@ -234,12 +236,13 @@ flags (`--project …`) and append the filter LAST, so `subcommandPrefix` stays
 `logging read` and the allowlist match is exact. A unit test asserts a mutating
 `gcloud compute instances delete` is refused.
 
-## 10. Phase 3 design — traces (AWS + Azure now, GCP deferred)
+## 10. Phase 3 — traces (AWS + Azure delivered, GCP deferred)
 
 Traces are the third Observability-2.0 signal and the natural feed into
-`correlate.workload`. Two of three providers expose clean read-only CLIs today.
+`correlate.workload`. Two of three providers expose clean read-only CLIs today;
+both are now delivered.
 
-### 10.1 AWS X-Ray (implementable)
+### 10.1 AWS X-Ray (delivered)
 
 All read-only, JSON output, fit the existing `awsAccount.baseArgs()` shape:
 
@@ -256,18 +259,19 @@ All read-only, JSON output, fit the existing `awsAccount.baseArgs()` shape:
 Allowlist additions (read verbs only): `xray get-trace-summaries`,
 `xray batch-get-traces`, `xray get-service-graph`.
 
-### 10.2 Azure Application Insights (implementable)
+### 10.2 Azure Application Insights (delivered)
 
 Reuses the Azure account + KQL pattern already proven by
 `cloud.azure_log_analytics_query`:
 
-- `cloud.azure_appinsights_query` → `az monitor app-insights query --app
-  --analytics-query [--offset]` against the `requests` / `dependencies` /
-  `traces` tables. KQL is read-only by construction.
+- `cloud.azure_appinsights_query` → `az monitor app-insights query --apps
+  --analytics-query [--offset | --start-time/--end-time] [--resource-group]`
+  against the `requests` / `dependencies` / `traces` tables. KQL is read-only by
+  construction; the raw `{tables:[{rows}]}` response is surfaced.
 
 Allowlist addition: `monitor app-insights query` (the `az monitor
-app-insights` extension; degrades to a `MarkSkipped` reason if the extension
-isn't installed, matching the missing-CLI convention).
+app-insights` extension auto-installs on first use; a missing extension surfaces
+as a tool error, matching the missing-CLI convention).
 
 ### 10.3 GCP Cloud Trace (deferred)
 
@@ -278,5 +282,6 @@ to the future Monitoring/Trace-API-GET RFC.
 
 `correlate.workload` gains an optional cloud-trace symptom source; the X-Ray
 service graph and App Insights dependency table both map onto cloudy's existing
-topology mental model. **Phase 3 is design-only in this delivery** — the GCP
-path (this PR) lands first; X-Ray/App-Insights implementation is the next unit.
+topology mental model. Wiring cloud traces into `correlate` is the remaining
+cross-cutting follow-up (the tools exist; the symptom-source adapter does not
+yet consume them).

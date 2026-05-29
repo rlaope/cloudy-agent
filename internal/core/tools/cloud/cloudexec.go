@@ -44,11 +44,18 @@ var allowedSubcommands = map[string]map[string]struct{}{
 		"logs filter-log-events":   {},
 		"logs start-query":         {},
 		"logs get-query-results":   {},
+		// X-Ray traces (read-only): trace summaries + full segments + the
+		// service-dependency graph. All are GetXxx APIs — no mutation.
+		"xray get-trace-summaries": {},
+		"xray batch-get-traces":    {},
+		"xray get-service-graph":   {},
 	},
 	"az": {
 		"monitor metrics list":             {},
 		"monitor metrics list-definitions": {},
 		"monitor log-analytics query":      {},
+		// Application Insights KQL query (read-only; KQL cannot mutate).
+		"monitor app-insights query": {},
 	},
 	"gcloud": {
 		// Cloud Logging read-only. `gcloud logging read` takes the filter as a
