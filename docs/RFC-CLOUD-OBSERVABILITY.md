@@ -137,10 +137,12 @@ internal/core/tools/cloud/
 ├── aws_logs.go         // cloud.aws_logs_{describe_groups,filter_events,insights_query}
 ├── aws_xray.go         // cloud.aws_xray_{trace_summaries,batch_get_traces,service_graph}
 ├── aws_inventory.go    // cloud.aws_{rds_describe_instances,lambda_list_functions,eks_list_clusters}
+├── aws_cost.go         // cloud.aws_ce_cost_and_usage
 ├── azure.go            // cloud.azure_monitor_{metric_definitions,metrics}
 ├── azure_logs.go       // cloud.azure_log_analytics_query
 ├── azure_appinsights.go// cloud.azure_appinsights_query
 ├── azure_inventory.go  // cloud.azure_{sql_server_list,functionapp_list,aks_list}
+├── azure_cost.go       // cloud.azure_consumption_usage
 ├── gcp_logs.go         // cloud.gcp_logging_read   (Cloud Logging only — see §9)
 ├── gcp_inventory.go    // cloud.gcp_{sql_instances_list,run_services_list,container_clusters_list}
 └── *_test.go           // stub-runner unit tests; allowlist refuses mutating verbs
@@ -184,8 +186,10 @@ secret entry and no config edits**.
   Describe/List (RDS, CloudSQL, Azure SQL; Lambda, CloudRun, Functions; EKS,
   GKE, AKS). Extending `change.recent` across cloud (CloudTrail / Cloud Audit
   Logs / Activity Log) remains the cross-cutting follow-up.
-- **Phase 5 — FinOps / cost.** Cost Explorer / Billing / Cost Management
-  (read-only) → cost-anomaly inquiry.
+- **Phase 5 — FinOps / cost.** *(delivered for AWS + Azure, see §12)* Cost
+  Explorer (`aws ce get-cost-and-usage`) and Azure consumption usage
+  (`az consumption usage list`) → cost-anomaly inquiry. GCP cost deferred (no
+  clean `gcloud` cost-data read).
 - **Cross-cutting.** `correlate.workload` ingests cloud symptoms;
   `change.recent` ingests CloudTrail `LookupEvents` / Cloud Audit Logs /
   Azure Activity Log.
@@ -325,3 +329,47 @@ Cloud Audit Logs, Azure Activity Log) is deferred: it needs a `ChangeSource`
 adapter and a `change.RegisterAll` wiring change, distinct from the inventory
 read tools delivered here. Tracked alongside the `correlate` cloud-trace adapter
 (§10.4) as the cloud cross-cutting follow-ups.
+
+## 12. Phase 5 — FinOps / cost (AWS + Azure delivered, GCP deferred)
+
+Cost-as-a-signal closes the observability loop: a cost spike is often the first
+or only symptom of a runaway workload. Two of three providers expose a clean
+read-only cost CLI today.
+
+### 12.1 AWS Cost Explorer (delivered)
+
+- `cloud.aws_ce_cost_and_usage` → `aws ce get-cost-and-usage
+  --time-period Start=…,End=… --granularity {DAILY|MONTHLY|HOURLY}
+  --metrics … [--group-by Type=DIMENSION,Key=…]`. The agent supplies a date
+  window, granularity, metric(s) (default `UnblendedCost`), and an optional
+  group-by dimension (e.g. `SERVICE`, `REGION`). When grouped, the response's
+  per-group `Metrics` drive one row per group; ungrouped, the period `Total`
+  is reported. `--time-period` and `--group-by` are single `key=value,…` argv
+  tokens — argv-only exec means the embedded `=`/`,` never reach a shell.
+
+Allowlist addition (read verb only): `ce get-cost-and-usage`.
+
+### 12.2 Azure consumption (delivered)
+
+- `cloud.azure_consumption_usage` → `az consumption usage list
+  [--start-date --end-date] [--top]`. Returns per-resource usage-detail records
+  with `pretaxCost`; the tool sums them into a pre-tax total. The CLI requires
+  the date pair to be set together, which the tool validates before exec.
+
+Allowlist addition: `consumption usage list`.
+
+### 12.3 GCP cost (deferred)
+
+Same family of blocker as GCP metrics/traces (§9): `gcloud` has no clean
+cost-data read — billing data lives in the Cloud Billing API and the BigQuery
+billing export, not a `gcloud … list` command. `gcloud billing accounts list`
+exposes billing-account *inventory*, not cost figures, so it is not wired here.
+Deferred to the future Billing-API-GET RFC.
+
+### 12.4 Cross-cutting
+
+A cost anomaly is most useful when joined to a deploy or scale event; once the
+`change.recent` cloud-audit adapter (§11.1) lands, a cost spike and the change
+that caused it can be read in one timeline. No new wiring is required for the
+cost tools themselves — they register through the existing per-provider groups
+in `RegisterAll`.

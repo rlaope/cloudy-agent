@@ -2,8 +2,8 @@
 
 ## v0.5.0 — Unreleased
 
-### Added — Tool surface (45 → 110, 10 → 16 groups)
-- **Cloud observability group (`cloud`, 22 tools)** — read-only AWS + Azure + GCP
+### Added — Tool surface (45 → 112, 10 → 16 groups)
+- **Cloud observability group (`cloud`, 24 tools)** — read-only AWS + Azure + GCP
   telemetry via the operator's already-configured `aws` / `az` / `gcloud` CLIs.
   cloudy stores no cloud secrets; credentials resolve from the CLI's own chain.
   Read-only is re-established for the shell-out path (which bypasses the HTTP
@@ -33,12 +33,20 @@
     functions, and managed-Kubernetes inventory across all three providers via
     read-only Describe/List verbs. GCP inventory list commands are first-class
     read-only `gcloud` verbs (unlike its absent metric/trace reads).
+  - **FinOps / cost (Phase 5)** — `cloud.aws_ce_cost_and_usage` (Cost Explorer
+    `get-cost-and-usage`: date window, granularity, metrics, optional group-by
+    dimension); `cloud.azure_consumption_usage` (`az consumption usage list`:
+    per-resource pre-tax cost with a summed total). GCP cost is deferred — like
+    its metric/trace reads, `gcloud` has no clean cost-data read (billing data
+    lives in the Billing API / BigQuery export).
   - **GCP path locked** — Cloud Logging is the only clean read-only `gcloud`
-    *telemetry* signal; metric and trace reads stay deferred (gcloud exposes no
-    time-series or trace read command). Inventory list verbs (`sql/run/container
-    … list`) are available and wired. See §9–§11 of the RFC.
-  - Phases 0–4 of docs/RFC-CLOUD-OBSERVABILITY.md (AWS + Azure traces; GCP
-    trace deferred). Wiring cloud traces into `correlate` is a follow-up.
+    *telemetry* signal; metric, trace, and cost reads stay deferred (gcloud
+    exposes no time-series / trace / cost-data read command). Inventory list
+    verbs (`sql/run/container … list`) are available and wired. See §9–§12 of
+    the RFC.
+  - Phases 0–5 of docs/RFC-CLOUD-OBSERVABILITY.md (AWS + Azure traces and cost;
+    GCP trace + cost deferred). Wiring cloud traces into `correlate` and cloud
+    audit into `change.recent` are the cross-cutting follow-ups.
 - **K8s workload tools (10)** — `list_deployments`, `list_statefulsets`,
   `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`,
   `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`.
