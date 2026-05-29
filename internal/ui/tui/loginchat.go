@@ -82,10 +82,10 @@ var loginProviders = []loginProvider{
 		envVar: "ANTHROPIC_API_KEY",
 		hint:   "Claude — Opus / Sonnet / Haiku",
 		models: []loginModel{
-			{"claude-opus-4-7", "Opus 4.7 — most capable, slowest"},
+			{"claude-opus-4-8", "Opus 4.8 — most capable, newest"},
+			{"claude-opus-4-7", "Opus 4.7 — previous flagship"},
 			{"claude-sonnet-4-6", "Sonnet 4.6 — balanced"},
 			{"claude-haiku-4-5-20251001", "Haiku 4.5 — fastest, cheapest"},
-			{"claude-3-5-sonnet-20241022", "Sonnet 3.5 — legacy, may be deprecated"},
 		},
 	},
 	{

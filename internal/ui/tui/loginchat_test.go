@@ -139,17 +139,17 @@ func TestLoginChat_FullThreeStepFlow(t *testing.T) {
 	if r2.picker == nil {
 		t.Fatal("step 2 must return the model picker")
 	}
-	if r2.picker.items[0].key != "claude-opus-4-7" {
-		t.Errorf("model picker should default to Opus 4.7 first, got %q",
+	if r2.picker.items[0].key != "claude-opus-4-8" {
+		t.Errorf("model picker should default to Opus 4.8 first, got %q",
 			r2.picker.items[0].key)
 	}
 
-	r3 := chat.Step("claude-opus-4-7")
+	r3 := chat.Step("claude-opus-4-8")
 	if !r3.done {
 		t.Errorf("step 3 (model pick) should finish, got: %q", r3.out)
 	}
-	if r3.swapToModel != "claude-opus-4-7" {
-		t.Errorf("swapToModel = %q, want claude-opus-4-7", r3.swapToModel)
+	if r3.swapToModel != "claude-opus-4-8" {
+		t.Errorf("swapToModel = %q, want claude-opus-4-8", r3.swapToModel)
 	}
 }
 

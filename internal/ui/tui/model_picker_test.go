@@ -31,8 +31,8 @@ func TestModelPicker_BareSlashOpensPicker(t *testing.T) {
 	}
 	// Cross-provider — first row should be Anthropic's curated default
 	// because loginProviders[0] is anthropic and its models[0] is
-	// claude-opus-4-7.
-	if m.arrowPicker.items[0].key != "claude-opus-4-7" {
+	// claude-opus-4-8.
+	if m.arrowPicker.items[0].key != "claude-opus-4-8" {
 		t.Errorf("first picker row should be Anthropic's curated default, got %q",
 			m.arrowPicker.items[0].key)
 	}
