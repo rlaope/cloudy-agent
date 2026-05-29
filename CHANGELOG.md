@@ -52,7 +52,15 @@
     symptoms (Source `cloud_trace`), built by the wiring layer as a plain
     `change.ChangeSource` so `correlate` stays decoupled from `cloud`. Azure App
     Insights (needs an app id) and GCP Cloud Trace (no gcloud command) deferred.
-    Folding cloud audit logs into `change.recent` remains the other follow-up.
+  - **Cross-cutting: `change.recent` cloud audit events** — AWS CloudTrail
+    (`cloudtrail lookup-events`, ResourceName-filtered), GCP Cloud Audit Logs
+    (reuses `gcloud logging read` with a cloudaudit + resourceName filter), and
+    Azure Activity Log (`monitor activity-log list`, client-side workload
+    filter) now fold onto the change timeline as `cloud_audit` events with a
+    provider-tagged source, built by the wiring layer as a plain
+    `change.ChangeSource` so `change` stays decoupled from `cloud`. New
+    read-only allowlist entries: `cloudtrail lookup-events`,
+    `monitor activity-log list`.
 - **K8s workload tools (10)** — `list_deployments`, `list_statefulsets`,
   `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`,
   `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`.

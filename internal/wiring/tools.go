@@ -136,17 +136,21 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 
 	ebpf.RegisterAll(reg)
 
-	// change.* spans both k8s and docker. Register when at least one backend
-	// is available; skip the whole group only when neither is.
+	// change.* spans k8s, docker, and cloud control-plane audit logs. Register
+	// when at least one backend is available; skip the whole group only when
+	// none is. cloudAudit folds CloudTrail / Cloud Audit Logs / Activity Log
+	// onto the change timeline; nil when no cloud provider is configured. Built
+	// from the cloudClients already constructed above.
 	dockerHub, dockerErr := buildDockerHub(opts.DockerHosts)
-	if hub == nil && dockerHub == nil {
-		reason := "no kubeconfig and no docker hosts configured"
+	cloudAudit := cloud.NewAuditChangeSource(cloudClients)
+	if hub == nil && dockerHub == nil && cloudAudit == nil {
+		reason := "no kubeconfig, docker hosts, or cloud provider configured"
 		if dockerErr != nil {
-			reason = fmt.Sprintf("no kubeconfig; docker hosts configured but unavailable: %v", dockerErr)
+			reason = fmt.Sprintf("no kubeconfig or cloud provider; docker hosts configured but unavailable: %v", dockerErr)
 		}
 		reg.MarkSkipped("change", reason)
 	} else {
-		change.RegisterAll(reg, hub, dockerHub)
+		change.RegisterAll(reg, hub, dockerHub, cloudAudit)
 	}
 
 	// metric.* is Docker-only: container-level resource sampling. The k8s

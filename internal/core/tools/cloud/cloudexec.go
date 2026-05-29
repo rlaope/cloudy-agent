@@ -55,6 +55,8 @@ var allowedSubcommands = map[string]map[string]struct{}{
 		"eks list-clusters":         {},
 		// FinOps / cost (read-only): Cost Explorer get-cost-and-usage.
 		"ce get-cost-and-usage": {},
+		// Audit / change history (read-only): CloudTrail management events.
+		"cloudtrail lookup-events": {},
 	},
 	"az": {
 		"monitor metrics list":             {},
@@ -68,6 +70,8 @@ var allowedSubcommands = map[string]map[string]struct{}{
 		"aks list":         {},
 		// FinOps / cost (read-only): consumption usage details.
 		"consumption usage list": {},
+		// Audit / change history (read-only): subscription Activity Log.
+		"monitor activity-log list": {},
 	},
 	"gcloud": {
 		// Inventory / managed-service health (read-only list verbs). Unlike
