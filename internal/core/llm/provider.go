@@ -109,6 +109,8 @@ var prefixMap = []struct {
 }{
 	{"gpt-", "openai"},
 	{"o1-", "openai"},
+	{"o3", "openai"},
+	{"o4", "openai"},
 	{"claude-", "anthropic"},
 	{"gemini-", "google"},
 	{"kimi-", "moonshot"},

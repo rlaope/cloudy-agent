@@ -91,30 +91,32 @@ var loginProviders = []loginProvider{
 	{
 		key:    "openai",
 		envVar: "OPENAI_API_KEY",
-		hint:   "GPT — gpt-4o, o1",
+		hint:   "GPT — GPT-5.5 / o3",
 		models: []loginModel{
-			{"gpt-4o", "GPT-4o — capable, multimodal"},
-			{"gpt-4o-mini", "GPT-4o mini — fast & cheap"},
-			{"o1", "o1 — reasoning, slow + expensive"},
-			{"o1-mini", "o1 mini — reasoning, cheaper"},
+			{"gpt-5.5", "GPT-5.5 — most capable, newest"},
+			{"gpt-5.4", "GPT-5.4 — more affordable flagship"},
+			{"gpt-5.4-mini", "GPT-5.4 mini — fast & cheap"},
+			{"o3", "o3 — reasoning"},
 		},
 	},
 	{
 		key:    "google",
 		envVar: "GOOGLE_API_KEY",
-		hint:   "Gemini — 2.5 Pro / Flash",
+		hint:   "Gemini — 3.1 Pro / 3.5 Flash",
 		models: []loginModel{
-			{"gemini-2.5-pro", "Gemini 2.5 Pro — capable"},
-			{"gemini-2.5-flash", "Gemini 2.5 Flash — fast"},
-			{"gemini-2.0-flash", "Gemini 2.0 Flash — legacy"},
+			{"gemini-3.1-pro-preview", "Gemini 3.1 Pro — most capable, newest"},
+			{"gemini-3.5-flash", "Gemini 3.5 Flash — frontier, fast"},
+			{"gemini-2.5-pro", "Gemini 2.5 Pro — stable"},
+			{"gemini-2.5-flash", "Gemini 2.5 Flash — fast, stable"},
 		},
 	},
 	{
 		key:    "moonshot",
 		envVar: "MOONSHOT_API_KEY",
-		hint:   "Kimi — kimi-k2-instruct",
+		hint:   "Kimi — kimi-k2.6",
 		models: []loginModel{
-			{"kimi-k2-instruct", "Kimi K2 Instruct"},
+			{"kimi-k2.6", "Kimi K2.6 — newest"},
+			{"kimi-k2.5", "Kimi K2.5 — previous"},
 		},
 	},
 }
