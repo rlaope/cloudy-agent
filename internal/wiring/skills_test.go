@@ -200,3 +200,29 @@ func TestSkillToolRefs_SuppressesSubGroupSkips(t *testing.T) {
 		t.Fatalf("expected sub-group skipped refs to be suppressed, got: %v", err)
 	}
 }
+
+// TestSkillToolRefs_SuppressesAlertAMSubGroup is the regression for the
+// prom-only-host noise: the alert group is partially wired (alert.list_rules
+// via prom is registered) while the Alertmanager backend is absent and marked
+// skipped under `alert-am`. Skills referencing alert.list_active /
+// alert.list_silences must NOT report "unknown tool" — those are
+// configurably-absent, not typos.
+func TestSkillToolRefs_SuppressesAlertAMSubGroup(t *testing.T) {
+	t.Parallel()
+
+	reg := skills.New([]*skills.Skill{{
+		Name:         "incident-context",
+		Description:  "references Alertmanager tools that need an AM endpoint",
+		AllowedTools: []string{"alert.list_active", "alert.list_silences", "alert.list_rules"},
+		SystemPrompt: "irrelevant",
+	}})
+
+	tr := tools.New()
+	// Mirror RegisterAll on a prom-only host: list_rules present, AM skipped.
+	tr.MustRegister(stubTool{name: "alert.list_rules"})
+	tr.MarkSkipped("alert-am", "no Alertmanager endpoint configured")
+
+	if err := wiring.ValidateSkillToolRefs(reg, tr); err != nil {
+		t.Fatalf("expected alert-am sub-group skipped refs to be suppressed, got: %v", err)
+	}
+}
