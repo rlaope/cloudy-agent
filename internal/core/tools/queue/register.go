@@ -25,4 +25,9 @@ func RegisterAll(reg *tools.Registry, clients Clients, skipReasons []string) {
 			newRabbitMQQueuesTool(clients.RabbitMQ),
 		)
 	}
+	if len(clients.Kafka) > 0 {
+		reg.MustRegister(
+			newKafkaConsumerLagTool(clients.Kafka),
+		)
+	}
 }

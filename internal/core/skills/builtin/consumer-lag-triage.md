@@ -1,12 +1,14 @@
 ---
 name: consumer-lag-triage
-description: Diagnose a backing-up message queue — RabbitMQ queue depth and consumer health — by separating "nothing is draining it" (no consumer) from "consumers can't keep up" (falling behind), then correlate the lag onset with recent consumer pod restarts and deploys to name the likely trigger. Read-only.
+description: Diagnose a backing-up message queue — RabbitMQ queue depth or Kafka consumer-group lag — by separating "nothing is draining it" (no consumer) from "consumers can't keep up" (falling behind), then correlate the lag onset with recent consumer pod restarts and deploys to name the likely trigger. Read-only.
 triggers:
   - consumer lag
   - queue lag
   - queue backlog
   - messages piling up
   - rabbitmq
+  - kafka
+  - consumer group lag
   - queue depth
   - consumer falling behind
   - unacked messages
@@ -14,8 +16,10 @@ triggers:
   - 큐 적체
   - 큐 백로그
   - 메시지 밀림
+  - 카프카 랙
 allowed_tools:
   - queue.rabbitmq_queues
+  - queue.kafka_consumer_lag
   - k8s.list_pods
   - k8s.describe_pod
   - k8s.events
@@ -42,9 +46,11 @@ You are a message-queue triage analyst. A climbing queue is never the root probl
 - **No consumer draining it** — the queue has `ready > 0` but `consumers = 0`. The consumer fleet is down, crash-looping, disconnected, or was never deployed. The fix is on the consumer side (restart / scale / fix the crash), not the queue.
 - **Consumers falling behind** — `consumers > 0` but the backlog grows anyway. The tool flags this when utilisation is low or unknown, but a queue whose consumers are *maxed* (high utilisation) with a still-growing backlog is the same failure — it just ranks high without a flag, so read the numbers, not only the flag. The fix is throughput (scale consumers, speed up per-message work, or shed/slow producers).
 
+The same two-mode split holds for **Kafka**: a consumer group in state `Empty`/`Dead` with lag is the "no consumer" case (the group exists and committed offsets but nothing is currently assigned), while a `Stable` group whose lag keeps climbing is "falling behind." `queue.kafka_consumer_lag` ranks groups by total lag, breaks it down by the worst topics, and flags `NO ACTIVE CONSUMER`. One caveat: a healthy group mid-rebalance can momentarily report zero members, so a single `NO ACTIVE CONSUMER` reading on an otherwise-`Stable` service warrants a second look before you conclude the consumers are down.
+
 ## Method
 
-1. **Read the queues.** `queue.rabbitmq_queues` ranks by backlog and pre-flags `NO CONSUMER` vs `FALLING BEHIND`. Scope with `vhost` when the operator names a service boundary. Start here; let the flag set your hypothesis.
+1. **Read the queues.** For RabbitMQ, `queue.rabbitmq_queues` ranks by backlog and pre-flags `NO CONSUMER` vs `FALLING BEHIND`; scope with `vhost` when the operator names a service boundary. For Kafka, `queue.kafka_consumer_lag` ranks consumer groups by lag and flags `NO ACTIVE CONSUMER`; scope with `group` when one is named. Start here; let the flag set your hypothesis.
 
 2. **Confirm the consumer side.** Map the queue to its consumer workload (the operator usually knows the deployment; otherwise infer from naming). For the suspected workload:
    - `k8s.list_pods` + `k8s.describe_pod` — are the consumer pods Running, or CrashLoopBackOff / OOMKilled / Pending? Zero ready pods explains `NO CONSUMER` directly.

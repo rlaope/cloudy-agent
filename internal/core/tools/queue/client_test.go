@@ -30,16 +30,37 @@ func TestBuildClients_SkipsMalformed(t *testing.T) {
 		{Name: "no-kind"},
 		{Name: "exotic", Kind: "pulsar", URL: "http://x"},
 		{Name: "good", Kind: "rabbitmq", URL: "http://localhost:15672"},
+		{Name: "no-brokers", Kind: "kafka"},
+		{Name: "bad-sasl", Kind: "kafka", Brokers: "b:9092", SASLMechanism: "kerberos"},
 	})
 	if len(clients.RabbitMQ) != 1 {
-		t.Fatalf("only the well-formed endpoint should build, got %d", len(clients.RabbitMQ))
+		t.Fatalf("only the well-formed rabbitmq endpoint should build, got %d", len(clients.RabbitMQ))
 	}
 	joined := strings.Join(skips, " | ")
-	for _, want := range []string{"missing name or url", "missing kind", "unsupported kind \"pulsar\""} {
+	for _, want := range []string{
+		"missing name or url", "missing kind", "unsupported kind \"pulsar\"",
+		"missing name or brokers", "requires sasl_user and a non-empty PasswordEnv",
+	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("skip reasons should mention %q; got: %s", want, joined)
 		}
 	}
+}
+
+func TestBuildClients_Kafka(t *testing.T) {
+	clients, skips := BuildClients([]config.QueueEndpoint{
+		{Name: "kfk", Kind: "kafka", Brokers: "b1:9092,b2:9092"},
+	})
+	if len(skips) != 0 {
+		t.Fatalf("a valid kafka endpoint should not skip, got: %v", skips)
+	}
+	if len(clients.Kafka) != 1 {
+		t.Fatalf("want 1 kafka client, got %d", len(clients.Kafka))
+	}
+	if clients.Empty() {
+		t.Error("Empty() should be false with a kafka client configured")
+	}
+	clients.Close()
 }
 
 func TestBuildClients_EmptyWhenNoEndpoints(t *testing.T) {

@@ -248,7 +248,8 @@ type QueueEndpoint struct {
 	// Name is a human-readable label used in UI and as the tool argument key.
 	Name string `yaml:"name"`
 
-	// Kind selects the backend. Currently "rabbitmq" (HTTP management API).
+	// Kind selects the backend: "rabbitmq" (HTTP management API) or "kafka"
+	// (native admin protocol over the bootstrap brokers).
 	Kind string `yaml:"kind"`
 
 	// URL is the backend's read-only API base.
@@ -258,9 +259,26 @@ type QueueEndpoint struct {
 	// BasicUser is the HTTP Basic Auth username (rabbitmq management API).
 	BasicUser string `yaml:"basic_user,omitempty"`
 
-	// PasswordEnv is the environment variable holding the Basic Auth password,
-	// preferred over storing the password in plain text.
+	// PasswordEnv is the environment variable holding the connection password
+	// (rabbitmq Basic Auth password, or kafka SASL password), preferred over
+	// storing the password in plain text.
 	PasswordEnv string `yaml:"password_env,omitempty"`
+
+	// Brokers is the comma-separated Kafka bootstrap broker list (kind: kafka),
+	// e.g. "b1:9092,b2:9092". cloudy only issues admin describe/list and
+	// offset reads — it never produces, consumes, or commits.
+	Brokers string `yaml:"brokers,omitempty"`
+
+	// SASLMechanism selects Kafka SASL authentication (kind: kafka):
+	// "" (none) | "plain" | "scram-sha-256" | "scram-sha-512".
+	SASLMechanism string `yaml:"sasl_mechanism,omitempty"`
+
+	// SASLUser is the Kafka SASL username; the password comes from PasswordEnv.
+	SASLUser string `yaml:"sasl_user,omitempty"`
+
+	// TLS dials the Kafka brokers over TLS using the system root CAs
+	// (kind: kafka).
+	TLS bool `yaml:"tls,omitempty"`
 }
 
 // DockerHost describes a single Docker daemon cloudy may inspect. Host is a
