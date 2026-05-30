@@ -134,6 +134,29 @@ var (
 	pickerHintStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
 
+// pickerMaxVisible bounds how many rows the picker renders at once. A longer
+// list (e.g. the full skills registry) scrolls a window of this size around
+// the cursor with "↑ N more" / "↓ N more" markers instead of dumping every
+// row, which is what made the bare /skill menu feel cluttered.
+const pickerMaxVisible = 6
+
+// pickerWindow returns the [start,end) range of items to render so the cursor
+// stays visible and roughly centred. Lists at or under pickerMaxVisible render
+// whole (start 0, end n).
+func pickerWindow(cursor, n, max int) (int, int) {
+	if n <= max {
+		return 0, n
+	}
+	start := cursor - max/2
+	if start < 0 {
+		start = 0
+	}
+	if start > n-max {
+		start = n - max
+	}
+	return start, start + max
+}
+
 func (p *arrowPicker) View() string {
 	if p == nil || len(p.items) == 0 {
 		return ""
@@ -143,7 +166,12 @@ func (p *arrowPicker) View() string {
 		b.WriteString(pickerTitleStyle.Render(p.title))
 		b.WriteString("\n")
 	}
-	for i, it := range p.items {
+	start, end := pickerWindow(p.cursor, len(p.items), pickerMaxVisible)
+	if start > 0 {
+		fmt.Fprintf(&b, "%s\n", pickerHintStyle.Render(fmt.Sprintf("  ↑ %d more", start)))
+	}
+	for i := start; i < end; i++ {
+		it := p.items[i]
 		cursor := "  "
 		label := pickerLabelDimStyle.Render(it.label)
 		if i == p.cursor {
@@ -164,6 +192,9 @@ func (p *arrowPicker) View() string {
 		}
 		b.WriteString(row)
 		b.WriteString("\n")
+	}
+	if end < len(p.items) {
+		fmt.Fprintf(&b, "%s\n", pickerHintStyle.Render(fmt.Sprintf("  ↓ %d more", len(p.items)-end)))
 	}
 	hint := "  ↑↓ to move · Enter to select · Esc to cancel"
 	if p.multiSelect {
