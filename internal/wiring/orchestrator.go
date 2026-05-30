@@ -43,6 +43,7 @@ func Rebuild(cfg config.Config, opts RebuildOpts) (*tools.Registry, error) {
 		Profile:        activeProfile,
 		PromEndpoints:  cfg.Prometheus,
 		Databases:      cfg.Databases,
+		Queues:         cfg.Queues,
 		Logs:           cfg.Logs,
 		Tracing:        cfg.Tracing,
 		Pprof:          cfg.Pprof,

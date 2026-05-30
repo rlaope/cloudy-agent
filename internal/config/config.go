@@ -37,6 +37,12 @@ type Config struct {
 	// exposes only canonical read queries per backend.
 	Databases []DatabaseEndpoint `yaml:"databases,omitempty"`
 
+	// Queues is the list of message-queue / streaming backends the agent may
+	// inspect for consumer lag and queue depth. Each entry's kind selects the
+	// wrapper tool group: rabbitmq (HTTP management API) — more kinds (kafka)
+	// land in later phases. All access is read-only inspection.
+	Queues []QueueEndpoint `yaml:"queues,omitempty"`
+
 	// Logs is the list of log-search backends the agent may query. Each
 	// entry's kind selects the wrapper: loki / elasticsearch. cloudy uses
 	// only GET endpoints — transport-level read-only enforcement applies.
@@ -232,6 +238,28 @@ type DatabaseEndpoint struct {
 
 	// PasswordEnv is the environment variable holding the connection
 	// password, when the DSN does not embed it.
+	PasswordEnv string `yaml:"password_env,omitempty"`
+}
+
+// QueueEndpoint describes a single message-queue / streaming backend cloudy
+// may inspect read-only for consumer lag and queue depth. Kind selects the
+// wrapper tool group; the remaining fields are interpreted per kind.
+type QueueEndpoint struct {
+	// Name is a human-readable label used in UI and as the tool argument key.
+	Name string `yaml:"name"`
+
+	// Kind selects the backend. Currently "rabbitmq" (HTTP management API).
+	Kind string `yaml:"kind"`
+
+	// URL is the backend's read-only API base.
+	//   rabbitmq: management API base, e.g. "http://host:15672"
+	URL string `yaml:"url,omitempty"`
+
+	// BasicUser is the HTTP Basic Auth username (rabbitmq management API).
+	BasicUser string `yaml:"basic_user,omitempty"`
+
+	// PasswordEnv is the environment variable holding the Basic Auth password,
+	// preferred over storing the password in plain text.
 	PasswordEnv string `yaml:"password_env,omitempty"`
 }
 
