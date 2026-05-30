@@ -60,7 +60,7 @@ var canonicalToolNames = []string{
 
 	"synthetic.http_check",
 
-	"queue.rabbitmq_queues",
+	"queue.rabbitmq_queues", "queue.kafka_consumer_lag",
 
 	"change.recent",
 

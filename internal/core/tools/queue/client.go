@@ -9,6 +9,7 @@ package queue
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/rlaope/cloudy/internal/clients/httpapi"
@@ -19,11 +20,20 @@ import (
 // cloudy.yaml. Each backend kind has its own map; tools look up by name.
 type Clients struct {
 	RabbitMQ map[string]*httpapi.Client
+	Kafka    map[string]*kafkaClient
 }
 
 // Empty reports whether no queue backend was established.
 func (c Clients) Empty() bool {
-	return len(c.RabbitMQ) == 0
+	return len(c.RabbitMQ) == 0 && len(c.Kafka) == 0
+}
+
+// Close releases backend resources that hold connections/goroutines. The kgo
+// Kafka clients connect lazily, so closing an unused one is cheap.
+func (c Clients) Close() {
+	for _, k := range c.Kafka {
+		k.Close()
+	}
 }
 
 // BuildClients constructs the per-backend client maps from the configured
@@ -54,6 +64,24 @@ func BuildClients(eps []config.QueueEndpoint) (Clients, []string) {
 				c.RabbitMQ = map[string]*httpapi.Client{}
 			}
 			c.RabbitMQ[ep.Name] = cl
+		case "kafka":
+			if ep.Name == "" || ep.Brokers == "" {
+				skips = append(skips, fmt.Sprintf("kafka endpoint %q: missing name or brokers", ep.Name))
+				continue
+			}
+			password := ""
+			if ep.PasswordEnv != "" {
+				password = os.Getenv(ep.PasswordEnv)
+			}
+			kc, reason := newKafkaClient(ep.Name, ep.Brokers, ep.SASLMechanism, ep.SASLUser, password, ep.TLS)
+			if reason != "" {
+				skips = append(skips, reason)
+				continue
+			}
+			if c.Kafka == nil {
+				c.Kafka = map[string]*kafkaClient{}
+			}
+			c.Kafka[ep.Name] = kc
 		case "":
 			skips = append(skips, fmt.Sprintf("queue endpoint %q: missing kind", ep.Name))
 		default:
@@ -82,4 +110,23 @@ func pickRabbitMQ(clients map[string]*httpapi.Client, name string) (*httpapi.Cli
 		}
 	}
 	return nil, fmt.Errorf("queue: endpoint is required (%d rabbitmq endpoints configured)", len(clients))
+}
+
+// pickKafka resolves the named Kafka client, or the sole client when name is
+// empty and exactly one is configured — the same deterministic single-endpoint
+// default as pickRabbitMQ.
+func pickKafka(clients map[string]*kafkaClient, name string) (*kafkaClient, error) {
+	if name != "" {
+		cl, ok := clients[name]
+		if !ok {
+			return nil, fmt.Errorf("queue: no kafka endpoint named %q", name)
+		}
+		return cl, nil
+	}
+	if len(clients) == 1 {
+		for _, cl := range clients {
+			return cl, nil
+		}
+	}
+	return nil, fmt.Errorf("queue: endpoint is required (%d kafka endpoints configured)", len(clients))
 }
