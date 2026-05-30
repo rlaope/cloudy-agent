@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -603,6 +604,76 @@ func TestPaletteAction_Plan_Toggles(t *testing.T) {
 	m2 = next2.(Model)
 	if cmd := m2.handlePaletteAction(paletteActionMsg{cmd: "plan"}); cmd == nil {
 		t.Fatal("plan action with nil TogglePlan should still return a writeStream command")
+	}
+}
+
+// TestPaletteAction_AutoCompact_Toggles confirms /autocompact flips the Model
+// flag and that the trigger only fires past the threshold when enabled.
+func TestPaletteAction_AutoCompact_Toggles(t *testing.T) {
+	deps := makeDeps()
+	deps.CompactHistory = func(context.Context) (string, error) { return "summary", nil }
+	m := NewModel(deps)
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	if m.autoCompact {
+		t.Fatal("auto-compact must default to off")
+	}
+	if cmd := m.handlePaletteAction(paletteActionMsg{cmd: "autocompact"}); cmd == nil {
+		t.Fatal("autocompact action should return a writeStream command")
+	}
+	if !m.autoCompact {
+		t.Fatal("autocompact toggle did not enable the flag")
+	}
+
+	// model context window is 128000 (default). 120000 input ≈ 93% ≥ 90 → fires.
+	m.usage.LastInputTokens = 120000
+	if m.maybeAutoCompactCmd() == nil {
+		t.Error("expected auto-compact to fire at 93% with the flag on")
+	}
+	// 100000 ≈ 78% < 90 → no fire.
+	m.usage.LastInputTokens = 100000
+	if m.maybeAutoCompactCmd() != nil {
+		t.Error("auto-compact must not fire below the threshold")
+	}
+	// Disabled → never fires even when over threshold.
+	m.autoCompact = false
+	m.usage.LastInputTokens = 127000
+	if m.maybeAutoCompactCmd() != nil {
+		t.Error("auto-compact must not fire when disabled")
+	}
+}
+
+// TestAgentDone_AutoCompact_PreservesPlayback is the regression for the
+// review's HIGH finding: firing auto-compaction from the agentDoneMsg handler
+// must NOT drain the freshly-loaded playback buffer. With prose queued and
+// auto-compact over threshold, the Done handler must still take the playback
+// branch (playbackActive == true, buffer intact) rather than force-flushing.
+func TestAgentDone_AutoCompact_PreservesPlayback(t *testing.T) {
+	deps := makeDeps()
+	deps.CompactHistory = func(context.Context) (string, error) { return "s", nil }
+	m := NewModel(deps)
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	m.autoCompact = true
+	m.usage.LastInputTokens = 125000 // ≈ 97% of the 128000 default window
+	m.running = true
+	m.assistantTurnStarted = true
+	m.playbackBuf = []rune("a multi-word assistant reply that should type out")
+	m.releasePlaybackTail()
+
+	out, _ := m.Update(agentDoneMsg{})
+	m2 := out.(Model)
+
+	if !m2.playbackActive {
+		t.Fatal("auto-compact drained playback: expected the prose branch (playbackActive=true)")
+	}
+	if len(m2.playbackBuf) == 0 {
+		t.Fatal("playback buffer was emptied by the auto-compact injection")
+	}
+	if !m2.autoCompactInFlight {
+		t.Error("auto-compaction should be marked in-flight after firing")
 	}
 }
 

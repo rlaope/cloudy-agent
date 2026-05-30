@@ -63,6 +63,9 @@ const (
 		"- `/compact` — summarize the older turns into one note and drop them, " +
 		"freeing context window while keeping the recent turns verbatim. Manual; " +
 		"the footer shows a `ctx N%` gauge and warns past 75%.\n" +
+		"- `/autocompact` — toggle automatic compaction: when on, cloudy runs " +
+		"/compact for you once a finished turn leaves context usage past 90%. " +
+		"Off by default.\n" +
 		"- `/new`     — reset the conversation history and start a fresh session log.\n" +
 		"- `/plan`    — toggle plan-first investigation: the agent opens a " +
 		"multi-step question with a brief hypothesis plan (symptom → candidate " +
