@@ -35,6 +35,7 @@ import (
 	"github.com/rlaope/cloudy/internal/core/tools/perf"
 	"github.com/rlaope/cloudy/internal/core/tools/prom"
 	"github.com/rlaope/cloudy/internal/core/tools/py"
+	"github.com/rlaope/cloudy/internal/core/tools/synthetic"
 	"github.com/rlaope/cloudy/internal/core/tools/trace"
 	"github.com/rlaope/cloudy/internal/permission"
 )
@@ -141,6 +142,8 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 	perf.RegisterAll(reg, perfClients, perfSkips)
 
 	ebpf.RegisterAll(reg)
+
+	synthetic.RegisterAll(reg)
 
 	// change.* spans k8s, docker, and cloud control-plane audit logs. Register
 	// when at least one backend is available; skip the whole group only when
