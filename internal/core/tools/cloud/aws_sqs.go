@@ -153,10 +153,13 @@ func renderSQSDepth(account string, rows []sqsQueueRow, total, attributed int) s
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d SQS queue(s) in account %q", total, account)
 	if attributed < total {
-		fmt.Fprintf(&b, " (showing the first %d; raise limit or narrow with prefix)", attributed)
+		// Truncation is by listing order, NOT by backlog, so the busiest queue
+		// could itself be beyond the cut. Say so plainly rather than implying
+		// full coverage.
+		fmt.Fprintf(&b, " — attributed the first %d by listing order; narrow with prefix so the busiest are covered", attributed)
 	}
 	if stuck > 0 {
-		fmt.Fprintf(&b, "\n⚠ %d queue(s) with a backlog and nothing in flight", stuck)
+		fmt.Fprintf(&b, "\n⚠ %d of the %d shown queue(s) have a backlog and nothing in flight", stuck, attributed)
 	}
 	return b.String()
 }
@@ -189,6 +192,7 @@ func sqsTable(rows []sqsQueueRow) *render.Table {
 // queueNameFromURL extracts the queue name (the last path segment) from an SQS
 // queue URL like https://sqs.us-east-1.amazonaws.com/123456789012/my-queue.
 func queueNameFromURL(u string) string {
+	u = strings.TrimRight(u, "/")
 	if i := strings.LastIndex(u, "/"); i >= 0 && i < len(u)-1 {
 		return u[i+1:]
 	}

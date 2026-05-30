@@ -76,8 +76,47 @@ func TestSQSQueueDepth_RanksAndFlags(t *testing.T) {
 	if obs.Table.Rows[1][4] != "" {
 		t.Errorf("a queue with in-flight messages should not be flagged, got: %v", obs.Table.Rows[1])
 	}
-	if !strings.Contains(obs.Text, "⚠ 1 queue(s) with a backlog and nothing in flight") {
-		t.Errorf("summary should count the stuck queue, got: %s", obs.Text)
+	if !strings.Contains(obs.Text, "⚠ 1 of the 2 shown queue(s) have a backlog and nothing in flight") {
+		t.Errorf("summary should count the stuck queue, scoped to shown, got: %s", obs.Text)
+	}
+}
+
+func TestSQSQueueDepth_NoQueues(t *testing.T) {
+	sqsStub(t, nil, nil, nil) // list-queues returns {} → no QueueUrls key
+	tool := newAWSSQSQueueDepthTool(oneAWS())
+	obs := runTool(t, tool, `{}`)
+
+	if !strings.Contains(obs.Text, `0 SQS queue(s) in account "prod"`) {
+		t.Errorf("an empty listing should render cleanly, got: %s", obs.Text)
+	}
+	if obs.Table == nil || len(obs.Table.Rows) != 0 {
+		t.Errorf("empty listing should yield an empty table, got: %+v", obs.Table)
+	}
+}
+
+func TestSQSQueueDepth_DecodeErrorKept(t *testing.T) {
+	cloudExecRunner = func(_ context.Context, _ string, args []string) ([]byte, error) {
+		if len(args) >= 2 && args[1] == "list-queues" {
+			return []byte(`{"QueueUrls":["` + u("ok") + `","` + u("garbage") + `"]}`), nil
+		}
+		if queueNameFromURL(flagValue(args, "--queue-url")) == "garbage" {
+			return []byte(`not json`), nil
+		}
+		return []byte(`{"Attributes":{"ApproximateNumberOfMessages":"7"}}`), nil
+	}
+	t.Cleanup(func() { cloudExecRunner = runCloudExec })
+
+	tool := newAWSSQSQueueDepthTool(oneAWS())
+	obs := runTool(t, tool, `{}`)
+
+	var sawDecodeErr bool
+	for _, row := range obs.Table.Rows {
+		if row[0] == "garbage" && strings.Contains(row[4], "decode attributes") {
+			sawDecodeErr = true
+		}
+	}
+	if !sawDecodeErr {
+		t.Errorf("a queue with an unparseable attributes body should carry a decode ERROR row, got: %+v", obs.Table.Rows)
 	}
 }
 
@@ -95,7 +134,7 @@ func TestSQSQueueDepth_LimitTruncates(t *testing.T) {
 	if obs.Table == nil || len(obs.Table.Rows) != 2 {
 		t.Fatalf("limit=2 should attribute 2 queues, got %+v", obs.Table)
 	}
-	if !strings.Contains(obs.Text, "showing the first 2") {
+	if !strings.Contains(obs.Text, "attributed the first 2 by listing order") {
 		t.Errorf("a truncated listing should say so, got: %s", obs.Text)
 	}
 }
@@ -126,13 +165,14 @@ func TestSQSQueueDepth_PerQueueErrorKept(t *testing.T) {
 }
 
 func TestSQSQueueDepth_Argv(t *testing.T) {
-	var lastList []string
+	var lastList, lastAttr []string
 	cloudExecRunner = func(_ context.Context, _ string, args []string) ([]byte, error) {
 		if len(args) >= 2 && args[1] == "list-queues" {
 			lastList = args
-			return []byte(`{"QueueUrls":[]}`), nil
+			return []byte(`{"QueueUrls":["` + u("orders-dlq") + `"]}`), nil
 		}
-		return []byte(`{}`), nil
+		lastAttr = args
+		return []byte(`{"Attributes":{"ApproximateNumberOfMessages":"3"}}`), nil
 	}
 	t.Cleanup(func() { cloudExecRunner = runCloudExec })
 
@@ -147,6 +187,13 @@ func TestSQSQueueDepth_Argv(t *testing.T) {
 	}
 	if !hasFlag(lastList, "--output", "json") {
 		t.Errorf("per-account flags missing: %v", lastList)
+	}
+	// All three approximate-count attributes must reach the get-queue-attributes argv.
+	joined := strings.Join(lastAttr, " ")
+	for _, attr := range []string{"ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible", "ApproximateNumberOfMessagesDelayed"} {
+		if !strings.Contains(joined, attr) {
+			t.Errorf("attribute %q missing from get-queue-attributes argv: %v", attr, lastAttr)
+		}
 	}
 }
 
