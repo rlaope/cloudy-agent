@@ -39,7 +39,7 @@ func TestBuildClients_SkipsMalformed(t *testing.T) {
 	joined := strings.Join(skips, " | ")
 	for _, want := range []string{
 		"missing name or url", "missing kind", "unsupported kind \"pulsar\"",
-		"missing name or brokers", "unsupported sasl_mechanism",
+		"missing name or brokers", "requires sasl_user and a non-empty PasswordEnv",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("skip reasons should mention %q; got: %s", want, joined)

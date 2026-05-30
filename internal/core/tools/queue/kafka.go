@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -33,19 +34,44 @@ type lagSource interface {
 	groupLag(ctx context.Context, groups ...string) (kadm.DescribedGroupLags, error)
 }
 
-// kafkaClient holds a franz-go admin client bound to one configured endpoint.
-// The underlying kgo.Client connects lazily on first request, so an unused
-// endpoint holds no broker connections or goroutines.
+// kafkaClient holds the franz-go admin options for one configured endpoint.
+// The kgo.Client is constructed lazily on first request — kgo starts three
+// background goroutines (metadata, connection reaping, metrics) at
+// construction, so deferring it means an endpoint that is never queried holds
+// no goroutines or connections. Close stops them once it has been built.
 type kafkaClient struct {
 	endpoint string
-	kc       *kgo.Client
-	adm      *kadm.Client
+	opts     []kgo.Opt
+
+	once    sync.Once
+	kc      *kgo.Client
+	adm     *kadm.Client
+	initErr error
 }
 
 func (c *kafkaClient) name() string { return c.endpoint }
 
+// admin builds the kgo+kadm client on first call (and starts its goroutines)
+// and returns the cached admin handle on later calls.
+func (c *kafkaClient) admin() (*kadm.Client, error) {
+	c.once.Do(func() {
+		kc, err := kgo.NewClient(c.opts...)
+		if err != nil {
+			c.initErr = err
+			return
+		}
+		c.kc = kc
+		c.adm = kadm.NewClient(kc)
+	})
+	return c.adm, c.initErr
+}
+
 func (c *kafkaClient) listGroups(ctx context.Context) ([]string, error) {
-	listed, err := c.adm.ListGroups(ctx)
+	adm, err := c.admin()
+	if err != nil {
+		return nil, err
+	}
+	listed, err := adm.ListGroups(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -53,20 +79,26 @@ func (c *kafkaClient) listGroups(ctx context.Context) ([]string, error) {
 }
 
 func (c *kafkaClient) groupLag(ctx context.Context, groups ...string) (kadm.DescribedGroupLags, error) {
-	return c.adm.Lag(ctx, groups...)
+	adm, err := c.admin()
+	if err != nil {
+		return nil, err
+	}
+	return adm.Lag(ctx, groups...)
 }
 
-// Close releases the underlying broker connections and goroutines.
+// Close releases the underlying broker connections and goroutines, if the
+// client was ever built. Safe to call on a never-queried endpoint.
 func (c *kafkaClient) Close() {
 	if c.kc != nil {
 		c.kc.Close()
 	}
 }
 
-// newKafkaClient builds a kafkaClient from a kafka endpoint. It returns a
-// human-readable reason (and nil client) when the endpoint is unusable, so the
-// group skip banner can explain why. password is the already-resolved SASL
-// password (empty when no SASL).
+// newKafkaClient validates a kafka endpoint and prepares its admin options. It
+// returns a human-readable reason (and nil client) when the endpoint is
+// unusable, so the group skip banner can explain why, rather than deferring an
+// opaque broker auth error to the first query. password is the already-resolved
+// SASL password (empty when no SASL). No broker connection is opened here.
 func newKafkaClient(name, brokers, mechanism, user, password string, useTLS bool) (*kafkaClient, string) {
 	seeds := splitBrokers(brokers)
 	if len(seeds) == 0 {
@@ -77,7 +109,11 @@ func newKafkaClient(name, brokers, mechanism, user, password string, useTLS bool
 	if useTLS {
 		opts = append(opts, kgo.DialTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12}))
 	}
-	switch strings.ToLower(mechanism) {
+	mech := strings.ToLower(mechanism)
+	if mech != "" && (user == "" || password == "") {
+		return nil, fmt.Sprintf("kafka endpoint %q: sasl_mechanism %q requires sasl_user and a non-empty PasswordEnv", name, mechanism)
+	}
+	switch mech {
 	case "":
 		// no SASL
 	case "plain":
@@ -90,11 +126,7 @@ func newKafkaClient(name, brokers, mechanism, user, password string, useTLS bool
 		return nil, fmt.Sprintf("kafka endpoint %q: unsupported sasl_mechanism %q", name, mechanism)
 	}
 
-	kc, err := kgo.NewClient(opts...)
-	if err != nil {
-		return nil, fmt.Sprintf("kafka endpoint %q: %v", name, err)
-	}
-	return &kafkaClient{endpoint: name, kc: kc, adm: kadm.NewClient(kc)}, ""
+	return &kafkaClient{endpoint: name, opts: opts}, ""
 }
 
 // splitBrokers parses a comma-separated broker list, trimming spaces and
@@ -158,13 +190,23 @@ func rowFlag(r groupLagRow) string {
 // A flagged group is shown regardless of minLag so a small-but-orphaned group
 // is never hidden.
 func renderKafkaLag(endpoint string, rows []groupLagRow, minLag int64, limit int) string {
+	if minLag < 0 {
+		minLag = 0
+	}
 	kept := rows[:0:0]
 	for _, r := range rows {
 		if r.err != nil || r.total >= minLag || rowFlag(r) != "" {
 			kept = append(kept, r)
 		}
 	}
-	sort.SliceStable(kept, func(i, j int) bool { return kept[i].total > kept[j].total })
+	// Errors first (a coordinator-unavailable group is high-signal and must not
+	// be truncated into the "…and N more" tail), then by lag descending.
+	sort.SliceStable(kept, func(i, j int) bool {
+		if ei, ej := kept[i].err != nil, kept[j].err != nil; ei != ej {
+			return ei
+		}
+		return kept[i].total > kept[j].total
+	})
 
 	var orphaned int
 	for _, r := range kept {

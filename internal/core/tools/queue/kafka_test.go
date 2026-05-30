@@ -157,6 +157,11 @@ func TestNewKafkaClient_Reasons(t *testing.T) {
 	if _, reason := newKafkaClient("k", "b:9092", "kerberos", "u", "p", false); !strings.Contains(reason, "unsupported sasl_mechanism") {
 		t.Errorf("unknown mechanism should be rejected, got: %q", reason)
 	}
+	// A SASL mechanism with an empty resolved password must skip, not silently
+	// authenticate as empty and fail later with an opaque broker error.
+	if _, reason := newKafkaClient("k", "b:9092", "scram-sha-512", "u", "", false); !strings.Contains(reason, "requires sasl_user and a non-empty PasswordEnv") {
+		t.Errorf("SASL with empty password should be rejected, got: %q", reason)
+	}
 	// A valid plaintext endpoint builds (lazy connect, no dial here).
 	if cl, reason := newKafkaClient("k", "b:9092", "", "", "", false); cl == nil || reason != "" {
 		t.Errorf("valid endpoint should build, got reason %q", reason)
