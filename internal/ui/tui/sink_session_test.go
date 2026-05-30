@@ -117,6 +117,38 @@ func TestTuiSink_MirrorsToSession(t *testing.T) {
 	}
 }
 
+// TestTuiSink_TruncatesHugeObservation pins the on-disk size bound: a tool
+// returning more than maxPersistedObservationBytes must be clipped before it
+// reaches the JSONL (the sink sees the raw, pre-LogSummaryHook observation).
+func TestTuiSink_TruncatesHugeObservation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("CLOUDY_HOME", "")
+
+	sess, err := session.New("")
+	if err != nil {
+		t.Fatalf("session.New: %v", err)
+	}
+	defer sess.Close()
+
+	sink := &tuiSink{emit: func(AgentEvent) {}, sess: sess, modelID: "m"}
+	huge := strings.Repeat("x", maxPersistedObservationBytes+10_000)
+	sink.BeginToolCall("log.loki_query_range", `{"q":"{app=\"x\"}"}`)
+	sink.EndToolCall(huge, nil)
+
+	events := readSessionEvents(t, sess)
+	last := events[len(events)-1]
+	if last.Kind != session.KindToolResult {
+		t.Fatalf("want tool_result, got %+v", last)
+	}
+	if len(last.Text) > maxPersistedObservationBytes+64 {
+		t.Errorf("observation not bounded: %d bytes on disk", len(last.Text))
+	}
+	if !strings.Contains(last.Text, "truncated on disk") {
+		t.Errorf("expected truncation marker, got %d bytes ending %q", len(last.Text), last.Text[len(last.Text)-40:])
+	}
+}
+
 // TestLogSessionError_SkipsContextCanceled verifies that Ctrl+C cancellations
 // do not pollute the error log — only real failures should be captured.
 func TestLogSessionError_SkipsContextCanceled(t *testing.T) {

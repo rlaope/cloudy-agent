@@ -2,6 +2,7 @@ package permission
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -203,7 +204,6 @@ func TestDefaultMaskingPatterns_RedactsCommonSecrets(t *testing.T) {
 		t.Fatalf("NewMasker: %v", err)
 	}
 	cases := map[string]string{
-		"ssh private key": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaA==",
 		"github oauth":    "gho_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
 		"github fine pat": "github_pat_" + "ABCDEFGHIJKLMNOPQRSTUV_abcdefghij",
 		"gitlab pat":      "glpat-" + "ABCDEFGHIJKLMNOPQRST",
@@ -211,11 +211,26 @@ func TestDefaultMaskingPatterns_RedactsCommonSecrets(t *testing.T) {
 		"google api key":  "AIza" + "SyABCDEFGHIJKLMNOPQRSTUVWXYZ01234567",
 		"bearer header":   "Authorization: Bearer abcdefghij1234567890",
 		"dsn userinfo":    "postgres://admin:hunter2@db:5432/app",
+		"anthropic key":   "sk-ant-api03-" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
 	}
 	for name, secret := range cases {
 		got := m.MaskString(secret)
 		if got == secret {
 			t.Errorf("%s: nothing redacted in %q", name, secret)
+		}
+	}
+
+	// A PEM private key must be redacted WHOLE — header, base64 body, and the
+	// END line. A header-only match would leave the actual key material on
+	// disk, so assert the body bytes are gone, not just that the string changed.
+	const pem = "-----BEGIN OPENSSH PRIVATE KEY-----\n" +
+		"b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAA\n" +
+		"MORESECRETKEYMATERIALabcdef0123456789==\n" +
+		"-----END OPENSSH PRIVATE KEY-----"
+	got := m.MaskString(pem)
+	for _, body := range []string{"b3BlbnNzaC", "MORESECRETKEYMATERIAL"} {
+		if strings.Contains(got, body) {
+			t.Errorf("private key body %q survived redaction: %q", body, got)
 		}
 	}
 }

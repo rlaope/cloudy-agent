@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -333,11 +334,35 @@ func (s *tuiSink) EndToolCall(observation string, err error) {
 	// tool returned. MaskString applies the value-pattern set; combined with
 	// the masked args on the matching KindToolCall this gives a redacted but
 	// faithful trajectory.
+	//
+	// The sink sees the RAW observation — it runs inside runTool, before the
+	// AfterToolCall hook chain (LogSummaryHook / truncateMiddle) that bounds
+	// the model-facing copy. A log.* tool can return tens of MB, so cap the
+	// on-disk copy here to keep the JSONL from ballooning. Mask first (so a
+	// secret near the cut is redacted regardless), then truncate.
 	_ = s.sess.Append(session.Event{
 		Kind: session.KindToolResult,
 		Name: name,
-		Text: s.masker.MaskString(observation),
+		Text: truncateForLog(s.masker.MaskString(observation)),
 	})
+}
+
+// maxPersistedObservationBytes bounds a single KindToolResult written to the
+// session log. Generous enough to keep normal tool output intact, small
+// enough that a runaway log dump can't balloon the JSONL.
+const maxPersistedObservationBytes = 64 * 1024
+
+// truncateForLog clips s to maxPersistedObservationBytes on a rune boundary,
+// appending a marker so a reader knows the on-disk copy is partial.
+func truncateForLog(s string) string {
+	if len(s) <= maxPersistedObservationBytes {
+		return s
+	}
+	cut := maxPersistedObservationBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "\n…[truncated on disk]"
 }
 
 func (s *tuiSink) RecordUsage(u llm.Usage) {
