@@ -40,6 +40,7 @@ var symptomKinds = map[string]bool{
 	"metric_breach": true,
 	"trace_error":   true,
 	"trace_slow":    true,
+	"budget_burn":   true,
 }
 
 // scoredCause is a candidate change paired with its causal score.
