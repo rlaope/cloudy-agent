@@ -644,6 +644,39 @@ func TestPaletteAction_AutoCompact_Toggles(t *testing.T) {
 	}
 }
 
+// TestAgentDone_AutoCompact_PreservesPlayback is the regression for the
+// review's HIGH finding: firing auto-compaction from the agentDoneMsg handler
+// must NOT drain the freshly-loaded playback buffer. With prose queued and
+// auto-compact over threshold, the Done handler must still take the playback
+// branch (playbackActive == true, buffer intact) rather than force-flushing.
+func TestAgentDone_AutoCompact_PreservesPlayback(t *testing.T) {
+	deps := makeDeps()
+	deps.CompactHistory = func(context.Context) (string, error) { return "s", nil }
+	m := NewModel(deps)
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	m.autoCompact = true
+	m.usage.LastInputTokens = 125000 // ≈ 97% of the 128000 default window
+	m.running = true
+	m.assistantTurnStarted = true
+	m.playbackBuf = []rune("a multi-word assistant reply that should type out")
+	m.releasePlaybackTail()
+
+	out, _ := m.Update(agentDoneMsg{})
+	m2 := out.(Model)
+
+	if !m2.playbackActive {
+		t.Fatal("auto-compact drained playback: expected the prose branch (playbackActive=true)")
+	}
+	if len(m2.playbackBuf) == 0 {
+		t.Fatal("playback buffer was emptied by the auto-compact injection")
+	}
+	if !m2.autoCompactInFlight {
+		t.Error("auto-compaction should be marked in-flight after firing")
+	}
+}
+
 // TestPaletteAction_Exit_Quits confirms the /exit alias produces a tea.Quit
 // command, matching the /quit behaviour the user already relied on.
 func TestPaletteAction_Exit_Quits(t *testing.T) {

@@ -31,6 +31,11 @@ const compactAdviseThreshold = 75
 // Set above compactAdviseThreshold so the operator sees the amber nudge first.
 const compactAutoThreshold = 90
 
+// autoCompactMaxFails is the consecutive auto-compaction failure cap. Past it,
+// auto-firing pauses until a success or a fresh /autocompact toggle, so a
+// persistently-failing summarizer cannot spend a round-trip every turn.
+const autoCompactMaxFails = 2
+
 // compactAdviseStyle renders the below-prompt /compact hint in amber.
 var compactAdviseStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
 
@@ -149,6 +154,17 @@ type Model struct {
 	// default — the operator opts in with /autocompact; until then the amber
 	// hint past compactAdviseThreshold only recommends it.
 	autoCompact bool
+	// autoCompactInFlight marks that the outstanding compaction was triggered
+	// automatically (not by /compact), so compactDoneMsg can label it and
+	// track failures.
+	autoCompactInFlight bool
+	// autoCompactPct snapshots the context percent at the moment auto-compaction
+	// fired (LastInputTokens is zeroed by the time compactDoneMsg lands).
+	autoCompactPct int
+	// autoCompactFails counts consecutive failed auto-compactions; at the cap
+	// auto-firing pauses so a persistently-failing summarizer can't burn a
+	// round-trip every turn. Reset on a success or a fresh /autocompact toggle.
+	autoCompactFails int
 
 	// welcome renders the banner above an empty stream.
 	welcome WelcomeModel
@@ -901,15 +917,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.writeStream(b.String())
 
 	case compactDoneMsg:
+		auto := m.autoCompactInFlight
+		m.autoCompactInFlight = false
 		if msg.err != nil {
+			if auto {
+				// Count the failure so a persistently-failing summarizer stops
+				// retrying every turn; surface that auto-compact paused.
+				m.autoCompactFails++
+				note := ""
+				if m.autoCompactFails >= autoCompactMaxFails {
+					note = " — auto-compact paused; run /compact or toggle /autocompact to retry"
+				}
+				return m, m.writeStream(agentError("auto-compact", msg.err) + note + "\n")
+			}
 			return m, m.writeStream(agentError("compact", msg.err))
 		}
 		// History shrank: zero the gauge optimistically so the operator sees
 		// immediate effect; the next turn's usage event sets the true value.
 		m.usage.LastInputTokens = 0
+		lead := "✓ compacted"
+		if auto {
+			m.autoCompactFails = 0
+			lead = fmt.Sprintf("✓ auto-compacted at %d%% context", m.autoCompactPct)
+		}
 		return m, m.writeStream(fmt.Sprintf(
-			"✓ compacted — kept the last %d messages, folded the rest into a summary:\n\n%s\n",
-			compactKeepMessages, msg.summary))
+			"%s — kept the last %d messages, folded the rest into a summary:\n\n%s\n",
+			lead, compactKeepMessages, msg.summary))
 
 	case agentUsageMsg:
 		m.usage.Input += msg.Input
@@ -1115,23 +1148,35 @@ func (m *Model) contextPct() int {
 	return pct
 }
 
-// maybeAutoCompactCmd returns a command that announces and fires compaction
-// when /autocompact is enabled and the just-finished turn left context usage
-// at or above compactAutoThreshold. Returns nil otherwise. Called from the
-// agentDoneMsg handler, where the turn is settled and not running. After a
-// successful compaction LastInputTokens is zeroed, so contextPct drops and
-// this does not re-fire until the window climbs again.
+// maybeAutoCompactCmd returns a bare compactCmd when /autocompact is enabled
+// and the just-finished turn left context usage at or above
+// compactAutoThreshold, or nil otherwise. Called from the agentDoneMsg handler
+// where the turn is settled and not running.
+//
+// It deliberately does NOT write to the stream: the Done handler has loaded but
+// not yet activated the playback buffer, and a stream write here would
+// force-drain that buffer and skip the reply's typewriter animation. The
+// "auto-compacting" notice is emitted by the compactDoneMsg handler instead,
+// which runs after playback is underway.
+//
+// After a successful compaction LastInputTokens is zeroed, so contextPct drops
+// and this does not re-fire until the window climbs again. After
+// autoCompactMaxFails consecutive failures it pauses until a success or a
+// fresh /autocompact toggle.
 func (m *Model) maybeAutoCompactCmd() tea.Cmd {
 	if !m.autoCompact || m.deps.CompactHistory == nil {
 		return nil
 	}
-	if m.contextPct() < compactAutoThreshold {
+	if m.autoCompactFails >= autoCompactMaxFails {
 		return nil
 	}
-	return tea.Batch(
-		m.writeStream(fmt.Sprintf("→ context %d%% — auto-compacting…\n", m.contextPct())),
-		compactCmd(m.deps.CompactHistory),
-	)
+	pct := m.contextPct()
+	if pct < compactAutoThreshold {
+		return nil
+	}
+	m.autoCompactInFlight = true
+	m.autoCompactPct = pct
+	return compactCmd(m.deps.CompactHistory)
 }
 
 // writeStream is the every-other-palette-action shape: clear the prompt
@@ -1475,6 +1520,7 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		m.prompt.SetValue("")
 		m.autoCompact = !m.autoCompact
 		if m.autoCompact {
+			m.autoCompactFails = 0 // fresh start clears any prior pause
 			return m.writeStream(fmt.Sprintf("✓ auto-compact ON — will compact automatically past %d%% context.\n", compactAutoThreshold))
 		}
 		return m.writeStream("✓ auto-compact OFF — compaction is manual (/compact).\n")
