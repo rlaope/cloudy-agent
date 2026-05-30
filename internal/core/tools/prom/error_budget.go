@@ -202,11 +202,16 @@ func computeBudget(ratioAt func(window string) (float64, bool), target float64, 
 	}
 	rep.Verdict = verdictLabel(worst)
 
-	// Headline burn = the 1h-window burn (the fast tier's long window): the
-	// conventional "current burn rate".
-	if b, ok := burnAt("1h"); ok {
-		rep.HeadlineBurn = b
-		rep.HaveHeadline = true
+	// Headline burn = the conventional "current burn rate", the 1h-window burn
+	// (the fast tier's long window). Fall back to progressively longer windows
+	// when 1h has no data (e.g. a momentarily-stale recording rule) so a
+	// healthy 6h/24h signal still yields a time-to-exhaustion.
+	for _, w := range []string{"1h", "6h", "24h"} {
+		if b, ok := burnAt(w); ok {
+			rep.HeadlineBurn = b
+			rep.HaveHeadline = true
+			break
+		}
 	}
 
 	// Consumed budget over the full SLO window.
@@ -307,8 +312,12 @@ func burnCell(v float64, have bool) string {
 	return fmt.Sprintf("%.2g×", v)
 }
 
-// scalarOrFirst extracts a single float from an instant-query result (scalar,
-// or the first vector sample), reporting ok=false when there is nothing.
+// scalarOrFirst extracts the single float an error-budget ratio query must
+// return — a scalar, or a one-element vector. A multi-series vector means the
+// author forgot to aggregate (e.g. no sum()), so picking an arbitrary series'
+// ratio would silently mislead the budget verdict; that is reported as no-data
+// instead, surfacing as "no data" in the per-window row so the operator fixes
+// the query rather than trusting a wrong burn rate.
 func scalarOrFirst(res *promclient.Result) (float64, bool) {
 	if res == nil {
 		return 0, false
@@ -316,7 +325,7 @@ func scalarOrFirst(res *promclient.Result) (float64, bool) {
 	if res.Scalar != nil {
 		return res.Scalar.Value, true
 	}
-	if len(res.Vector) > 0 {
+	if len(res.Vector) == 1 {
 		return res.Vector[0].Value, true
 	}
 	return 0, false

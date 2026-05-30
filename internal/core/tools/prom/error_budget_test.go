@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	promclient "github.com/rlaope/cloudy/internal/clients/prom"
 )
 
 // ratioFn builds a window→ratio lookup from a map; a missing window is "no data".
@@ -105,6 +107,36 @@ func TestComputeBudget_NoData(t *testing.T) {
 		if tr.HaveData {
 			t.Errorf("tier %s should have no data", tr.Pair)
 		}
+	}
+}
+
+func TestComputeBudget_HeadlineFallsBackWhen1hMissing(t *testing.T) {
+	// 1h has no data, but 6h does → headline burn comes from 6h so ttx survives.
+	rep := computeBudget(ratioFn(map[string]float64{
+		"6h": 0.004, "24h": 0.004, "30d": 0.0002,
+	}), target999, "30d")
+	if !rep.HaveHeadline {
+		t.Fatal("headline burn should fall back to 6h when 1h is missing")
+	}
+	if rep.HeadlineBurn < 3.99 || rep.HeadlineBurn > 4.01 {
+		t.Errorf("headline burn = %g, want ~4 (from 6h)", rep.HeadlineBurn)
+	}
+}
+
+func TestScalarOrFirst_MultiSeriesIsNoData(t *testing.T) {
+	multi := &promclient.Result{ResultType: "vector", Vector: []promclient.Sample{
+		{Value: 0.01}, {Value: 0.02},
+	}}
+	if _, ok := scalarOrFirst(multi); ok {
+		t.Error("a multi-series vector must be treated as no-data (forgot to aggregate)")
+	}
+	one := &promclient.Result{ResultType: "vector", Vector: []promclient.Sample{{Value: 0.01}}}
+	if v, ok := scalarOrFirst(one); !ok || v != 0.01 {
+		t.Errorf("single-series vector should yield its value, got %g,%v", v, ok)
+	}
+	scalar := &promclient.Result{ResultType: "scalar", Scalar: &promclient.Sample{Value: 0.5}}
+	if v, ok := scalarOrFirst(scalar); !ok || v != 0.5 {
+		t.Errorf("scalar should yield its value, got %g,%v", v, ok)
 	}
 }
 
