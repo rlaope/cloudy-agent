@@ -18,5 +18,6 @@ func RegisterAll(reg *tools.Registry, clients map[string]*promclient.Client) {
 		NewQueryRangeTool(clients),
 		NewLabelValuesTool(clients),
 		NewSeriesTool(clients),
+		NewAnomalyTool(clients),
 	)
 }
