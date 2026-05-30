@@ -58,15 +58,33 @@ func TestRenderRabbitQueues_MinMessagesAndLimit(t *testing.T) {
 	}
 }
 
+// TestRenderRabbitQueues_NilUtilisation pins that a queue whose
+// consumer_utilisation is absent (the API omits it until the queue has had a
+// consumer) renders util=— and, when it has a backlog with consumers attached,
+// is still flagged FALLING BEHIND rather than slipping through unflagged.
+func TestRenderRabbitQueues_NilUtilisation(t *testing.T) {
+	out := renderRabbitQueues("rmq", []rabbitQueue{
+		{Name: "noutil", Vhost: "/", Messages: 300, Ready: 300, Unacked: 0, Consumers: 2, ConsumerUtil: nil},
+	}, 0, 20)
+	if !strings.Contains(out, "util=—") {
+		t.Errorf("nil consumer_utilisation should render as util=—; got:\n%s", out)
+	}
+	if !strings.Contains(out, "FALLING BEHIND") {
+		t.Errorf("a backlogged queue with consumers but unknown utilisation should flag FALLING BEHIND; got:\n%s", out)
+	}
+}
+
 // TestRabbitMQQueuesTool_EndToEnd drives the tool through a fake management API
-// to confirm the path, JSON decode, and render wire together.
+// to confirm the path, the column projection, JSON decode, and render wire
+// together.
 func TestRabbitMQQueuesTool_EndToEnd(t *testing.T) {
 	body := mustMarshal(t, []rabbitQueue{
 		{Name: "orders", Vhost: "/", Messages: 1200, Ready: 1200, Unacked: 0, Consumers: 0},
 	})
-	var gotPath string
+	var gotPath, gotColumns string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		gotColumns = r.URL.Query().Get("columns")
 		_, _ = w.Write(body)
 	}))
 	defer srv.Close()
@@ -84,8 +102,33 @@ func TestRabbitMQQueuesTool_EndToEnd(t *testing.T) {
 	if gotPath != "/api/queues" {
 		t.Errorf("default request path = %q, want /api/queues", gotPath)
 	}
+	if !strings.Contains(gotColumns, "messages_ready") {
+		t.Errorf("request should project columns including messages_ready; got %q", gotColumns)
+	}
 	if !strings.Contains(obs.Text, "orders") || !strings.Contains(obs.Text, "NO CONSUMER") {
 		t.Errorf("observation should describe the stuck orders queue; got:\n%s", obs.Text)
+	}
+}
+
+// TestRabbitMQQueuesTool_ErrorPropagates pins that a non-2xx from the
+// management API (auth failure, broker down) surfaces as a tool error rather
+// than an empty queue list — the operator must see the backend failed during
+// the incident this tool is meant to catch.
+func TestRabbitMQQueuesTool_ErrorPropagates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("unavailable"))
+	}))
+	defer srv.Close()
+
+	cl, err := httpapi.NewClient("rmq", srv.URL, httpapi.Auth{})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	tool := newRabbitMQQueuesTool(map[string]*httpapi.Client{"rmq": cl})
+
+	if _, err := tool.Run(context.Background(), json.RawMessage(`{}`)); err == nil {
+		t.Error("a 5xx from the management API must propagate as an error")
 	}
 }
 
