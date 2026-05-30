@@ -112,14 +112,33 @@ func (p *provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Chun
 // --- wire types ---
 
 type antRequest struct {
-	Model       string       `json:"model"`
-	System      string       `json:"system,omitempty"`
-	Messages    []antMessage `json:"messages"`
-	Tools       []antTool    `json:"tools,omitempty"`
-	Stream      bool         `json:"stream"`
-	MaxTokens   int          `json:"max_tokens"`
-	Temperature float64      `json:"temperature,omitempty"`
+	Model       string           `json:"model"`
+	System      []antSystemBlock `json:"system,omitempty"`
+	Messages    []antMessage     `json:"messages"`
+	Tools       []antTool        `json:"tools,omitempty"`
+	Stream      bool             `json:"stream"`
+	MaxTokens   int              `json:"max_tokens"`
+	Temperature float64          `json:"temperature,omitempty"`
 }
+
+// antSystemBlock is one text block of the system prompt. The array form
+// (vs. a bare string) is what lets us attach cache_control to the prompt
+// so Anthropic caches the stable prefix server-side across turns.
+type antSystemBlock struct {
+	Type         string       `json:"type"` // "text"
+	Text         string       `json:"text"`
+	CacheControl *antCacheCtl `json:"cache_control,omitempty"`
+}
+
+// antCacheCtl marks a prompt-cache breakpoint. Everything up to and
+// including a block carrying it is cached; type is always "ephemeral".
+type antCacheCtl struct {
+	Type string `json:"type"` // "ephemeral"
+}
+
+// ephemeralCache returns the single cache-breakpoint marker reused for the
+// system prompt and the tool array.
+func ephemeralCache() *antCacheCtl { return &antCacheCtl{Type: "ephemeral"} }
 
 type antMessage struct {
 	Role    string      `json:"role"`
@@ -137,9 +156,10 @@ type antContentBlock struct {
 }
 
 type antTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	InputSchema  json.RawMessage `json:"input_schema"`
+	CacheControl *antCacheCtl    `json:"cache_control,omitempty"`
 }
 
 // SSE event types
@@ -244,9 +264,24 @@ func buildRequest(req llm.Request) ([]byte, error) {
 		})
 	}
 
+	// Prompt caching: mark the stable prefix so Anthropic caches it
+	// server-side across turns. The system prompt and the tool array are
+	// the per-turn fixed portion; the conversation tail changes every turn
+	// (and /compact rewrites it), so we never cache message blocks. Two
+	// breakpoints, well within Anthropic's limit of four.
+	var system []antSystemBlock
+	if systemPrompt != "" {
+		system = []antSystemBlock{{Type: "text", Text: systemPrompt, CacheControl: ephemeralCache()}}
+	}
+	if len(tools) > 0 {
+		// A breakpoint on the last tool caches everything up to and
+		// including it — i.e. the whole tool array.
+		tools[len(tools)-1].CacheControl = ephemeralCache()
+	}
+
 	return json.Marshal(antRequest{
 		Model:       req.Model,
-		System:      systemPrompt,
+		System:      system,
 		Messages:    msgs,
 		Tools:       tools,
 		Stream:      true,
