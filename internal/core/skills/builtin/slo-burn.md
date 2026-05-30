@@ -19,6 +19,7 @@ allowed_tools:
   - prom.query_range
   - prom.label_values
   - prom.series
+  - prom.error_budget
   - alert.list_active
   - alert.list_rules
 defaults:
