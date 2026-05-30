@@ -50,11 +50,16 @@ Read-only multi-cluster SRE monitoring AI CLI. Go module rooted at
   Note: `internal/wiring` consumes `internal/core/tools.Registry`; the
   invariant is about that registry's key shape, not the file path.
 - **`render.Sink` writes to the session log via `tuiSink` in
-  `internal/ui/tui/run.go`.** Tool args, observation text, and the raw
-  user prompt are deliberately NOT mirrored to disk yet — the
-  AfterToolCall masker isn't reachable from this seam, so persisting
-  them would re-open the v0.5 M-1 redaction gap. Tool name +
-  KindError + KindUsage(modelID) are persisted; rest is TODO.
+  `internal/ui/tui/run.go`.** Tool args (KindToolCall) and success
+  observations (KindToolResult) ARE now mirrored to disk, redacted
+  through a `permission.Masker` built with
+  `permission.MaskerOrDefault(activeProfile)` — never nil, falls back to
+  `DefaultMaskingPatterns()` so the on-disk mirror is never less redacted
+  than the model-facing `MaskingHook`. This closed the v0.5 M-1 gap.
+  Any new field persisted through this seam MUST pass through
+  `s.masker` first. Still NOT mirrored: assistant prose / `WriteToken`
+  streams (no end-of-turn boundary) and the raw user prompt (it enters
+  as `ag.Run`'s input, not via this sink).
 
 ## Debugging hooks
 

@@ -19,7 +19,7 @@ import "github.com/rlaope/cloudy/internal/core/llm"
 // (regex-based): a novel secret shape can still slip through, exactly as the
 // production MaskingHook documents.
 func MaskHistory(p *Profile, msgs []llm.Message) []llm.Message {
-	masker := maskerOrDefault(p)
+	masker := MaskerOrDefault(p)
 	out := cloneHistory(msgs)
 	for i := range out {
 		// Tool-result bodies are usually JSON blobs carrying key-named
@@ -42,10 +42,12 @@ func MaskHistory(p *Profile, msgs []llm.Message) []llm.Message {
 	return out
 }
 
-// maskerOrDefault builds a Masker from the profile's patterns, falling back
+// MaskerOrDefault builds a Masker from the profile's patterns, falling back
 // to the built-in baseline when the profile configures no masking (or fails
-// to compile) so nothing sensitive is ever written unredacted.
-func maskerOrDefault(p *Profile) *Masker {
+// to compile) so nothing sensitive is ever written unredacted. It never
+// returns nil, which makes it safe for seams that must redact before a disk
+// write (e.g. the TUI session-log sink) even when no profile is active.
+func MaskerOrDefault(p *Profile) *Masker {
 	if m, err := NewMasker(p); err == nil && m != nil {
 		return m
 	}
