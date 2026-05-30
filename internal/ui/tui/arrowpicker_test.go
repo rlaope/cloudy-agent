@@ -105,6 +105,18 @@ func TestArrowPicker_View_WindowsLongList(t *testing.T) {
 	if strings.Contains(tail, "↓ 9 more") {
 		t.Errorf("at the bottom there is nothing below, so no ↓ marker, got: %q", tail)
 	}
+
+	// Mid-list: both markers coexist, the only state that exercises the
+	// hidden-above (start) and hidden-below (len-end) counts at once. With
+	// cursor at index 8 the window is [5,11): 5 hidden above, 4 below.
+	p.cursor = 8
+	mid := p.View()
+	if !strings.Contains(mid, "↑ 5 more") {
+		t.Errorf("mid-list window should report 5 rows hidden above, got: %q", mid)
+	}
+	if !strings.Contains(mid, "↓ 4 more") {
+		t.Errorf("mid-list window should report 4 rows hidden below, got: %q", mid)
+	}
 }
 
 // TestPickerWindow covers the pure windowing math: short lists render whole,
