@@ -96,6 +96,10 @@ type Deps struct {
 	// the session to id so follow-up turns continue that same conversation.
 	// /resume calls it after session.LoadHistory. Injected by run.go.
 	SeedHistory func(id string, history []llm.Message) error
+	// TogglePlan flips plan-first investigation (agent.Options.Plan) and
+	// returns the new state. /plan calls it. Injected by run.go; may be nil
+	// in tests (the handler then reports the feature as unavailable).
+	TogglePlan func() (on bool)
 }
 
 // AgentEvent, ApprovalRequest, the tool/event message envelopes, and the
@@ -1429,6 +1433,18 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		m.stream, nCmd = m.stream.Update(streamClearMsg{})
 		return tea.Batch(nCmd, tea.ClearScreen,
 			m.writeStream("✓ new conversation — session "+newID+"\n"))
+
+	case "plan":
+		m.prompt.SetValue("")
+		if m.deps.TogglePlan == nil {
+			return m.writeStream("plan toggle unavailable\n")
+		}
+		// Safe to flip mid-turn: a running turn already snapshotted its plan
+		// flag, so the change only takes effect on the next question.
+		if m.deps.TogglePlan() {
+			return m.writeStream("✓ plan-first investigation ON — multi-step questions open with a hypothesis plan.\n")
+		}
+		return m.writeStream("✓ plan-first investigation OFF — the agent probes directly.\n")
 
 	case "resume":
 		m.prompt.SetValue("")

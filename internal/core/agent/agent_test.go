@@ -341,6 +341,54 @@ func TestRun_UsesRegistryFn(t *testing.T) {
 	}
 }
 
+// systemOf returns the RoleSystem message content from a captured request,
+// or "" if none. The agent always puts the system prompt at index 0.
+func systemOf(msgs []llm.Message) string {
+	for _, m := range msgs {
+		if m.Role == llm.RoleSystem {
+			return m.Content
+		}
+	}
+	return ""
+}
+
+// TestRun_PlanDirective pins that Options.Plan gates the planning directive in
+// the system prompt: present when on, absent when off (the default).
+func TestRun_PlanDirective(t *testing.T) {
+	t.Parallel()
+
+	const marker = "## Investigation planning"
+
+	run := func(plan bool) string {
+		var sys string
+		prov := &capturingStubProvider{
+			name:     "stub",
+			onStream: func(req llm.Request) { sys = systemOf(req.Messages) },
+			rounds:   [][]llm.Chunk{textChunks("done")},
+		}
+		ag, err := agent.New(agent.Options{
+			Provider: prov,
+			Model:    "stub-model",
+			Registry: tools.New(),
+			Plan:     plan,
+		})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if _, err := ag.Run(context.Background(), "why is checkout slow?", noopStream()); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		return sys
+	}
+
+	if on := run(true); !strings.Contains(on, marker) {
+		t.Errorf("Plan=true: system prompt missing %q", marker)
+	}
+	if off := run(false); strings.Contains(off, marker) {
+		t.Errorf("Plan=false: system prompt must not carry the planning directive")
+	}
+}
+
 func TestRun_SkillFilterStillApplied_WithRegistryFn(t *testing.T) {
 	t.Parallel()
 

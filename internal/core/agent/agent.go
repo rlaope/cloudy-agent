@@ -64,6 +64,9 @@ const (
 		"freeing context window while keeping the recent turns verbatim. Manual; " +
 		"the footer shows a `ctx N%` gauge and warns past 75%.\n" +
 		"- `/new`     — reset the conversation history and start a fresh session log.\n" +
+		"- `/plan`    — toggle plan-first investigation: the agent opens a " +
+		"multi-step question with a brief hypothesis plan (symptom → candidate " +
+		"causes → the probe for each) before calling tools. On by default.\n" +
 		"- `/resume <id>` — reload a past conversation (by session id) back into context.\n" +
 		"- `/replay <id>` — replay a previous session log.\n" +
 		"- `/update`  — upgrade the cloudy binary in place from the latest " +
@@ -96,6 +99,24 @@ const (
 		"4. If asked about cloudy itself (slash commands, skills, config " +
 		"layout, install instructions), answer from this preamble rather " +
 		"than saying you don't know — that information IS your context."
+
+	// planDirective is appended to the system prompt when Options.Plan is set.
+	// It makes the agent open multi-step investigations with an explicit
+	// hypothesis plan before probing — the structured-investigation behaviour
+	// that distinguishes cloudy from an improvised tool-by-tool ReAct loop.
+	// The plan is the leading text of the first assistant turn, so it costs no
+	// extra round-trip and the model executes against its own stated plan.
+	planDirective = "" +
+		"\n\n## Investigation planning\n" +
+		"For any request that needs more than a single tool call, BEGIN your " +
+		"first response with a short plan, then execute it:\n" +
+		"- **Symptom** — restate the question/symptom in one line.\n" +
+		"- **Hypotheses** — 2–4 likely causes, most probable first.\n" +
+		"- **Probes** — for each hypothesis, the specific read-only tool(s) " +
+		"that confirm or rule it out.\n" +
+		"Keep the plan under 120 words, then carry it out, revising as evidence " +
+		"arrives. For a trivial, single-tool, or meta question (e.g. about " +
+		"cloudy itself), skip the plan and answer directly."
 )
 
 // BasePreamble exposes the compiled self-knowledge preamble. The TUI
@@ -185,6 +206,15 @@ type Options struct {
 	Profile *permission.Profile
 	// History is the prior conversation context prepended to each run.
 	History []llm.Message
+	// Plan, when true, appends an investigation-planning directive to the
+	// system prompt: the agent opens any multi-step request with a brief
+	// hypothesis plan (symptom → candidate causes → the read-only probe for
+	// each) before calling tools, then executes against it. The plan is the
+	// leading text of the first assistant turn — no extra round-trip — so it
+	// streams to the operator and seeds the model's own execution. Trivial,
+	// single-tool, or meta questions skip the plan. Off by default; the TUI
+	// turns it on and exposes a /plan toggle.
+	Plan bool
 	// Hooks is the cross-cutting policy chain. When nil, defaults include
 	// DupCallHook plus (when MaxTokensPerSession or MaxUSDPerDay is set) a
 	// CostGuardHook. Pass an explicit empty slice to opt out entirely.
@@ -639,6 +669,9 @@ func truncateMiddle(s string, max int) string {
 func (a *Agent) buildSystemPrompt(reg *tools.Registry, skill resolvedSkill) string {
 	var sb strings.Builder
 	sb.WriteString(basePreamble)
+	if a.opts.Plan {
+		sb.WriteString(planDirective)
+	}
 	// Skill catalog (all skills by name + description) is listed ONLY when no
 	// skill is active. Once the operator has switched into a skill — its full
 	// body is injected just below — the catalog of the OTHER skills is noise

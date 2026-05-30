@@ -32,6 +32,7 @@ type askOptions struct {
 	skill  string
 	prompt string
 	resume string
+	plan   bool
 }
 
 func (o *askOptions) bind(fs *flagSet) {
@@ -41,6 +42,7 @@ func (o *askOptions) bind(fs *flagSet) {
 	fs.StringVar(&o.prompt, "prompt", "", "prompt for one-shot mode (alias for positional)")
 	fs.StringVar(&o.prompt, "p", "", "shorthand for --prompt")
 	fs.StringVar(&o.resume, "resume", "", "resume a past session by id (continues its conversation)")
+	fs.BoolVar(&o.plan, "plan", false, "plan-first: open multi-step investigations with a hypothesis plan before probing")
 }
 
 func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -144,6 +146,7 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Approver:                 agent.DenyApprover(),
 		Profile:                  activeProfile,
 		History:                  history,
+		Plan:                     opts.plan,
 	})
 	if err != nil {
 		return errf("agent: %w", err)

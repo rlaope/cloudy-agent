@@ -51,6 +51,7 @@ var builtinItems = []paletteItem{
 	{title: "resume", usage: "/resume <id>  — reload a past conversation into context"},
 	{title: "compact", usage: "/compact      — summarize & drop old turns to free context"},
 	{title: "new", usage: "/new          — reset conversation + start a fresh session"},
+	{title: "plan", usage: "/plan         — toggle plan-first investigation (on by default)"},
 	{title: "clear", usage: "/clear        — clear screen output (history kept; use /new to reset)"},
 	{title: "update", usage: "/update       — upgrade cloudy to the latest GitHub release"},
 	{title: "help", usage: "/help         — show help text"},
