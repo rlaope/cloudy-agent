@@ -166,6 +166,41 @@ func TestCandidateCauses_EntityMatchBreaksTie(t *testing.T) {
 	}
 }
 
+// TestCandidateCauses_SingleCandidateLabel pins that a lone candidate is
+// labeled "[only candidate]" rather than a misleading "[100%]".
+func TestCandidateCauses_SingleCandidateLabel(t *testing.T) {
+	events := merge(
+		evt("metric_breach", "errors", t2),
+		evt("image", "deployed v9", t1),
+	)
+	got := candidateCauses(events, "")
+	if !strings.Contains(got, "[only candidate]") {
+		t.Fatalf("expected '[only candidate]' for a lone candidate, got: %s", got)
+	}
+	if strings.Contains(got, "%]") {
+		t.Fatalf("a single candidate must not render a share percentage, got: %s", got)
+	}
+}
+
+// TestCandidateCauses_TruncationNotedSilently pins the no-silent-cap rule: with
+// more than topCandidates qualifying changes, the surplus is announced.
+func TestCandidateCauses_TruncationNotedSilently(t *testing.T) {
+	base := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	symptom := base.Add(30 * time.Minute)
+	events := merge(
+		evt("metric_breach", "errors", symptom),
+		evt("image", "c1", base.Add(25*time.Minute)),
+		evt("image", "c2", base.Add(20*time.Minute)),
+		evt("image", "c3", base.Add(15*time.Minute)),
+		evt("image", "c4", base.Add(10*time.Minute)),
+		evt("image", "c5", base.Add(5*time.Minute)),
+	)
+	got := candidateCauses(events, "")
+	if !strings.Contains(got, "…and 2 more") {
+		t.Fatalf("expected '…and 2 more' surplus note (5 candidates, top 3), got: %s", got)
+	}
+}
+
 func TestShortDuration(t *testing.T) {
 	cases := map[time.Duration]string{
 		0:                         "0s",

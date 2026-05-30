@@ -25,10 +25,6 @@ var changeKinds = map[string]float64{
 	"scale":             0.5,
 }
 
-// otherChangeWeight is the causal weight for a state-altering kind not in
-// changeKinds — kept low so an unrecognised change never outranks a deploy.
-const otherChangeWeight = 0.3
-
 // proximityTauSeconds is the e-folding time of the proximity term: a change
 // one τ before the symptom keeps ~37% of its score, two τ before ~14%. Ten
 // minutes matches the typical deploy→symptom lag in a rolling update.
@@ -106,10 +102,11 @@ func earliestSymptom(events []change.ChangeEvent) *change.ChangeEvent {
 
 // scoreCauses scores every state-altering change against the anchor and returns
 // them sorted by score descending (ties broken by recency). When anchor is a
-// symptom, only changes strictly before it qualify (a change cannot cause an
-// earlier symptom); the proximity term measures anchor−change. When anchor is
-// nil (no symptom), every change qualifies and proximity is measured against
-// the newest event so recent changes lead.
+// symptom, only changes STRICTLY before it qualify — a change cannot cause an
+// earlier symptom, and one at the exact symptom timestamp is excluded as too
+// simultaneous to attribute; the proximity term measures anchor−change. When
+// anchor is nil (no symptom), every change qualifies and proximity is measured
+// against the newest event so recent changes lead.
 func scoreCauses(events []change.ChangeEvent, workload string, anchor *change.ChangeEvent) []scoredCause {
 	ref := anchor
 	if ref == nil {
@@ -140,6 +137,10 @@ func scoreCauses(events []change.ChangeEvent, workload string, anchor *change.Ch
 	}
 
 	sort.SliceStable(out, func(i, j int) bool {
+		// Equal candidates (same kind, Δt, match) are products of identical
+		// operands, so float equality is exact and reachable here by design;
+		// they fall through to the recency tie-break. SliceStable then keeps
+		// newest-first input order on a genuine tie.
 		if out[i].score != out[j].score {
 			return out[i].score > out[j].score
 		}
@@ -149,19 +150,12 @@ func scoreCauses(events []change.ChangeEvent, workload string, anchor *change.Ch
 }
 
 // causeWeight returns the causal weight of a change kind and whether the kind
-// is state-altering at all (symptoms and bare events return false).
+// is a ranking candidate at all. Only the known state-altering kinds in
+// changeKinds qualify; symptoms and any unrecognised kind (a bare "event", a
+// log line) are deliberately excluded so noise never ranks as a cause.
 func causeWeight(kind string) (float64, bool) {
-	if w, ok := changeKinds[kind]; ok {
-		return w, true
-	}
-	if symptomKinds[kind] {
-		return 0, false
-	}
-	// An unrecognised kind that is not a symptom is treated as a weak change
-	// only when it carries no symptom semantics — otherwise it is noise. We
-	// deliberately exclude unknown kinds from candidacy to avoid ranking a
-	// log line as a cause; return false so it is skipped.
-	return 0, false
+	w, ok := changeKinds[kind]
+	return w, ok
 }
 
 // entityMatch boosts a change whose Target names the workload under
@@ -169,14 +163,32 @@ func causeWeight(kind string) (float64, bool) {
 // discriminates the occasional cross-target event (e.g. a shared ConfigMap
 // rollout vs the deployment's own image bump). 1.0 on match, 0.6 otherwise;
 // an empty workload cannot discriminate and scores 1.0.
+//
+// Matching is on delimited tokens, not a raw substring, so workload "api" does
+// not spuriously match "rapid-service"; it matches "deploy/checkout" for
+// workload "checkout" but not an unrelated target that merely embeds the
+// letters.
 func entityMatch(workload, target string) float64 {
 	if workload == "" {
 		return 1.0
 	}
-	if strings.Contains(strings.ToLower(target), strings.ToLower(workload)) {
-		return 1.0
+	w := strings.ToLower(workload)
+	for _, tok := range strings.FieldsFunc(strings.ToLower(target), isTargetDelim) {
+		if tok == w {
+			return 1.0
+		}
 	}
 	return 0.6
+}
+
+// isTargetDelim splits a change Target ("deploy/checkout", "ns:app-1") into the
+// name tokens entityMatch compares against the workload.
+func isTargetDelim(r rune) bool {
+	switch r {
+	case '/', '-', '.', ':', '_', ' ':
+		return true
+	}
+	return false
 }
 
 // newestEvent returns the newest event (events are newest-first, so index 0),
@@ -204,22 +216,36 @@ func renderRanked(header string, ranked []scoredCause, symptom *change.ChangeEve
 	if n > topCandidates {
 		n = topCandidates
 	}
+	single := len(ranked) == 1
 	for i := 0; i < n; i++ {
 		c := ranked[i]
-		pct := 0
-		if total > 0 && c.score > 0 {
-			// Clamp to ≥1% so a genuine (if distant) candidate never renders
-			// as a misleading [0%] after rounding.
-			pct = int(math.Round(100 * c.score / total))
-			if pct < 1 {
-				pct = 1
+		// "share NN%" is each candidate's portion of the total score — a
+		// RELATIVE ranking among candidates, not an absolute probability that
+		// this is the cause. The label keeps that explicit on every line so a
+		// downstream summary can't reduce it to a bare "72% certain". A lone
+		// candidate has no one to share with, so it carries no percentage.
+		if single {
+			fmt.Fprintf(&b, "  %d. [only candidate] %s", i+1, describeEvent(c.event))
+		} else {
+			pct := 0
+			if total > 0 && c.score > 0 {
+				// Clamp to ≥1% so a genuine (if distant) candidate never
+				// renders as a misleading [0%] after rounding.
+				pct = int(math.Round(100 * c.score / total))
+				if pct < 1 {
+					pct = 1
+				}
 			}
+			fmt.Fprintf(&b, "  %d. [share %d%%] %s", i+1, pct, describeEvent(c.event))
 		}
-		fmt.Fprintf(&b, "  %d. [%d%%] %s", i+1, pct, describeEvent(c.event))
 		if symptom != nil {
 			fmt.Fprintf(&b, " — %s before symptom", shortDuration(symptom.Time.Sub(c.event.Time)))
 		}
 		b.WriteByte('\n')
+	}
+	// Never silently drop candidates past the cap — say how many more there are.
+	if extra := len(ranked) - n; extra > 0 {
+		fmt.Fprintf(&b, "  …and %d more\n", extra)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
