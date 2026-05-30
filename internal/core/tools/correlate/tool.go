@@ -30,6 +30,8 @@ type correlateArgs struct {
 	Limit           int     `json:"limit"`
 	MetricQuery     string  `json:"metric_query"`
 	MetricThreshold float64 `json:"metric_threshold"`
+	SLOQuery        string  `json:"slo_query"`
+	SLOTarget       float64 `json:"slo_target"`
 }
 
 // correlateTool joins the available change sources (k8s, docker, argo) and the
@@ -73,7 +75,7 @@ func newCorrelateTool(sources ...change.ChangeSource) tools.Tool {
 func (t *correlateTool) Name() string { return "correlate.workload" }
 
 func (t *correlateTool) Description() string {
-	return "Correlate recent changes and symptoms for a workload across signals — Kubernetes/Docker change history, Argo CD sync history, plus metric/log/trace symptoms — into one newest-first evidence timeline, and rank the state-altering changes most likely to have caused the earliest symptom by time-proximity, change weight, and entity match, each with a relative confidence. Supply metric_query (PromQL) with metric_threshold to fold a metric breach onto the timeline; log and trace symptoms are added automatically when those backends are configured. Read-only."
+	return "Correlate recent changes and symptoms for a workload across signals — Kubernetes/Docker change history, Argo CD sync history, plus metric/log/trace symptoms — into one newest-first evidence timeline, and rank the state-altering changes most likely to have caused the earliest symptom by time-proximity, change weight, and entity match, each with a relative confidence. Supply metric_query (PromQL) with metric_threshold to fold a metric breach onto the timeline, or slo_query with slo_target to fold an acute SLO error-budget fast-burn as a budget_burn symptom; log and trace symptoms are added automatically when those backends are configured. Read-only."
 }
 
 func (t *correlateTool) Schema() json.RawMessage {
@@ -88,6 +90,8 @@ func (t *correlateTool) Schema() json.RawMessage {
 			"limit":            map[string]any{"type": "integer", "description": "Maximum number of timeline events to return; default 50."},
 			"metric_query":     str("PromQL query whose breaches are folded onto the timeline as metric symptom events; empty = no metric symptom."),
 			"metric_threshold": map[string]any{"type": "number", "description": "Value a metric_query sample must exceed to count as a breach; default 0 (i.e. value > 0)."},
+			"slo_query":        str("PromQL returning the bad-event ratio (0..1) with the literal token $window where the range goes, e.g. \"sum(rate(http_5xx[$window]))/sum(rate(http_total[$window]))\". When set with slo_target, an acute fast-burn (≥14.4× over both 5m and 1h) is folded onto the timeline as a budget_burn symptom; empty = no SLO symptom."),
+			"slo_target":       map[string]any{"type": "number", "description": "SLO target as a fraction in (0,1), e.g. 0.999, paired with slo_query. Burn rate = bad-ratio / (1 - slo_target)."},
 		},
 		"required": []string{"workload"},
 	}
@@ -130,6 +134,9 @@ func (t *correlateTool) Run(ctx context.Context, raw json.RawMessage) (tools.Obs
 	// never mutate the shared t.changeSources backing array across calls.
 	sources := append([]change.ChangeSource(nil), t.changeSources...)
 	if src := newMetricSource(t.prom, a.MetricQuery, a.MetricThreshold); src != nil {
+		sources = append(sources, src)
+	}
+	if src := newBudgetSource(t.prom, a.SLOQuery, a.SLOTarget); src != nil {
 		sources = append(sources, src)
 	}
 	if src := newLogSource(t.logs, t.dockerHub); src != nil {
