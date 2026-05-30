@@ -62,6 +62,8 @@ var canonicalToolNames = []string{
 
 	"queue.rabbitmq_queues", "queue.kafka_consumer_lag",
 
+	"cloud.aws_sqs_queue_depth",
+
 	"change.recent",
 
 	"metric.container_stats",

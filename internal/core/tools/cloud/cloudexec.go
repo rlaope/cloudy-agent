@@ -53,6 +53,11 @@ var allowedSubcommands = map[string]map[string]struct{}{
 		"rds describe-db-instances": {},
 		"lambda list-functions":     {},
 		"eks list-clusters":         {},
+		// SQS queue depth (read-only): list queues + read approximate message
+		// counts. get-queue-attributes is a pure read — it neither sends,
+		// receives, nor deletes messages.
+		"sqs list-queues":          {},
+		"sqs get-queue-attributes": {},
 		// FinOps / cost (read-only): Cost Explorer get-cost-and-usage.
 		"ce get-cost-and-usage": {},
 		// Audit / change history (read-only): CloudTrail management events.

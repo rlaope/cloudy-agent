@@ -63,6 +63,7 @@ func TestRegisterAll_RegistersExpectedToolNames(t *testing.T) {
 		"cloud.aws_rds_describe_instances",
 		"cloud.aws_lambda_list_functions",
 		"cloud.aws_eks_list_clusters",
+		"cloud.aws_sqs_queue_depth",
 		"cloud.aws_ce_cost_and_usage",
 		"cloud.azure_monitor_metric_definitions",
 		"cloud.azure_monitor_metrics",
