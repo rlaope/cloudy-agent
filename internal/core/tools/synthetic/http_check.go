@@ -2,17 +2,25 @@
 // uptime/latency check. Unlike the rest of cloudy, which passively reads
 // telemetry that already exists, this group actively reaches out from the
 // operator's vantage to answer "is this endpoint actually reachable, and how
-// fast". Every request flows through transport.ReadOnlyRoundTripper, so only
-// GET/HEAD probes are possible — the read-only contract holds.
+// fast".
+//
+// Two layers bound what a probe can do: the tool itself issues only GET/HEAD
+// (the method switch in runHTTPCheck), and transport.ReadOnlyRoundTripper is a
+// second backstop that refuses any non-read verb on every hop including
+// redirects. A dial-time guard (guardedDialControl) additionally refuses
+// link-local destinations so an LLM-chosen URL cannot reach the cloud-metadata
+// service. See docs/SAFETY.md for the full SSRF posture.
 package synthetic
 
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/rlaope/cloudy/internal/core/tools"
@@ -45,7 +53,7 @@ func newHTTPCheckTool() tools.Tool {
 	})
 	return tools.Spec[args]{
 		Name:        "synthetic.http_check",
-		Description: "Actively probe an HTTP(S) endpoint from the operator's vantage and report whether it is reachable, its status code, response latency, redirect count, and (for HTTPS) the TLS certificate's days-to-expiry. Read-only — GET/HEAD only.",
+		Description: "Actively probe an HTTP(S) endpoint from the operator's vantage and report whether it is reachable, its status code, response latency, redirect count, and (for HTTPS) the TLS certificate's days-to-expiry (negative means already expired). Read-only — GET/HEAD only; link-local/metadata addresses are refused.",
 		Schema:      schema,
 		Run: func(ctx context.Context, a args) (tools.Observation, error) {
 			return runHTTPCheck(ctx, a.URL, a.Method, a.ExpectStatus, a.TimeoutSeconds)
@@ -95,7 +103,7 @@ func runHTTPCheck(ctx context.Context, rawURL, method string, expectStatus, time
 
 	redirects := 0
 	client := &http.Client{
-		Transport: transport.New(nil),
+		Transport: guardedTransport(),
 		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			redirects = len(via)
@@ -111,7 +119,7 @@ func runHTTPCheck(ctx context.Context, rawURL, method string, expectStatus, time
 		return tools.Observation{}, fmt.Errorf("synthetic.http_check: build request: %w", err)
 	}
 
-	res := probeResult{URL: rawURL, Method: method, Redirects: redirects}
+	res := probeResult{URL: rawURL, Method: method}
 	start := time.Now()
 	resp, err := client.Do(req)
 	res.LatencyMs = time.Since(start).Milliseconds()
@@ -123,6 +131,10 @@ func runHTTPCheck(ctx context.Context, rawURL, method string, expectStatus, time
 		res.Error = err.Error()
 		return tools.Observation{Text: formatProbe(res), Table: tableProbe(res), Raw: res}, nil
 	}
+	// The body is intentionally not read — a probe only needs status/timing,
+	// and reading an attacker-sized body would be a DoS vector. Closing without
+	// draining drops the connection instead of pooling it, which is fine for a
+	// one-shot check. Do NOT "fix" this into an unbounded read.
 	defer func() { _ = resp.Body.Close() }()
 
 	res.Up = true
@@ -137,6 +149,40 @@ func runHTTPCheck(ctx context.Context, rawURL, method string, expectStatus, time
 		res.CertDays = &days
 	}
 	return tools.Observation{Text: formatProbe(res), Table: tableProbe(res), Raw: res}, nil
+}
+
+// guardedTransport returns a read-only transport whose dialer refuses
+// link-local destinations. transport.New enforces the GET/HEAD/OPTIONS verb
+// contract on every hop; guardedDialControl closes the one hole the verb
+// contract cannot — egress to the cloud-metadata service.
+func guardedTransport() http.RoundTripper {
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	base.DialContext = (&net.Dialer{
+		Timeout:   maxProbeTimeout,
+		KeepAlive: 30 * time.Second,
+		Control:   guardedDialControl,
+	}).DialContext
+	return transport.New(base)
+}
+
+// guardedDialControl rejects connections to link-local addresses
+// (169.254.0.0/16, fe80::/10). 169.254.169.254 is the AWS/GCP/Azure metadata
+// endpoint, which serves IAM credentials over a plain GET — exactly what the
+// read-only contract cannot defend against. Running at dial time on the
+// post-DNS-resolution IP also defeats DNS-rebinding and a redirect aimed at
+// metadata. Loopback and RFC1918/private ranges stay reachable on purpose:
+// probing an internal service is the tool's legitimate use and the operator's
+// own shell can already reach them.
+func guardedDialControl(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && (ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()) {
+		return fmt.Errorf("blocked link-local address %s (cloud-metadata / SSRF guard)", host)
+	}
+	return nil
 }
 
 func probeVerdict(r probeResult) string {

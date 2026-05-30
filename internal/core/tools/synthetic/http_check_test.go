@@ -2,12 +2,14 @@ package synthetic
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/rlaope/cloudy/internal/core/tools"
+	"github.com/rlaope/cloudy/internal/transport"
 )
 
 func runCheck(t *testing.T, args string) tools.Observation {
@@ -87,6 +89,34 @@ func TestHTTPCheck_RejectsNonReadMethod(t *testing.T) {
 	_, err := tool.Run(context.Background(), []byte(`{"url":"http://example.com","method":"POST"}`))
 	if err == nil || !strings.Contains(err.Error(), "read-only") {
 		t.Errorf("POST must be rejected as read-only, got err=%v", err)
+	}
+}
+
+// TestHTTPCheck_BlocksLinkLocalMetadata is the SSRF regression: a probe aimed
+// at the cloud-metadata address must be refused at dial time (DOWN verdict with
+// the guard reason), so an LLM-chosen URL can't exfiltrate IAM credentials.
+func TestHTTPCheck_BlocksLinkLocalMetadata(t *testing.T) {
+	obs := runCheck(t, `{"url":"http://169.254.169.254/latest/meta-data/","timeout_seconds":2}`)
+	if !strings.Contains(obs.Text, "DOWN") {
+		t.Fatalf("metadata probe must be DOWN, got %q", obs.Text)
+	}
+	if !strings.Contains(obs.Text, "link-local") {
+		t.Errorf("expected the link-local guard reason, got %q", obs.Text)
+	}
+}
+
+// TestTransportBackstop_RefusesNonReadVerb proves the second layer the package
+// doc advertises: even if the tool's GET/HEAD switch were bypassed, the shared
+// transport refuses a non-read verb. Exercises the guarded transport directly.
+func TestTransportBackstop_RefusesNonReadVerb(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+
+	client := &http.Client{Transport: guardedTransport()}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL, nil)
+	_, err := client.Do(req)
+	if err == nil || !errors.Is(err, transport.ErrReadOnlyViolation) {
+		t.Fatalf("transport must refuse POST with ErrReadOnlyViolation, got %v", err)
 	}
 }
 
