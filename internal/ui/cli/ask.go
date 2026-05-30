@@ -11,6 +11,7 @@ import (
 
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/core/agent"
+	"github.com/rlaope/cloudy/internal/core/llm"
 	"github.com/rlaope/cloudy/internal/core/skills"
 	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/render"
@@ -30,6 +31,7 @@ type askOptions struct {
 	model  string
 	skill  string
 	prompt string
+	resume string
 }
 
 func (o *askOptions) bind(fs *flagSet) {
@@ -38,6 +40,7 @@ func (o *askOptions) bind(fs *flagSet) {
 	fs.StringVar(&o.skill, "skill", "", "skill to activate (e.g. jvm-gc)")
 	fs.StringVar(&o.prompt, "prompt", "", "prompt for one-shot mode (alias for positional)")
 	fs.StringVar(&o.prompt, "p", "", "shorthand for --prompt")
+	fs.StringVar(&o.resume, "resume", "", "resume a past session by id (continues its conversation)")
 }
 
 func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -103,7 +106,21 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		toolReg = toolReg.Filter(s.AllowedTools)
 	}
 
-	sess, err := session.New("")
+	// --resume loads a past conversation and continues it. Sharing the id
+	// space (session.New(opts.resume)) appends to the same audit log and
+	// keeps one resume snapshot per conversation.
+	var history []llm.Message
+	resumeID := ""
+	if opts.resume != "" {
+		h, _, lerr := session.LoadHistory(opts.resume)
+		if lerr != nil {
+			return errf("resume: %w", lerr)
+		}
+		history = h
+		resumeID = opts.resume
+	}
+
+	sess, err := session.New(resumeID)
 	if err != nil {
 		return errf("session: %w", err)
 	}
@@ -126,13 +143,24 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		MaxLogResponseBytes:      cfg.Safety.MaxLogResponseBytes,
 		Approver:                 agent.DenyApprover(),
 		Profile:                  activeProfile,
+		History:                  history,
 	})
 	if err != nil {
 		return errf("agent: %w", err)
 	}
 
-	if _, err := ag.Run(ctx, prompt, stream); err != nil {
-		return errf("run: %w", err)
+	newMsgs, runErr := ag.Run(ctx, prompt, stream)
+	if runErr != nil {
+		return errf("run: %w", runErr)
+	}
+	// Persist a masked resume snapshot so `cloudy ask --resume <id>` can chain
+	// follow-up queries. MaskHistory is mandatory — the history carries the
+	// raw prompt and unmasked prose that must never hit disk unredacted.
+	if len(newMsgs) > 0 {
+		masked := permission.MaskHistory(activeProfile, newMsgs)
+		if serr := session.SaveHistory(sess.ID, modelID, masked); serr != nil {
+			fmt.Fprintf(stderr, "cloudy: resume save: %v\n", serr)
+		}
 	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintf(stdout, "— model=%s session=%s\n", modelID, sess.ID)

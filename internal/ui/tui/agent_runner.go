@@ -66,6 +66,11 @@ type usageAccum struct {
 	Input  int
 	Output int
 	USD    float64
+	// LastInputTokens is the provider-reported input-token count of the
+	// most recent turn — NOT a running sum. Because the whole history
+	// replays every turn, this is the current context size, used to drive
+	// the footer's "ctx N%" gauge and the /compact-recommend hint.
+	LastInputTokens int
 }
 
 // runAgent starts the agent in a goroutine and returns a tea.Cmd that delivers
@@ -231,6 +236,11 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 		m.usage.Input += evt.Usage.Input
 		m.usage.Output += evt.Usage.Output
 		m.usage.USD += evt.Usage.USD
+		// The provider's input-token count IS the current context size
+		// (full history replays each turn), so overwrite rather than sum.
+		if evt.Usage.Input > 0 {
+			m.usage.LastInputTokens = evt.Usage.Input
+		}
 		// Prefer the provider's authoritative output-token count over the
 		// approxTokens estimator built up from streaming chunks.
 		if evt.Usage.Output > 0 {

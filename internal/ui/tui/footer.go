@@ -26,10 +26,11 @@ const (
 // footer never reads buildinfo directly — keeps the seam testable and
 // the single source of truth in the parent Model.
 type FooterModel struct {
-	state string
-	model string
-	cost  float64
-	width int
+	state  string
+	model  string
+	cost   float64
+	ctxPct int // context-window usage 0-100; rendered as the "ctx N%" segment
+	width  int
 
 	brandRendered string // pre-rendered "cloudy <ver>" segment
 	sepRendered   string // pre-rendered separator with dim style
@@ -80,13 +81,27 @@ func (f *FooterModel) SetModel(m string) { f.model = orUnconfigured(m) }
 // always-visible cost moved here to the pinned footer.
 func (f *FooterModel) SetCost(c float64) { f.cost = c }
 
+// SetCtxPct updates the context-window usage segment (clamped to 0-100).
+// The parent computes it from the latest input-token count over the model's
+// context window so the operator can see when to /compact.
+func (f *FooterModel) SetCtxPct(p int) {
+	if p < 0 {
+		p = 0
+	}
+	if p > 100 {
+		p = 100
+	}
+	f.ctxPct = p
+}
+
 // View renders the single-line footer.
 func (f FooterModel) View() string {
 	cost := fmt.Sprintf("$%.4f", f.cost)
+	ctx := fmt.Sprintf("ctx %d%%", f.ctxPct)
 	if f.noColor {
 		return f.brandRendered + f.sepRendered +
 			"state: " + f.state + f.sepRendered +
-			"model: " + f.model + f.sepRendered + cost
+			"model: " + f.model + f.sepRendered + cost + f.sepRendered + ctx
 	}
 	var b strings.Builder
 	b.Grow(len(f.brandRendered) + 80)
@@ -99,6 +114,14 @@ func (f FooterModel) View() string {
 	b.WriteString(f.valueStyle.Render(f.model))
 	b.WriteString(f.sepRendered)
 	b.WriteString(f.valueStyle.Render(cost))
+	b.WriteString(f.sepRendered)
+	// ctx gauge tints amber once it crosses the advise threshold so the
+	// footer itself echoes the below-prompt /compact hint.
+	ctxStyle := f.valueStyle
+	if f.ctxPct >= compactAdviseThreshold {
+		ctxStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
+	}
+	b.WriteString(ctxStyle.Render(ctx))
 	return b.String()
 }
 
