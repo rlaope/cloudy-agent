@@ -49,6 +49,7 @@ func Rebuild(cfg config.Config, opts RebuildOpts) (*tools.Registry, error) {
 		NodeInspectors: cfg.NodeInspectors,
 		Alertmanager:   cfg.Alertmanager,
 		ArgoCD:         cfg.ArgoCD,
+		PagerDuty:      cfg.PagerDuty,
 		DockerHosts:    cfg.DockerHosts,
 		CloudAWS:       cfg.CloudAWS,
 		CloudGCP:       cfg.CloudGCP,

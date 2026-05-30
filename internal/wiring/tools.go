@@ -31,6 +31,7 @@ import (
 	"github.com/rlaope/cloudy/internal/core/tools/k8s"
 	tlog "github.com/rlaope/cloudy/internal/core/tools/log"
 	"github.com/rlaope/cloudy/internal/core/tools/metric"
+	"github.com/rlaope/cloudy/internal/core/tools/oncall"
 	"github.com/rlaope/cloudy/internal/core/tools/perf"
 	"github.com/rlaope/cloudy/internal/core/tools/prom"
 	"github.com/rlaope/cloudy/internal/core/tools/py"
@@ -70,6 +71,8 @@ type Options struct {
 	Alertmanager []config.AlertmanagerEndpoint
 	// ArgoCD is the list of Argo CD API endpoints.
 	ArgoCD []config.ArgoCDEndpoint
+	// PagerDuty is the list of PagerDuty accounts for the oncall group.
+	PagerDuty []config.PagerDutyEndpoint
 	// DockerHosts is the list of Docker daemons cloudy may inspect.
 	DockerHosts []config.DockerHost
 	// CloudAWS / CloudGCP / CloudAzure are the cloud-provider accounts cloudy
@@ -127,6 +130,9 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 
 	gitopsClients, gitopsSkips := gitops.BuildClients(opts.ArgoCD)
 	gitops.RegisterAll(reg, gitopsClients, gitopsSkips)
+
+	oncallClients, oncallSkips := oncall.BuildClients(opts.PagerDuty)
+	oncall.RegisterAll(reg, oncallClients, oncallSkips)
 
 	cloudClients, cloudSkips := cloud.BuildClients(opts.CloudAWS, opts.CloudGCP, opts.CloudAzure)
 	cloud.RegisterAll(reg, cloudClients, cloudSkips)
