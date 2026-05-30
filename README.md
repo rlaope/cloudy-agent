@@ -1,7 +1,7 @@
 # cloudy
 
 <p align="center">
-  <img src="assets/cloudylogo.png" alt="cloudy-agent" width="520">
+  <img src="assets/cloudylogo.png" alt="cloudy-agent" width="100%">
 </p>
 
 Read-only multi-cluster SRE agent in your terminal. Ask plain-language
