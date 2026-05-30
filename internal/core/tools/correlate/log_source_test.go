@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,5 +133,132 @@ func TestLogErrorEvents_Empty(t *testing.T) {
 	events := logErrorEvents(nil, "myapp")
 	if len(events) != 0 {
 		t.Errorf("expected 0 events for nil input, got %d", len(events))
+	}
+}
+
+// TestLokiSelector_NamespaceScoping verifies the LogQL selector folds in
+// namespace=%q only when ChangeQuery.Namespace is set.
+func TestLokiSelector_NamespaceScoping(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("query")
+		_, _ = w.Write([]byte(`{"data":{"result":[]}}`))
+	}))
+	defer srv.Close()
+
+	c, err := httpapi.NewClient("loki-1", srv.URL, httpapi.Auth{})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	logs := tlog.Clients{Loki: map[string]*tlog.LokiClient{"loki-1": {Client: c}}}
+	src := newLogSource(logs, nil)
+
+	if _, err := src.RecentChanges(context.Background(), change.ChangeQuery{Workload: "api"}); err != nil {
+		t.Fatalf("RecentChanges (no ns): %v", err)
+	}
+	if !strings.HasPrefix(gotQuery, `{app="api"} |~`) {
+		t.Errorf("no-namespace selector = %q, want {app=\"api\"} prefix", gotQuery)
+	}
+
+	if _, err := src.RecentChanges(context.Background(), change.ChangeQuery{Workload: "api", Namespace: "prod"}); err != nil {
+		t.Fatalf("RecentChanges (ns): %v", err)
+	}
+	if !strings.HasPrefix(gotQuery, `{app="api", namespace="prod"} |~`) {
+		t.Errorf("namespace selector = %q, want app+namespace prefix", gotQuery)
+	}
+}
+
+// TestESErrorQuery verifies the Elasticsearch URI query string includes the
+// time range and error-level clause always, and the namespace clause only when
+// set.
+func TestESErrorQuery(t *testing.T) {
+	start := time.Date(2026, 5, 28, 11, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+
+	q := esErrorQuery("checkout", "", start, end)
+	if !strings.Contains(q, "@timestamp:[2026-05-28T11:00:00Z TO 2026-05-28T12:00:00Z]") {
+		t.Errorf("missing time range: %q", q)
+	}
+	if !strings.Contains(q, `"checkout"`) || !strings.Contains(q, "level:ERROR") {
+		t.Errorf("missing workload/level clause: %q", q)
+	}
+	if strings.Contains(q, "kubernetes.namespace_name") {
+		t.Errorf("namespace clause leaked without namespace: %q", q)
+	}
+
+	qns := esErrorQuery("checkout", "prod", start, end)
+	if !strings.Contains(qns, `kubernetes.namespace_name:"prod"`) {
+		t.Errorf("missing namespace clause: %q", qns)
+	}
+}
+
+func TestParseESTimestamps(t *testing.T) {
+	body := []byte(`{"hits":{"hits":[
+		{"_source":{"@timestamp":"2026-05-28T12:00:05Z"}},
+		{"_source":{"@timestamp":"2026-05-28T12:00:01Z"}},
+		{"_source":{"@timestamp":"not-a-time"}},
+		{"_source":{"message":"no timestamp field"}}
+	]}}`)
+	times, err := parseESTimestamps(body, "@timestamp")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(times) != 2 {
+		t.Fatalf("len = %d, want 2 (bad/absent timestamps skipped)", len(times))
+	}
+}
+
+func TestESLogErrorEvents(t *testing.T) {
+	t0 := time.Date(2026, 5, 28, 12, 0, 5, 0, time.UTC)
+	t1 := time.Date(2026, 5, 28, 12, 0, 1, 0, time.UTC) // earliest
+	got := esLogErrorEvents([]time.Time{t0, t1}, "checkout")
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	e := got[0]
+	if e.Kind != "log_error" || e.Source != "log" || e.Target != "checkout" {
+		t.Errorf("event = %+v, want log_error/log/checkout", e)
+	}
+	if !e.Time.Equal(t1) {
+		t.Errorf("Time = %v, want earliest %v", e.Time, t1)
+	}
+	if e.Summary != "2 error log(s) in window" {
+		t.Errorf("Summary = %q", e.Summary)
+	}
+	if got := esLogErrorEvents(nil, "checkout"); len(got) != 0 {
+		t.Errorf("nil input: want 0 events, got %d", len(got))
+	}
+}
+
+// TestLogSource_ESOnly drives the full ES path against a canned _search
+// response, verifying an ES-only deployment now yields log symptoms.
+func TestLogSource_ESOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"hits":{"hits":[
+			{"_source":{"@timestamp":"2026-05-28T12:00:01Z"}},
+			{"_source":{"@timestamp":"2026-05-28T12:00:09Z"}}
+		]}}`))
+	}))
+	defer srv.Close()
+
+	c, err := httpapi.NewClient("es-1", srv.URL, httpapi.Auth{})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	logs := tlog.Clients{ES: map[string]*tlog.ESClient{"es-1": {Client: c}}}
+	src := newLogSource(logs, nil)
+	if src == nil {
+		t.Fatal("newLogSource returned nil for ES-only clients")
+	}
+
+	events, err := src.RecentChanges(context.Background(), change.ChangeQuery{Workload: "checkout"})
+	if err != nil {
+		t.Fatalf("RecentChanges: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != "log_error" {
+		t.Fatalf("events = %+v, want one log_error", events)
+	}
+	if !events[0].Time.Equal(time.Date(2026, 5, 28, 12, 0, 1, 0, time.UTC)) {
+		t.Errorf("Time = %v, want earliest", events[0].Time)
 	}
 }

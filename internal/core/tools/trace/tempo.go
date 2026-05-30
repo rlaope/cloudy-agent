@@ -131,4 +131,68 @@ func newTempoSearchTool(clients map[string]*TempoClient) tools.Tool {
 	}.Build()
 }
 
+// TempoTraceSummary is the minimal, read-only view of a single Tempo trace
+// needed by correlation: when it started, how long it ran, and the root
+// service/operation that produced it. Tempo's /api/search summary already
+// carries startTimeUnixNano + durationMs per matched trace, so folding trace
+// symptoms onto a change timeline needs no full-trace OTLP fetch (the v2 doc's
+// pessimistic estimate); the search summary is enough.
+type TempoTraceSummary struct {
+	StartTime   time.Time
+	Duration    time.Duration
+	RootService string
+	RootName    string
+}
+
+// SearchTraces queries Tempo's /api/search with a TraceQL query over
+// [start, end] and returns one TempoTraceSummary per matched trace. limit caps
+// matched traces. This is a search read only — it mutates nothing.
+func (c *TempoClient) SearchTraces(ctx context.Context, traceQL string, start, end time.Time, limit int) ([]TempoTraceSummary, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	params := url.Values{
+		"q":     {traceQL},
+		"start": {strconv.FormatInt(start.Unix(), 10)},
+		"end":   {strconv.FormatInt(end.Unix(), 10)},
+		"limit": {strconv.Itoa(limit)},
+	}
+	body, err := c.RawGet(ctx, "/api/search", params)
+	if err != nil {
+		return nil, fmt.Errorf("trace.tempo search: %w", err)
+	}
+	return parseTempoSearch(body)
+}
+
+// parseTempoSearch decodes Tempo's /api/search envelope into trace summaries,
+// reading startTimeUnixNano (string, nanoseconds since epoch) and durationMs
+// (milliseconds). Traces whose start time cannot be parsed are skipped.
+func parseTempoSearch(body []byte) ([]TempoTraceSummary, error) {
+	var env struct {
+		Traces []struct {
+			RootServiceName   string `json:"rootServiceName"`
+			RootTraceName     string `json:"rootTraceName"`
+			StartTimeUnixNano string `json:"startTimeUnixNano"`
+			DurationMs        int64  `json:"durationMs"`
+		} `json:"traces"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, err
+	}
+	out := make([]TempoTraceSummary, 0, len(env.Traces))
+	for _, t := range env.Traces {
+		ns, err := strconv.ParseInt(t.StartTimeUnixNano, 10, 64)
+		if err != nil {
+			continue
+		}
+		out = append(out, TempoTraceSummary{
+			StartTime:   time.Unix(0, ns),
+			Duration:    time.Duration(t.DurationMs) * time.Millisecond,
+			RootService: t.RootServiceName,
+			RootName:    t.RootTraceName,
+		})
+	}
+	return out, nil
+}
+
 var mustJSON = tools.MustJSON
