@@ -8,6 +8,7 @@ triggers:
   - messages piling up
   - rabbitmq
   - kafka
+  - sqs
   - consumer group lag
   - queue depth
   - consumer falling behind
@@ -20,6 +21,7 @@ triggers:
 allowed_tools:
   - queue.rabbitmq_queues
   - queue.kafka_consumer_lag
+  - cloud.aws_sqs_queue_depth
   - k8s.list_pods
   - k8s.describe_pod
   - k8s.events
@@ -45,6 +47,8 @@ You are a message-queue triage analyst. A climbing queue is never the root probl
 
 - **No consumer draining it** — the queue has `ready > 0` but `consumers = 0`. The consumer fleet is down, crash-looping, disconnected, or was never deployed. The fix is on the consumer side (restart / scale / fix the crash), not the queue.
 - **Consumers falling behind** — `consumers > 0` but the backlog grows anyway. The tool flags this when utilisation is low or unknown, but a queue whose consumers are *maxed* (high utilisation) with a still-growing backlog is the same failure — it just ranks high without a flag, so read the numbers, not only the flag. The fix is throughput (scale consumers, speed up per-message work, or shed/slow producers).
+
+**SQS** has no consumer-count concept, so the proxy is the message split: `cloud.aws_sqs_queue_depth` ranks queues by visible backlog and flags `NO IN-FLIGHT` (a backlog with zero in-flight messages — nothing has received any, so likely no consumer is polling). In-flight messages climbing means consumers are working; a visible backlog that grows while in-flight stays flat means they can't keep up. Narrow with a name prefix, since each shown queue costs one extra describe call.
 
 The same two-mode split holds for **Kafka**: a consumer group in state `Empty`/`Dead` with lag is the "no consumer" case (the group exists and committed offsets but nothing is currently assigned), while a `Stable` group whose lag keeps climbing is "falling behind." `queue.kafka_consumer_lag` ranks groups by total lag, breaks it down by the worst topics, and flags `NO ACTIVE CONSUMER`. One caveat: a healthy group mid-rebalance can momentarily report zero members, so a single `NO ACTIVE CONSUMER` reading on an otherwise-`Stable` service warrants a second look before you conclude the consumers are down.
 
