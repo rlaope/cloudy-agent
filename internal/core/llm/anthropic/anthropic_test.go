@@ -327,6 +327,66 @@ func TestBuildRequest_ToolUseEmptyInput(t *testing.T) {
 	}
 }
 
+// TestBuildRequestPromptCaching verifies the stable prefix carries
+// ephemeral cache_control breakpoints: the system prompt renders as a
+// block array with a marker, and the last tool carries one, while empty
+// system / empty tools omit the field entirely.
+func TestBuildRequestPromptCaching(t *testing.T) {
+	t.Run("system and last tool are cache-marked", func(t *testing.T) {
+		req := llm.Request{
+			Model: "claude-3-5-sonnet-20241022",
+			Messages: []llm.Message{
+				{Role: llm.RoleSystem, Content: "you are cloudy"},
+				{Role: llm.RoleUser, Content: "go"},
+			},
+			Tools: []llm.Tool{
+				{Name: "a", Description: "tool a", Schema: json.RawMessage(`{"type":"object"}`)},
+				{Name: "b", Description: "tool b", Schema: json.RawMessage(`{"type":"object"}`)},
+			},
+		}
+		body, err := buildRequest(req)
+		if err != nil {
+			t.Fatalf("buildRequest: %v", err)
+		}
+		var got antRequest
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatalf("decode: %v\nbody=%s", err, body)
+		}
+		if len(got.System) != 1 || got.System[0].Text != "you are cloudy" {
+			t.Fatalf("system blocks = %+v, want one text block", got.System)
+		}
+		if got.System[0].CacheControl == nil || got.System[0].CacheControl.Type != "ephemeral" {
+			t.Errorf("system block missing ephemeral cache_control: %+v", got.System[0])
+		}
+		if len(got.Tools) != 2 {
+			t.Fatalf("tools = %d, want 2", len(got.Tools))
+		}
+		if got.Tools[0].CacheControl != nil {
+			t.Errorf("non-last tool should not be cache-marked: %+v", got.Tools[0])
+		}
+		if got.Tools[1].CacheControl == nil || got.Tools[1].CacheControl.Type != "ephemeral" {
+			t.Errorf("last tool missing ephemeral cache_control: %+v", got.Tools[1])
+		}
+	})
+
+	t.Run("empty system and tools omit the fields", func(t *testing.T) {
+		req := llm.Request{
+			Model:    "claude-3-5-sonnet-20241022",
+			Messages: []llm.Message{{Role: llm.RoleUser, Content: "go"}},
+		}
+		body, err := buildRequest(req)
+		if err != nil {
+			t.Fatalf("buildRequest: %v", err)
+		}
+		if strings.Contains(string(body), "cache_control") {
+			t.Errorf("no cache_control expected with empty system/tools, got: %s", body)
+		}
+		if strings.Contains(string(body), `"system"`) {
+			t.Errorf("empty system should be omitted, got: %s", body)
+		}
+	})
+}
+
 // Note: the unit-level coverage that used to live here (TestNormalizeToolInput
 // against the package-local shim) now lives in internal/llm/args_test.go's
 // TestNormalizeArguments — the shim was removed in this PR so anthropic and

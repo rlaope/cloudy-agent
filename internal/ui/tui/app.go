@@ -20,6 +20,15 @@ import (
 // ctrlCTimeout is the window within which two Ctrl+C presses quit the program.
 const ctrlCTimeout = 2 * time.Second
 
+// compactAdviseThreshold is the context-window usage percent at and above
+// which the TUI surfaces an amber "/compact recommended" hint below the
+// prompt. Compaction stays manual; this only nudges the operator before
+// accumulation degrades the turn.
+const compactAdviseThreshold = 75
+
+// compactAdviseStyle renders the below-prompt /compact hint in amber.
+var compactAdviseStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
+
 // Splash, playback, thinking, self-update, and assorted style declarations
 // live in splash.go, playback.go, thinking.go, selfupdate.go, and styles.go
 // — sibling files in the same `tui` package. This file (app.go) owns the
@@ -76,6 +85,17 @@ type Deps struct {
 	// becomes active for the next turn; /model <id> calls it directly.
 	// Injected by run.go; tests may stub it with a recorder.
 	SwapModel func(modelID string) error
+	// CompactHistory folds the older portion of the conversation into one
+	// summary message (a single LLM call), returning the summary text. /compact
+	// calls it. Injected by run.go; may be nil in tests.
+	CompactHistory func(ctx context.Context) (summary string, err error)
+	// ResetHistory clears the conversation and rolls a fresh session file,
+	// returning the new session id. /new calls it. Injected by run.go.
+	ResetHistory func() (newSessionID string, err error)
+	// SeedHistory loads a past conversation into the live history and rolls
+	// the session to id so follow-up turns continue that same conversation.
+	// /resume calls it after session.LoadHistory. Injected by run.go.
+	SeedHistory func(id string, history []llm.Message) error
 }
 
 // AgentEvent, ApprovalRequest, the tool/event message envelopes, and the
@@ -858,10 +878,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.writeStream(b.String())
 
+	case compactDoneMsg:
+		if msg.err != nil {
+			return m, m.writeStream(agentError("compact", msg.err))
+		}
+		// History shrank: zero the gauge optimistically so the operator sees
+		// immediate effect; the next turn's usage event sets the true value.
+		m.usage.LastInputTokens = 0
+		return m, m.writeStream(fmt.Sprintf(
+			"✓ compacted — kept the last %d messages, folded the rest into a summary:\n\n%s\n",
+			compactKeepMessages, msg.summary))
+
 	case agentUsageMsg:
 		m.usage.Input += msg.Input
 		m.usage.Output += msg.Output
 		m.usage.USD += msg.USD
+		if msg.Input > 0 {
+			m.usage.LastInputTokens = msg.Input
+		}
 		var hCmd tea.Cmd
 		m.header, hCmd = m.header.Update(headerStateMsg{cost: msg.USD})
 		return m, hCmd
@@ -902,7 +936,19 @@ func (m Model) View() string {
 	// The header is printed once into scrollback at startup, so the live
 	// cost readout it used to own now rides the pinned footer.
 	m.footer.SetCost(m.usage.USD)
+	ctxPct := m.contextPct()
+	m.footer.SetCtxPct(ctxPct)
 	footer := m.footer.View()
+
+	// Amber /compact hint, shown directly under the prompt once context
+	// usage crosses the advise threshold. Compaction stays manual — this
+	// is a nudge, not an auto-trigger. Empty below threshold so the slot
+	// collapses to height 0 (same pattern as the optional approval banner).
+	compactHint := ""
+	if ctxPct >= compactAdviseThreshold {
+		compactHint = compactAdviseStyle.Render(
+			fmt.Sprintf("⚠ context %d%% full — type /compact to free it (or /new to start fresh)", ctxPct))
+	}
 	thinking := m.renderThinkingRow()
 	pickerView := ""
 	if m.arrowPicker != nil {
@@ -957,13 +1003,17 @@ func (m Model) View() string {
 	if queuedEcho != "" {
 		queuedH = lipgloss.Height(queuedEcho)
 	}
+	compactHintH := 0
+	if compactHint != "" {
+		compactHintH = lipgloss.Height(compactHint)
+	}
 	// streamBottomMargin reserves one row of breathing space between
 	// the last line of the transcript and the chrome (banner / thinking
 	// row / prompt). Without it the agent's final character lands flush
 	// against the prompt border, which reads as "cloudy is stuck" even
 	// when the turn finished cleanly.
 	const streamBottomMargin = 1
-	bodyBudget := m.height - promptH - paletteH - footerH - bannerH - thinkingH - pickerH - queuedH - chromeBottomPad - streamBottomMargin
+	bodyBudget := m.height - promptH - paletteH - footerH - bannerH - thinkingH - pickerH - queuedH - compactHintH - chromeBottomPad - streamBottomMargin
 	if bodyBudget < 1 {
 		bodyBudget = 1
 	}
@@ -1012,12 +1062,35 @@ func (m Model) View() string {
 		parts = append(parts, queuedEcho)
 	}
 	parts = append(parts, prompt)
+	if compactHint != "" {
+		parts = append(parts, compactHint)
+	}
 	if paletteView != "" {
 		parts = append(parts, paletteView)
 	}
 	parts = append(parts, "", footer, "")
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// contextPct reports the current context-window usage as a 0-100 percent:
+// the latest turn's input-token count over the active model's context
+// window. Returns 0 before the first usage event (LastInputTokens == 0),
+// so the gauge reads "ctx 0%" on a fresh session. Drives the footer gauge
+// and the below-prompt /compact hint.
+func (m *Model) contextPct() int {
+	if m.usage.LastInputTokens <= 0 {
+		return 0
+	}
+	win := llm.ContextWindow(m.deps.Model)
+	if win <= 0 {
+		return 0
+	}
+	pct := 100 * m.usage.LastInputTokens / win
+	if pct > 100 {
+		pct = 100
+	}
+	return pct
 }
 
 // writeStream is the every-other-palette-action shape: clear the prompt
@@ -1318,6 +1391,67 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		// Native scrollback can't be un-printed; clear the visible screen so
 		// /clear still reads as a fresh slate (history stays scrollable).
 		return tea.Batch(sCmd, tea.ClearScreen)
+
+	case "compact":
+		m.prompt.SetValue("")
+		if m.running {
+			return m.writeStream("⚠ cannot /compact while a turn is in flight; wait for it to finish.\n")
+		}
+		if m.deps.CompactHistory == nil {
+			return m.writeStream("compact unavailable\n")
+		}
+		return tea.Batch(
+			m.writeStream("→ compacting conversation…\n"),
+			compactCmd(m.deps.CompactHistory),
+		)
+
+	case "new":
+		m.prompt.SetValue("")
+		if m.running {
+			return m.writeStream("⚠ cannot /new while a turn is in flight; wait for it to finish.\n")
+		}
+		if m.deps.ResetHistory == nil {
+			return m.writeStream("new unavailable\n")
+		}
+		newID, err := m.deps.ResetHistory()
+		if err != nil {
+			return m.writeStream(agentError("new", err))
+		}
+		// Wipe the visible screen and the usage gauge alongside the memory
+		// reset, mirroring /clear's bullet/playback reset.
+		m.assistantTurnStarted = false
+		m.playbackBuf = m.playbackBuf[:0]
+		m.playbackEmittable = 0
+		m.playbackActive = false
+		m.pendingUserEcho = ""
+		m.usage = usageAccum{}
+		var nCmd tea.Cmd
+		m.stream, nCmd = m.stream.Update(streamClearMsg{})
+		return tea.Batch(nCmd, tea.ClearScreen,
+			m.writeStream("✓ new conversation — session "+newID+"\n"))
+
+	case "resume":
+		m.prompt.SetValue("")
+		if m.running {
+			return m.writeStream("⚠ cannot /resume while a turn is in flight; wait for it to finish.\n")
+		}
+		if action.arg == "" {
+			return m.writeStream("usage: /resume <session-id>\n")
+		}
+		if m.deps.SeedHistory == nil {
+			return m.writeStream("resume unavailable\n")
+		}
+		msgs, _, err := session.LoadHistory(action.arg)
+		if err != nil {
+			return m.writeStream(agentError("resume", err))
+		}
+		if err := m.deps.SeedHistory(action.arg, msgs); err != nil {
+			return m.writeStream(agentError("resume", err))
+		}
+		// The resumed context replaces the current one; reset the gauge so
+		// it isn't stale until the next turn's usage event recomputes it.
+		m.usage.LastInputTokens = 0
+		return m.writeStream(fmt.Sprintf("✓ resumed session %s — %d message(s) restored\n", action.arg, len(msgs)))
 
 	case "quit", "exit":
 		return tea.Quit

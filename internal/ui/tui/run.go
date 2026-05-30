@@ -42,14 +42,35 @@ func (r *providerRef) set(p llm.Provider, model string) {
 	r.model = model
 }
 
+// convoState is the shared, mutex-guarded conversation state the agent
+// runner and the /compact, /new, and /resume closures all operate on. It
+// replaces the bare `history` closure variable so those commands — wired
+// onto the Model, which cannot reach a closure local — can mutate the same
+// history the next turn replays. sess is here too so /new can roll a fresh
+// session file that the per-turn tuiSink picks up.
+type convoState struct {
+	mu      sync.Mutex
+	history []llm.Message
+	sess    *session.Session
+	// version bumps on every history mutation. /compact captures it before
+	// its (slow) summarizer round-trip and refuses to overwrite if it
+	// changed underneath — so a concurrent agent turn, /new, or /resume is
+	// never silently clobbered by a stale compaction result.
+	version uint64
+}
+
 // Run builds the TUI Model, wires the agent runner, and starts the bubbletea
 // program with the alternate screen. It blocks until the user quits.
 // When deps.Provider is nil (no config yet) the TUI still opens so the user
 // can run /setup or /login from inside.
 func Run(ctx context.Context, deps Deps) error {
 	ref := &providerRef{provider: deps.Provider, model: deps.Model}
-	deps.AgentRunner = makeAgentRunner(ctx, ref, deps)
+	state := &convoState{sess: deps.Session}
+	deps.AgentRunner = makeAgentRunner(ctx, ref, deps, state)
 	deps.SwapModel = makeSwapModel(ref, deps.Model)
+	deps.CompactHistory = makeCompactHistory(ref, state)
+	deps.ResetHistory = makeResetHistory(state)
+	deps.SeedHistory = makeSeedHistory(state)
 
 	m := NewModel(deps)
 	m.fullscreen = fullscreenRequested()
@@ -131,9 +152,7 @@ func makeSwapModel(ref *providerRef, initialModel string) func(string) error {
 // The provider+model are read through ref on every invocation, so a /login
 // or /model swap performed mid-session is picked up on the very next turn
 // without rebuilding the runner.
-func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(cancel <-chan struct{}, input string, emit func(AgentEvent)) {
-	var history []llm.Message
-
+func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps, state *convoState) func(cancel <-chan struct{}, input string, emit func(AgentEvent)) {
 	return func(cancel <-chan struct{}, input string, emit func(AgentEvent)) {
 		provider, modelID := ref.get()
 		if provider == nil || modelID == "" {
@@ -177,6 +196,15 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(
 		// it is a single small YAML read from ~/.cloudy/profiles/.
 		activeProfile, _ := permission.LoadActive()
 
+		// Snapshot the shared conversation state. /compact, /new, and
+		// /resume are gated on !running in the TUI, so sess/history are
+		// stable for the duration of this turn; the lock just publishes
+		// the reads safely.
+		state.mu.Lock()
+		history := state.history
+		sess := state.sess
+		state.mu.Unlock()
+
 		ag, err := agent.New(agent.Options{
 			Provider: provider,
 			Model:    modelID,
@@ -198,17 +226,30 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps) func(
 			Profile:                  activeProfile,
 		})
 		if err != nil {
-			logSessionError(deps.Session, "agent.new", err)
+			logSessionError(sess, "agent.new", err)
 			emit(AgentEvent{Err: err, Done: true})
 			return
 		}
 
-		newMsgs, runErr := ag.Run(runCtx, input, &tuiSink{emit: emit, sess: deps.Session, modelID: modelID})
+		newMsgs, runErr := ag.Run(runCtx, input, &tuiSink{emit: emit, sess: sess, modelID: modelID})
 		if len(newMsgs) > 0 {
-			history = newMsgs
+			state.mu.Lock()
+			state.history = newMsgs
+			state.version++
+			state.mu.Unlock()
+			// Persist a masked resume snapshot so the conversation survives
+			// a restart. MaskHistory is a hard requirement: the in-memory
+			// history is not reliably masked (raw prompts/prose never are),
+			// so we redact a deep copy before it touches disk.
+			if sess != nil {
+				masked := permission.MaskHistory(activeProfile, newMsgs)
+				if saveErr := session.SaveHistory(sess.ID, modelID, masked); saveErr != nil {
+					logSessionError(sess, "session.save", saveErr)
+				}
+			}
 		}
 		if runErr != nil {
-			logSessionError(deps.Session, "agent.run", runErr)
+			logSessionError(sess, "agent.run", runErr)
 		}
 		emit(AgentEvent{Done: true, Err: runErr})
 	}

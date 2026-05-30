@@ -58,7 +58,13 @@ const (
 		"- `/use`     — switch the active kubeconfig context (e.g. `/use prod-east`).\n" +
 		"- `/tools`   — list the tool groups currently wired plus the reason " +
 		"any skipped group was skipped.\n" +
-		"- `/clear`   — wipe the stream output (Ctrl+L is the shortcut).\n" +
+		"- `/clear`   — wipe the visible screen only; the conversation history " +
+		"is kept (Ctrl+L is the shortcut). Use `/new` to also reset memory.\n" +
+		"- `/compact` — summarize the older turns into one note and drop them, " +
+		"freeing context window while keeping the recent turns verbatim. Manual; " +
+		"the footer shows a `ctx N%` gauge and warns past 75%.\n" +
+		"- `/new`     — reset the conversation history and start a fresh session log.\n" +
+		"- `/resume <id>` — reload a past conversation (by session id) back into context.\n" +
 		"- `/replay <id>` — replay a previous session log.\n" +
 		"- `/update`  — upgrade the cloudy binary in place from the latest " +
 		"GitHub release (`cloudy update` is the equivalent CLI subcommand).\n" +
