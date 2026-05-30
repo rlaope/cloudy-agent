@@ -45,7 +45,12 @@ type Auth struct {
 type Client struct {
 	Name    string
 	BaseURL string
-	http    *http.Client
+	// Accept overrides the request Accept header. Empty = "application/json".
+	// PagerDuty's REST v2 wants "application/vnd.pagerduty+json;version=2", so
+	// per-backend clients can set the vendor media type without changing the
+	// shared default the log/trace/alert/gitops callers rely on.
+	Accept string
+	http   *http.Client
 }
 
 // NewClient builds a Client. baseURL must be non-empty; the trailing slash is
@@ -80,7 +85,11 @@ func (c *Client) RawGet(ctx context.Context, path string, params url.Values) ([]
 	if err != nil {
 		return nil, fmt.Errorf("httpapi: build request: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
+	accept := c.Accept
+	if accept == "" {
+		accept = "application/json"
+	}
+	req.Header.Set("Accept", accept)
 
 	resp, err := c.http.Do(req)
 	if err != nil {

@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rlaope/cloudy/internal/clients/httpapi"
 	"github.com/rlaope/cloudy/internal/core/tools"
@@ -81,12 +82,12 @@ func newListIncidentsTool(clients map[string]*PagerDutyClient) tools.Tool {
 			if err != nil {
 				return tools.Observation{}, fmt.Errorf("oncall.list_incidents: %w", err)
 			}
-			incs, perr := parseIncidents(body)
+			incs, page, perr := parseIncidents(body)
 			if perr != nil {
 				return tools.Observation{}, fmt.Errorf("oncall.list_incidents: decode: %w", perr)
 			}
 			return tools.Observation{
-				Text:  formatIncidents(incs),
+				Text:  formatIncidents(incs, page),
 				Table: tableIncidents(incs),
 				Raw:   incs,
 			}, nil
@@ -124,8 +125,9 @@ type Incident struct {
 	HTMLURL   string `json:"html_url"`
 }
 
-func parseIncidents(body []byte) ([]Incident, error) {
+func parseIncidents(body []byte) ([]Incident, pageInfo, error) {
 	var env struct {
+		pageInfo
 		Incidents []struct {
 			IncidentNumber int    `json:"incident_number"`
 			Title          string `json:"title"`
@@ -144,7 +146,7 @@ func parseIncidents(body []byte) ([]Incident, error) {
 		} `json:"incidents"`
 	}
 	if err := json.Unmarshal(body, &env); err != nil {
-		return nil, err
+		return nil, pageInfo{}, err
 	}
 	out := make([]Incident, len(env.Incidents))
 	for i, it := range env.Incidents {
@@ -163,15 +165,15 @@ func parseIncidents(body []byte) ([]Incident, error) {
 			HTMLURL:   it.HTMLURL,
 		}
 	}
-	// Triggered before acknowledged, high urgency first, then newest.
+	// Triggered before acknowledged, high urgency first, then newest by instant.
 	sort.SliceStable(out, func(i, j int) bool {
 		ri, rj := incidentRank(out[i]), incidentRank(out[j])
 		if ri != rj {
 			return ri > rj
 		}
-		return out[i].CreatedAt > out[j].CreatedAt
+		return newerThan(out[i].CreatedAt, out[j].CreatedAt)
 	})
-	return out, nil
+	return out, env.pageInfo, nil
 }
 
 // incidentRank orders the most urgent, least-handled incidents first.
@@ -201,7 +203,7 @@ func tableIncidents(incs []Incident) *render.Table {
 	return tbl
 }
 
-func formatIncidents(incs []Incident) string {
+func formatIncidents(incs []Incident, page pageInfo) string {
 	if len(incs) == 0 {
 		return "(no matching PagerDuty incidents)"
 	}
@@ -216,6 +218,7 @@ func formatIncidents(incs []Incident) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d incident(s) (triggered=%d acknowledged=%d)\n", len(incs), triggered, acked)
+	b.WriteString(truncationNote(len(incs), page))
 	for _, i := range incs {
 		fmt.Fprintf(&b, "  #%d [%s/%s] %s — %s (%s)\n",
 			i.Number, i.Status, i.Urgency, i.Service, i.Title, i.Assignee)
@@ -230,14 +233,14 @@ func newWhoIsOnCallTool(clients map[string]*PagerDutyClient) tools.Tool {
 	type args struct {
 		Name     string `json:"name"`
 		Policy   string `json:"escalation_policy"`
-		MaxLevel int    `json:"max_level"`
+		MinLevel int    `json:"min_level"`
 	}
 	schema := mustJSON(map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"name":              pdEndpointSchema,
 			"escalation_policy": map[string]any{"type": "string", "description": "Filter to one escalation policy by its PagerDuty ID (empty = all policies)."},
-			"max_level":         map[string]any{"type": "integer", "description": "Only return on-calls at or above this escalation level (1 = first responder). Default 0 = all levels.", "minimum": 0},
+			"min_level":         map[string]any{"type": "integer", "description": "Only return on-calls whose escalation_level is >= this value (a floor). 1 = first responder, higher = deeper escalation. Default 0 = all levels.", "minimum": 0},
 		},
 	})
 	return tools.Spec[args]{
@@ -258,12 +261,12 @@ func newWhoIsOnCallTool(clients map[string]*PagerDutyClient) tools.Tool {
 			if err != nil {
 				return tools.Observation{}, fmt.Errorf("oncall.who_is_oncall: %w", err)
 			}
-			ocs, perr := parseOnCalls(body, a.MaxLevel)
+			ocs, page, perr := parseOnCalls(body, a.MinLevel)
 			if perr != nil {
 				return tools.Observation{}, fmt.Errorf("oncall.who_is_oncall: decode: %w", perr)
 			}
 			return tools.Observation{
-				Text:  formatOnCalls(ocs),
+				Text:  formatOnCalls(ocs, page),
 				Table: tableOnCalls(ocs),
 				Raw:   ocs,
 			}, nil
@@ -281,8 +284,9 @@ type OnCall struct {
 	End              string `json:"end"`
 }
 
-func parseOnCalls(body []byte, maxLevel int) ([]OnCall, error) {
+func parseOnCalls(body []byte, minLevel int) ([]OnCall, pageInfo, error) {
 	var env struct {
+		pageInfo
 		OnCalls []struct {
 			EscalationLevel int `json:"escalation_level"`
 			User            struct {
@@ -299,11 +303,11 @@ func parseOnCalls(body []byte, maxLevel int) ([]OnCall, error) {
 		} `json:"oncalls"`
 	}
 	if err := json.Unmarshal(body, &env); err != nil {
-		return nil, err
+		return nil, pageInfo{}, err
 	}
 	var out []OnCall
 	for _, it := range env.OnCalls {
-		if maxLevel > 0 && it.EscalationLevel < maxLevel {
+		if minLevel > 0 && it.EscalationLevel < minLevel {
 			continue
 		}
 		out = append(out, OnCall{
@@ -322,7 +326,7 @@ func parseOnCalls(body []byte, maxLevel int) ([]OnCall, error) {
 		}
 		return out[i].Level < out[j].Level
 	})
-	return out, nil
+	return out, env.pageInfo, nil
 }
 
 func tableOnCalls(ocs []OnCall) *render.Table {
@@ -338,12 +342,13 @@ func tableOnCalls(ocs []OnCall) *render.Table {
 	return tbl
 }
 
-func formatOnCalls(ocs []OnCall) string {
+func formatOnCalls(ocs []OnCall, page pageInfo) string {
 	if len(ocs) == 0 {
 		return "(no one currently on call for the requested scope)"
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d on-call assignment(s)\n", len(ocs))
+	b.WriteString(truncationNote(len(ocs), page))
 	for _, o := range ocs {
 		sched := o.Schedule
 		if sched == "" {
@@ -359,3 +364,37 @@ const pagerDutyBaseURL = "https://api.pagerduty.com"
 
 // pagerDutyTokenScheme is PagerDuty's classic Authorization scheme prefix.
 const pagerDutyTokenScheme = "Token token="
+
+// pagerDutyAccept is the vendor media type PagerDuty's REST v2 documents.
+const pagerDutyAccept = "application/vnd.pagerduty+json;version=2"
+
+// pageInfo carries PagerDuty's pagination envelope so a truncated result is
+// surfaced rather than silently capped.
+type pageInfo struct {
+	More  bool `json:"more"`
+	Total *int `json:"total"`
+}
+
+// truncationNote renders a "(showing N of M; more results not fetched)" line
+// when the page was capped, and "" otherwise.
+func truncationNote(shown int, p pageInfo) string {
+	if !p.More && (p.Total == nil || *p.Total <= shown) {
+		return ""
+	}
+	if p.Total != nil {
+		return fmt.Sprintf("(showing %d of %d; more results not fetched)\n", shown, *p.Total)
+	}
+	return fmt.Sprintf("(showing %d; more results not fetched)\n", shown)
+}
+
+// newerThan reports whether RFC3339 timestamp a is strictly newer than b,
+// parsing both so timezone offsets sort by instant; on parse failure it falls
+// back to a lexical compare.
+func newerThan(a, b string) bool {
+	ta, ea := time.Parse(time.RFC3339, a)
+	tb, eb := time.Parse(time.RFC3339, b)
+	if ea == nil && eb == nil {
+		return ta.After(tb)
+	}
+	return a > b
+}

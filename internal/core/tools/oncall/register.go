@@ -43,6 +43,7 @@ func BuildClients(pdEPs []config.PagerDutyEndpoint) (Clients, []string) {
 			skips = append(skips, "oncall: pagerduty "+ep.Name+": "+err.Error())
 			continue
 		}
+		hc.Accept = pagerDutyAccept
 		cs.PagerDuty[ep.Name] = &PagerDutyClient{Client: hc}
 	}
 	return cs, skips

@@ -53,6 +53,29 @@ func TestTokenTripper_DefaultsToBearer(t *testing.T) {
 	}
 }
 
+// TestRawGet_AcceptOverride verifies the per-client Accept header override
+// (PagerDuty's vendor media type) reaches the server, and that the default is
+// application/json when unset.
+func TestRawGet_AcceptOverride(t *testing.T) {
+	var gotAccept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAccept = r.Header.Get("Accept")
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient("x", srv.URL, Auth{})
+	_, _ = c.RawGet(context.Background(), "/", nil)
+	if gotAccept != "application/json" {
+		t.Errorf("default Accept = %q, want application/json", gotAccept)
+	}
+
+	c.Accept = "application/vnd.pagerduty+json;version=2"
+	_, _ = c.RawGet(context.Background(), "/", nil)
+	if gotAccept != "application/vnd.pagerduty+json;version=2" {
+		t.Errorf("override Accept = %q, want the vendor media type", gotAccept)
+	}
+}
+
 // TestWrapAuth_EmptyTokenEnv_NoHeader verifies that an unset token env produces
 // no Authorization header rather than a malformed one.
 func TestWrapAuth_EmptyTokenEnv_NoHeader(t *testing.T) {

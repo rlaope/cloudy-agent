@@ -95,7 +95,7 @@ const oncallsBody = `{
   ]
 }`
 
-func TestWhoIsOnCall_OrdersByLevelAndFiltersMaxLevel(t *testing.T) {
+func TestWhoIsOnCall_OrdersByLevelAndFiltersMinLevel(t *testing.T) {
 	srv := fakePD(t, map[string]string{"/oncalls": oncallsBody})
 	defer srv.Close()
 
@@ -114,16 +114,39 @@ func TestWhoIsOnCall_OrdersByLevelAndFiltersMaxLevel(t *testing.T) {
 		t.Errorf("primary (L1) should sort first; dave=%d carol=%d", primary, secondary)
 	}
 
-	// max_level=2 drops the level-1 responder.
-	obs2, err := tool.Run(context.Background(), []byte(`{"name":"test","max_level":2}`))
+	// min_level=2 (floor) drops the level-1 responder, keeps deeper levels.
+	obs2, err := tool.Run(context.Background(), []byte(`{"name":"test","min_level":2}`))
 	if err != nil {
-		t.Fatalf("Run max_level: %v", err)
+		t.Fatalf("Run min_level: %v", err)
 	}
 	if strings.Contains(obs2.Text, "Dave") {
-		t.Errorf("max_level=2 must drop the L1 on-call, got %q", obs2.Text)
+		t.Errorf("min_level=2 must drop the L1 on-call, got %q", obs2.Text)
 	}
 	if !strings.Contains(obs2.Text, "Carol") {
-		t.Errorf("max_level=2 must keep the L2 on-call, got %q", obs2.Text)
+		t.Errorf("min_level=2 must keep the L2 on-call, got %q", obs2.Text)
+	}
+}
+
+// TestListIncidents_SurfacesTruncation pins that a paginated PagerDuty response
+// (more=true) is announced rather than silently capped.
+func TestListIncidents_SurfacesTruncation(t *testing.T) {
+	body := `{"more": true, "total": 137, "incidents": [
+	  {"incident_number": 1, "title": "x", "status": "triggered", "urgency": "high",
+	   "created_at": "2026-05-30T01:00:00Z", "service": {"summary": "s"},
+	   "assignments": [{"assignee": {"summary": "A"}}]}
+	]}`
+	srv := fakePD(t, map[string]string{"/incidents": body})
+	defer srv.Close()
+
+	reg := tools.New()
+	RegisterAll(reg, Clients{PagerDuty: pdClient(t, srv.URL)}, nil)
+	tool, _ := reg.Get("oncall.list_incidents")
+	obs, err := tool.Run(context.Background(), []byte(`{"name":"test"}`))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(obs.Text, "showing 1 of 137") {
+		t.Errorf("expected a truncation note, got %q", obs.Text)
 	}
 }
 
