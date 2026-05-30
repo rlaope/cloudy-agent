@@ -231,7 +231,12 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps, state
 			return
 		}
 
-		newMsgs, runErr := ag.Run(runCtx, input, &tuiSink{emit: emit, sess: sess, modelID: modelID})
+		// Redact tool args/observations before they touch the session log.
+		// MaskerOrDefault never returns nil and falls back to the built-in
+		// baseline when no profile is active, so the on-disk mirror is never
+		// less redacted than the model-facing MaskingHook would produce.
+		sinkMasker := permission.MaskerOrDefault(activeProfile)
+		newMsgs, runErr := ag.Run(runCtx, input, &tuiSink{emit: emit, sess: sess, modelID: modelID, masker: sinkMasker})
 		if len(newMsgs) > 0 {
 			state.mu.Lock()
 			state.history = newMsgs
@@ -260,18 +265,20 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps, state
 // (write-bytes-then-parse-the-markers-back-out) is gone — tool boundaries
 // arrive as structured events directly.
 //
-// When sess is non-nil, the sink ALSO mirrors a narrow, safe subset of events
-// to the on-disk session log so a post-mortem can identify which tools ran
-// and which errored. Deliberately NOT mirrored (deferred until the
-// MaskingHook pipeline is reachable from this seam):
+// When sess is non-nil, the sink mirrors tool activity to the on-disk session
+// log so a post-mortem can replay which tools ran, with what arguments, and
+// what they returned. Tool args (BeginToolCall) and observations (EndToolCall)
+// are run through masker before they touch disk — masker is built via
+// permission.MaskerOrDefault, so it is never nil and falls back to the
+// built-in baseline when no profile is active. This closes the v0.5 M-1
+// redaction gap that previously forced args/observations to be dropped because
+// the AfterToolCall masker was unreachable from this seam.
 //
-//   - tool arguments — may contain credentials/PII (e.g. db.query connection
-//     strings, http.api bearer tokens) and are not currently masked here.
-//   - tool observations / result text — masked by AfterToolCall hooks at the
-//     agent layer; the sink sees the pre-mask bytes, so writing them would
-//     re-open the v0.5 M-1 redaction gap on disk.
+// Still NOT mirrored:
+//
 //   - assistant prose / WriteToken streams — would balloon the JSONL and we
 //     have no end-of-turn boundary for the assistant text yet.
+//   - the raw user prompt — flows in as ag.Run's input, not through this sink.
 //
 // modelID is captured so KindUsage events carry it via Event.Name, letting
 // `cloudy session list` populate the Model column from readMeta.
@@ -286,6 +293,7 @@ type tuiSink struct {
 	emit     func(AgentEvent)
 	sess     *session.Session
 	modelID  string
+	masker   *permission.Masker
 	lastTool string
 }
 
@@ -295,27 +303,41 @@ func (s *tuiSink) BeginToolCall(name, args string) {
 	s.emit(AgentEvent{ToolBegin: &toolBeginEvt{name: name, args: args}})
 	if s.sess != nil {
 		s.lastTool = name
-		_ = s.sess.Append(session.Event{
-			Kind: session.KindToolCall,
-			Name: name,
-		})
+		ev := session.Event{Kind: session.KindToolCall, Name: name}
+		// Tool arguments are JSON objects (NormalizeArguments guarantees it);
+		// MaskJSON redacts key-named and value-pattern secrets, and no-ops on
+		// non-JSON, so a connection string or bearer token never lands raw.
+		if args != "" {
+			if masked, err := s.masker.MaskJSON([]byte(args)); err == nil {
+				ev.Args = masked
+			}
+		}
+		_ = s.sess.Append(ev)
 	}
 }
 
 func (s *tuiSink) EndToolCall(observation string, err error) {
 	s.emit(AgentEvent{ToolEnd: &toolEndEvt{observation: observation, err: err}})
-	if s.sess == nil || err == nil {
-		// Success-path observations are intentionally not persisted — see
-		// the type doc on tuiSink. The corresponding KindToolCall (with the
-		// tool name) is already on disk, which is enough to see the agent's
-		// trajectory; the rich payload waits on the masker wiring.
+	if s.sess == nil {
 		return
 	}
 	name := s.lastTool
 	if name == "" {
 		name = "tool"
 	}
-	logSessionError(s.sess, name, err)
+	if err != nil {
+		logSessionError(s.sess, name, err)
+		return
+	}
+	// Mirror the masked observation so a post-mortem can replay what each
+	// tool returned. MaskString applies the value-pattern set; combined with
+	// the masked args on the matching KindToolCall this gives a redacted but
+	// faithful trajectory.
+	_ = s.sess.Append(session.Event{
+		Kind: session.KindToolResult,
+		Name: name,
+		Text: s.masker.MaskString(observation),
+	})
 }
 
 func (s *tuiSink) RecordUsage(u llm.Usage) {

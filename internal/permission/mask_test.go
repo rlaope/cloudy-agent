@@ -192,3 +192,53 @@ func TestDefaultMaskingPatterns_CompilesCleanly(t *testing.T) {
 		t.Fatalf("DefaultMaskingPatterns must compile cleanly: %v", err)
 	}
 }
+
+// TestDefaultMaskingPatterns_RedactsCommonSecrets pins the value-pattern
+// coverage added to close the masking gaps: private-key blocks, the GitHub
+// token family, GitLab/Slack/Google keys, and generic Bearer headers must all
+// be redacted by the baseline so on-disk session logs never leak them.
+func TestDefaultMaskingPatterns_RedactsCommonSecrets(t *testing.T) {
+	m, err := NewMasker(&Profile{Masking: DefaultMaskingPatterns()})
+	if err != nil {
+		t.Fatalf("NewMasker: %v", err)
+	}
+	cases := map[string]string{
+		"ssh private key": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaA==",
+		"github oauth":    "gho_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+		"github fine pat": "github_pat_" + "ABCDEFGHIJKLMNOPQRSTUV_abcdefghij",
+		"gitlab pat":      "glpat-" + "ABCDEFGHIJKLMNOPQRST",
+		"slack bot":       "xoxb-" + "1234567890-abcdEFGH",
+		"google api key":  "AIza" + "SyABCDEFGHIJKLMNOPQRSTUVWXYZ01234567",
+		"bearer header":   "Authorization: Bearer abcdefghij1234567890",
+		"dsn userinfo":    "postgres://admin:hunter2@db:5432/app",
+	}
+	for name, secret := range cases {
+		got := m.MaskString(secret)
+		if got == secret {
+			t.Errorf("%s: nothing redacted in %q", name, secret)
+		}
+	}
+}
+
+// TestDefaultMaskingPatterns_KeyNames pins the KeyRegex additions: a JSON blob
+// whose keys name a secret (client_secret, access_key, routing_key) has the
+// value redacted regardless of its shape.
+func TestDefaultMaskingPatterns_KeyNames(t *testing.T) {
+	m, err := NewMasker(&Profile{Masking: DefaultMaskingPatterns()})
+	if err != nil {
+		t.Fatalf("NewMasker: %v", err)
+	}
+	in := []byte(`{"client_secret":"abc","access_key":"def","routing_key":"ghi","region":"us-east-1"}`)
+	out, err := m.MaskJSON(in)
+	if err != nil {
+		t.Fatalf("MaskJSON: %v", err)
+	}
+	for _, leaked := range []string{"abc", "def", "ghi"} {
+		if bytes.Contains(out, []byte(`"`+leaked+`"`)) {
+			t.Errorf("secret value %q survived: %s", leaked, out)
+		}
+	}
+	if !bytes.Contains(out, []byte("us-east-1")) {
+		t.Errorf("non-secret 'region' was wrongly redacted: %s", out)
+	}
+}
