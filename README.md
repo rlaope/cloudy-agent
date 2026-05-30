@@ -1,5 +1,9 @@
 # cloudy
 
+<p align="center">
+  <img src="assets/cloudylogo.png" alt="cloudy-agent" width="520">
+</p>
+
 Read-only multi-cluster SRE agent in your terminal. Ask plain-language
 questions about Kubernetes / JVM / Python / GPU workloads across every
 cluster you have credentials for, and get answers stitched together
