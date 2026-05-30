@@ -710,7 +710,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.skillPickerActive {
 			m.skillPickerActive = false
-			if msg.cancelled {
+			// Treat an empty key like a cancel: a confirmed-but-empty resolve
+			// would otherwise re-enter the arg=="" branch and re-open the
+			// picker. (Unreachable today — arrowpicker only emits key="" with
+			// cancelled=true — but cheap to guard.)
+			if msg.cancelled || msg.key == "" {
 				return m, m.writeStream("[skill selection cancelled]\n")
 			}
 			// Route through the same activation path as `/skill <name>`.
@@ -1625,6 +1629,12 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 			// handlePaletteAction{cmd:"skill", arg:<name>} via the
 			// arrowPickerResolveMsg handler. `/skill <name>` still works
 			// for power-users / scripts.
+			//
+			// Gated on !running so the picker overlay never opens on top of a
+			// streaming reply (mirrors /compact, /new, /resume).
+			if m.running {
+				return m.writeStream("⚠ cannot /skill while a turn is in flight; wait for it to finish.\n")
+			}
 			if m.deps.Skills == nil {
 				return m.writeStream("no skills loaded\n")
 			}

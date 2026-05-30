@@ -21,6 +21,25 @@ func makeSkillsRegistry(names ...string) *skills.Registry {
 	return skills.New(ss)
 }
 
+// TestSkillPicker_GatedWhileRunning confirms the bare `/skill` picker does not
+// open on top of a streaming reply — it is refused while a turn is in flight.
+func TestSkillPicker_GatedWhileRunning(t *testing.T) {
+	deps := makeDeps()
+	deps.Skills = makeSkillsRegistry("k8s-incident")
+	m := NewModel(deps)
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+	m.running = true
+
+	_ = m.handlePaletteAction(paletteActionMsg{cmd: "skill", arg: ""})
+	if m.skillPickerActive {
+		t.Error("/skill picker must not open while a turn is running")
+	}
+	if m.arrowPicker != nil {
+		t.Error("no picker overlay should be installed while running")
+	}
+}
+
 // TestSkillPicker_BareSlashOpensPicker confirms that `/skill` with no arg
 // opens the interactive picker instead of emitting the old usage message.
 func TestSkillPicker_BareSlashOpensPicker(t *testing.T) {
