@@ -19,6 +19,7 @@ allowed_tools:
   - prom.query
   - prom.query_range
   - prom.anomaly
+  - prom.error_budget
   - correlate.workload
   - oncall.list_incidents
   - oncall.who_is_oncall

@@ -23,7 +23,7 @@ var canonicalToolNames = []string{
 	"k8s.list_ingresses", "k8s.list_hpa", "k8s.list_pdbs",
 	"k8s.list_networkpolicies", "k8s.list_crds", "k8s.list_cr",
 
-	"prom.query", "prom.query_range", "prom.label_values", "prom.series", "prom.anomaly",
+	"prom.query", "prom.query_range", "prom.label_values", "prom.series", "prom.anomaly", "prom.error_budget",
 
 	"log.loki_query_range", "log.loki_labels", "log.loki_label_values",
 	"log.loki_series", "log.es_search", "log.es_indices", "log.es_cluster_health",
