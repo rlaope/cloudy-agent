@@ -79,9 +79,10 @@ func TestCorrelate_SymptomRendersAndAligns(t *testing.T) {
 	if !strings.Contains(obs.Text, "metric_breach") || !strings.Contains(obs.Text, "error rate > 0.2") {
 		t.Errorf("expected metric_breach symptom line on the timeline, got:\n%s", obs.Text)
 	}
-	// Candidate cause aligns the image change before the symptom.
-	if !strings.Contains(obs.Text, "candidate cause:") || !strings.Contains(obs.Text, "image") || !strings.Contains(obs.Text, "preceded symptom") {
-		t.Errorf("expected candidate cause aligning the image change before the symptom, got:\n%s", obs.Text)
+	// Ranked candidate causes name the image change and annotate the delta
+	// before the symptom.
+	if !strings.Contains(obs.Text, "candidate causes for symptom") || !strings.Contains(obs.Text, "image") || !strings.Contains(obs.Text, "before symptom") {
+		t.Errorf("expected ranked candidate cause aligning the image change before the symptom, got:\n%s", obs.Text)
 	}
 }
 
@@ -99,11 +100,12 @@ func TestCorrelate_CandidateCauseSkipsEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !strings.Contains(obs.Text, "candidate cause: k8s image") {
-		t.Errorf("expected candidate cause to be the image change (skipping the newer event), got:\n%s", obs.Text)
+	// The image leads the ranking; the bare "event" kind is never a candidate.
+	if !strings.Contains(obs.Text, "k8s image on app") {
+		t.Errorf("expected the image change to lead the ranking (skipping the newer event), got:\n%s", obs.Text)
 	}
-	if strings.Contains(obs.Text, "candidate cause: k8s event") {
-		t.Errorf("candidate cause must not be an 'event' kind, got:\n%s", obs.Text)
+	if strings.Contains(obs.Text, "k8s event on app") {
+		t.Errorf("candidate cause must not include an 'event' kind, got:\n%s", obs.Text)
 	}
 }
 
@@ -120,8 +122,8 @@ func TestCorrelate_CandidateCausePicksSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !strings.Contains(obs.Text, "candidate cause: argo sync") {
-		t.Errorf("expected candidate cause to be the newest argo sync, got:\n%s", obs.Text)
+	if !strings.Contains(obs.Text, "argo sync on app") {
+		t.Errorf("expected the argo sync to lead the ranking, got:\n%s", obs.Text)
 	}
 }
 

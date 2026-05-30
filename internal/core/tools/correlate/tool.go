@@ -73,7 +73,7 @@ func newCorrelateTool(sources ...change.ChangeSource) tools.Tool {
 func (t *correlateTool) Name() string { return "correlate.workload" }
 
 func (t *correlateTool) Description() string {
-	return "Correlate recent changes and symptoms for a workload across signals — Kubernetes/Docker change history, Argo CD sync history, plus metric/log/trace symptoms — into one newest-first evidence timeline, and name the most recent state-altering event as the likeliest cause of a current symptom. Supply metric_query (PromQL) with metric_threshold to fold a metric breach onto the timeline; log and trace symptoms are added automatically when those backends are configured. Read-only."
+	return "Correlate recent changes and symptoms for a workload across signals — Kubernetes/Docker change history, Argo CD sync history, plus metric/log/trace symptoms — into one newest-first evidence timeline, and rank the state-altering changes most likely to have caused the earliest symptom by time-proximity, change weight, and entity match, each with a relative confidence. Supply metric_query (PromQL) with metric_threshold to fold a metric breach onto the timeline; log and trace symptoms are added automatically when those backends are configured. Read-only."
 }
 
 func (t *correlateTool) Schema() json.RawMessage {
@@ -190,7 +190,7 @@ func renderCorrelation(workload string, since time.Duration, events []change.Cha
 		}
 		b.WriteByte('\n')
 	}
-	b.WriteString(candidateCauseV2(events))
+	b.WriteString(candidateCauses(events, workload))
 	b.WriteByte('\n')
 	if len(failures) > 0 {
 		fmt.Fprintf(&b, "note: %d source(s) failed: %s\n", len(failures), strings.Join(failures, "; "))
