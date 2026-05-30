@@ -35,6 +35,7 @@ import (
 	"github.com/rlaope/cloudy/internal/core/tools/perf"
 	"github.com/rlaope/cloudy/internal/core/tools/prom"
 	"github.com/rlaope/cloudy/internal/core/tools/py"
+	"github.com/rlaope/cloudy/internal/core/tools/queue"
 	"github.com/rlaope/cloudy/internal/core/tools/synthetic"
 	"github.com/rlaope/cloudy/internal/core/tools/trace"
 	"github.com/rlaope/cloudy/internal/permission"
@@ -60,6 +61,8 @@ type Options struct {
 	PromEndpoints []config.PrometheusEndpoint
 	// Databases is the list of read-only database endpoints from config.
 	Databases []config.DatabaseEndpoint
+	// Queues is the list of message-queue / streaming endpoints from config.
+	Queues []config.QueueEndpoint
 	// Logs is the list of log-search endpoints (loki / elasticsearch).
 	Logs []config.HTTPEndpoint
 	// Tracing is the list of tracing endpoints (tempo / jaeger).
@@ -119,6 +122,9 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 
 	dbClients, dbSkips := db.BuildClients(context.Background(), hub, opts.Databases)
 	db.RegisterAll(reg, dbClients, dbSkips)
+
+	queueClients, queueSkips := queue.BuildClients(opts.Queues)
+	queue.RegisterAll(reg, queueClients, queueSkips)
 
 	logClients, logSkips := tlog.BuildClients(opts.Logs)
 	tlog.RegisterAll(reg, logClients, logSkips)

@@ -60,6 +60,8 @@ var canonicalToolNames = []string{
 
 	"synthetic.http_check",
 
+	"queue.rabbitmq_queues",
+
 	"change.recent",
 
 	"metric.container_stats",
