@@ -26,6 +26,11 @@ const ctrlCTimeout = 2 * time.Second
 // accumulation degrades the turn.
 const compactAdviseThreshold = 75
 
+// compactAutoThreshold is the context-window usage percent at and above which
+// /autocompact (when enabled) fires compaction automatically after a turn.
+// Set above compactAdviseThreshold so the operator sees the amber nudge first.
+const compactAutoThreshold = 90
+
 // compactAdviseStyle renders the below-prompt /compact hint in amber.
 var compactAdviseStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
 
@@ -138,6 +143,12 @@ type Model struct {
 	cancel func()
 	// running indicates an agent run is in progress.
 	running bool
+
+	// autoCompact, when true, fires a /compact automatically once a finished
+	// turn leaves context usage at or above compactAutoThreshold. Off by
+	// default — the operator opts in with /autocompact; until then the amber
+	// hint past compactAdviseThreshold only recommends it.
+	autoCompact bool
 
 	// welcome renders the banner above an empty stream.
 	welcome WelcomeModel
@@ -845,6 +856,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.assistantTurnStarted = false
 		m.releasePlaybackTail()
 		var cmds []tea.Cmd
+		// The turn is done and not running, so context usage is settled — fire
+		// auto-compaction now if it is enabled and the window crossed the
+		// threshold. compactCmd is async; the CAS guard in CompactHistory
+		// protects it from any racing mutation.
+		if ac := m.maybeAutoCompactCmd(); ac != nil {
+			cmds = append(cmds, ac)
+		}
 		if echoFlush != "" {
 			var fCmd tea.Cmd
 			m.stream, fCmd = m.stream.Update(streamWriteMsg(echoFlush))
@@ -1095,6 +1113,25 @@ func (m *Model) contextPct() int {
 		pct = 100
 	}
 	return pct
+}
+
+// maybeAutoCompactCmd returns a command that announces and fires compaction
+// when /autocompact is enabled and the just-finished turn left context usage
+// at or above compactAutoThreshold. Returns nil otherwise. Called from the
+// agentDoneMsg handler, where the turn is settled and not running. After a
+// successful compaction LastInputTokens is zeroed, so contextPct drops and
+// this does not re-fire until the window climbs again.
+func (m *Model) maybeAutoCompactCmd() tea.Cmd {
+	if !m.autoCompact || m.deps.CompactHistory == nil {
+		return nil
+	}
+	if m.contextPct() < compactAutoThreshold {
+		return nil
+	}
+	return tea.Batch(
+		m.writeStream(fmt.Sprintf("→ context %d%% — auto-compacting…\n", m.contextPct())),
+		compactCmd(m.deps.CompactHistory),
+	)
 }
 
 // writeStream is the every-other-palette-action shape: clear the prompt
@@ -1433,6 +1470,14 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		m.stream, nCmd = m.stream.Update(streamClearMsg{})
 		return tea.Batch(nCmd, tea.ClearScreen,
 			m.writeStream("✓ new conversation — session "+newID+"\n"))
+
+	case "autocompact":
+		m.prompt.SetValue("")
+		m.autoCompact = !m.autoCompact
+		if m.autoCompact {
+			return m.writeStream(fmt.Sprintf("✓ auto-compact ON — will compact automatically past %d%% context.\n", compactAutoThreshold))
+		}
+		return m.writeStream("✓ auto-compact OFF — compaction is manual (/compact).\n")
 
 	case "plan":
 		m.prompt.SetValue("")
