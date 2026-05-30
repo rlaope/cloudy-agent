@@ -155,3 +155,34 @@ func TestBuildClients_EmptyMarksGroupSkipped(t *testing.T) {
 		t.Errorf("expected canonical reason, got %q", r)
 	}
 }
+
+// TestRegisterAll_PromOnlyMarksAMSubGroupSkipped pins the partial-wiring fix:
+// with Prometheus configured but no Alertmanager, alert.list_rules registers
+// while the absent Alertmanager backend is marked skipped under the `alert-am`
+// sub-group key — so skill validation's isInSkippedGroup treats
+// alert.list_active / alert.list_silences as configurably-absent instead of
+// leaking "references unknown tool" on every prom-only startup.
+func TestRegisterAll_PromOnlyMarksAMSubGroupSkipped(t *testing.T) {
+	t.Parallel()
+	cs, _ := alert.BuildClients(
+		nil, // no Alertmanager
+		[]config.PrometheusEndpoint{{Name: "prom", URL: "http://prom:9090"}},
+	)
+	if cs.Empty() {
+		t.Fatal("clients should not be empty (prom is wired)")
+	}
+	reg := tools.New()
+	alert.RegisterAll(reg, cs, nil)
+
+	// The prom-backed tool is present; the group is NOT wholesale-skipped.
+	if _, ok := reg.Get("alert.list_rules"); !ok {
+		t.Error("alert.list_rules should be registered when prom is wired")
+	}
+	if _, ok := reg.Skipped()["alert"]; ok {
+		t.Error("alert group should not be wholesale-skipped when prom is wired")
+	}
+	// The absent Alertmanager backend carries a sub-group skip key.
+	if _, ok := reg.Skipped()["alert-am"]; !ok {
+		t.Error("expected alert-am sub-group skip key when Alertmanager is absent")
+	}
+}

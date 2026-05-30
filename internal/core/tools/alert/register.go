@@ -72,6 +72,15 @@ func BuildClients(amEPs []config.AlertmanagerEndpoint, promEPs []config.Promethe
 // RegisterAll adds every alert.* tool whose backend has at least one client.
 // When neither backend is wired, the "alert" group is marked skipped with a
 // composed reason from any per-endpoint failures.
+//
+// The two backends register disjoint tools (Alertmanager → alert.list_active
+// + alert.list_silences; Prometheus → alert.list_rules), so when only ONE is
+// wired the group is partially present. The absent backend is marked skipped
+// under a sub-group key (`alert-am` / `alert-rules`) — mirroring how the perf
+// group skips with `perf-pprof` etc. — so skill validation's isInSkippedGroup
+// treats the missing tools as configurably-absent rather than reporting them
+// as "unknown tool". Without this, a prom-only host (no Alertmanager) leaked
+// "skill references unknown tool alert.list_active" on every startup.
 func RegisterAll(reg *tools.Registry, c Clients, skipReasons []string) {
 	if c.Empty() {
 		reason := "no Alertmanager endpoint configured"
@@ -86,10 +95,14 @@ func RegisterAll(reg *tools.Registry, c Clients, skipReasons []string) {
 			newAMListActiveTool(c.AM),
 			newAMListSilencesTool(c.AM),
 		)
+	} else {
+		reg.MarkSkipped("alert-am", "no Alertmanager endpoint configured (alert.list_active / alert.list_silences)")
 	}
 	if len(c.PromRules) > 0 {
 		reg.MustRegister(
 			newPromListRulesTool(c.PromRules),
 		)
+	} else {
+		reg.MarkSkipped("alert-rules", "no Prometheus endpoint configured (alert.list_rules)")
 	}
 }
