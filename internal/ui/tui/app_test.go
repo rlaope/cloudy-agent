@@ -572,6 +572,40 @@ func TestPaletteIncludes_NewCommands(t *testing.T) {
 	}
 }
 
+// TestPaletteAction_Plan_Toggles confirms /plan flips Deps.TogglePlan and
+// reports the new state, and that a nil TogglePlan degrades to an
+// "unavailable" line rather than panicking.
+func TestPaletteAction_Plan_Toggles(t *testing.T) {
+	on := true
+	deps := makeDeps()
+	deps.TogglePlan = func() bool { on = !on; return on }
+
+	m := NewModel(deps)
+	next, _ := m.Update(windowMsg())
+	m = next.(Model)
+
+	// First toggle: true → false.
+	if cmd := m.handlePaletteAction(paletteActionMsg{cmd: "plan"}); cmd == nil {
+		t.Fatal("plan action should return a writeStream command")
+	}
+	if on {
+		t.Errorf("TogglePlan not invoked; on = %v, want false", on)
+	}
+	// Second toggle: false → true.
+	m.handlePaletteAction(paletteActionMsg{cmd: "plan"})
+	if !on {
+		t.Errorf("second toggle did not flip back; on = %v, want true", on)
+	}
+
+	// Nil guard: no closure wired → graceful "unavailable", no panic.
+	m2 := NewModel(makeDeps())
+	next2, _ := m2.Update(windowMsg())
+	m2 = next2.(Model)
+	if cmd := m2.handlePaletteAction(paletteActionMsg{cmd: "plan"}); cmd == nil {
+		t.Fatal("plan action with nil TogglePlan should still return a writeStream command")
+	}
+}
+
 // TestPaletteAction_Exit_Quits confirms the /exit alias produces a tea.Quit
 // command, matching the /quit behaviour the user already relied on.
 func TestPaletteAction_Exit_Quits(t *testing.T) {

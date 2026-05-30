@@ -58,6 +58,10 @@ type convoState struct {
 	// changed underneath — so a concurrent agent turn, /new, or /resume is
 	// never silently clobbered by a stale compaction result.
 	version uint64
+	// plan toggles plan-first investigation (agent.Options.Plan). On by
+	// default in the TUI; the /plan command flips it. Read under mu when a
+	// turn builds its agent so a toggle never races a running turn's snapshot.
+	plan bool
 }
 
 // Run builds the TUI Model, wires the agent runner, and starts the bubbletea
@@ -66,12 +70,18 @@ type convoState struct {
 // can run /setup or /login from inside.
 func Run(ctx context.Context, deps Deps) error {
 	ref := &providerRef{provider: deps.Provider, model: deps.Model}
-	state := &convoState{sess: deps.Session}
+	state := &convoState{sess: deps.Session, plan: true}
 	deps.AgentRunner = makeAgentRunner(ctx, ref, deps, state)
 	deps.SwapModel = makeSwapModel(ref, deps.Model)
 	deps.CompactHistory = makeCompactHistory(ref, state)
 	deps.ResetHistory = makeResetHistory(state)
 	deps.SeedHistory = makeSeedHistory(state)
+	deps.TogglePlan = func() bool {
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		state.plan = !state.plan
+		return state.plan
+	}
 
 	m := NewModel(deps)
 	m.fullscreen = fullscreenRequested()
@@ -204,6 +214,7 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps, state
 		state.mu.Lock()
 		history := state.history
 		sess := state.sess
+		planOn := state.plan
 		state.mu.Unlock()
 
 		ag, err := agent.New(agent.Options{
@@ -225,6 +236,7 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps, state
 			MaxLogResponseBytes:      deps.MaxLogResponseBytes,
 			Approver:                 approver,
 			Profile:                  activeProfile,
+			Plan:                     planOn,
 		})
 		if err != nil {
 			logSessionError(sess, "agent.new", err)
