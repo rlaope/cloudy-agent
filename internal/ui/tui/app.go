@@ -203,6 +203,12 @@ type Model struct {
 	// of falling through to setupChat. Reset by the resolve handler.
 	scopePickerActive bool
 
+	// skillPickerActive is true while the operator is choosing a skill
+	// via bare `/skill` (no argument). The picker's resolve message
+	// activates the selected skill via the same path as `/skill <name>`.
+	// Reset by the resolve handler whether the operator confirmed or cancelled.
+	skillPickerActive bool
+
 	// agentCh is the channel the in-flight agent goroutine emits
 	// AgentEvent values on. The Update loop reads it one event at a
 	// time via pumpAgentCmd — after each event is applied to sub-
@@ -684,7 +690,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case arrowPickerResolveMsg:
 		// Single-select picker — could be /login (provider OR model step),
-		// or the standalone /model picker. Route by which mode is active.
+		// the standalone /model picker, or the standalone /skill picker.
+		// Route by which mode is active.
 		m.arrowPicker = nil
 		input := msg.key
 		if msg.cancelled {
@@ -700,6 +707,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.writeStream("[model swap cancelled]\n")
 			}
 			return m, m.applyModelSwap(input)
+		}
+		if m.skillPickerActive {
+			m.skillPickerActive = false
+			// Treat an empty key like a cancel: a confirmed-but-empty resolve
+			// would otherwise re-enter the arg=="" branch and re-open the
+			// picker. (Unreachable today — arrowpicker only emits key="" with
+			// cancelled=true — but cheap to guard.)
+			if msg.cancelled || msg.key == "" {
+				return m, m.writeStream("[skill selection cancelled]\n")
+			}
+			// Route through the same activation path as `/skill <name>`.
+			return m, m.handlePaletteAction(paletteActionMsg{cmd: "skill", arg: msg.key})
 		}
 		return m, nil
 
@@ -1348,6 +1367,27 @@ func buildAllModelsPicker() *arrowPicker {
 	return newArrowPicker("Pick a model:", items)
 }
 
+// buildSkillsPicker materialises the `/skill` (no-arg) picker —
+// one row per skill in the registry, in alphabetical order.
+// The hint column shows the skill's description so the operator
+// can choose without knowing the exact name in advance.
+// Returns nil when the registry is empty.
+func buildSkillsPicker(reg *skills.Registry) *arrowPicker {
+	all := reg.List()
+	if len(all) == 0 {
+		return nil
+	}
+	items := make([]arrowPickerItem, 0, len(all))
+	for _, sk := range all {
+		items = append(items, arrowPickerItem{
+			label: sk.Name,
+			hint:  sk.Description,
+			key:   sk.Name,
+		})
+	}
+	return newArrowPicker("Pick a skill:", items)
+}
+
 // applyLoginResult drains a loginResult into the TUI: writes the chat
 // output, activates a picker if present, clears the chat on done, and
 // — the part the operator actually cares about — hot-swaps the active
@@ -1581,15 +1621,36 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		return m.writeStream("cloudy " + buildinfo.Version + "\n")
 
 	case "skill":
+		m.prompt.SetValue("")
 		if action.arg == "" {
-			return m.writeStream("usage: /skill <name>\n")
+			// No name → open an interactive picker listing all available
+			// skills, mirroring the bare `/model` flow. The operator
+			// arrows + Enters; resolve routes back through
+			// handlePaletteAction{cmd:"skill", arg:<name>} via the
+			// arrowPickerResolveMsg handler. `/skill <name>` still works
+			// for power-users / scripts.
+			//
+			// Gated on !running so the picker overlay never opens on top of a
+			// streaming reply (mirrors /compact, /new, /resume).
+			if m.running {
+				return m.writeStream("⚠ cannot /skill while a turn is in flight; wait for it to finish.\n")
+			}
+			if m.deps.Skills == nil {
+				return m.writeStream("no skills loaded\n")
+			}
+			picker := buildSkillsPicker(m.deps.Skills)
+			if picker == nil {
+				return m.writeStream("no skills available\n")
+			}
+			m.skillPickerActive = true
+			m.arrowPicker = picker
+			return m.writeStream("\nPick a skill:\n")
 		}
 		if m.deps.Skills != nil {
 			if sk, ok := m.deps.Skills.Get(action.arg); ok {
 				m.activeSkill = sk.Name
 				var hCmd tea.Cmd
 				m.header, hCmd = m.header.Update(headerStateMsg{skill: sk.Name})
-				m.prompt.SetValue("")
 				return hCmd
 			}
 		}
