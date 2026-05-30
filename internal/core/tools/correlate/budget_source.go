@@ -57,11 +57,16 @@ func newBudgetSource(prom map[string]*promclient.Client, query string, target fl
 func (s *budgetSource) Name() string { return "slo" }
 
 // RecentChanges evaluates the bad-event ratio at the short and long burn
-// windows and emits one "budget_burn" symptom at detection time when both
-// windows exceed the fast-burn threshold. No data on either window, or a burn
-// below threshold, yields no event (and no error — a quiet budget is not a
-// failure). The Prometheus backend is the deterministic default, matching the
-// metric source.
+// windows and emits one "budget_burn" symptom when both windows exceed the
+// fast-burn threshold. The short window is evaluated first and the long-window
+// query is skipped when the short window can't fire.
+//
+// A genuine query failure (auth, Prometheus outage, malformed expression) is
+// propagated as an error — correlate records it as a failed-source note rather
+// than showing a clean timeline during the exact incident this is meant to
+// catch. A quiet budget (ratio present but burn below threshold) or empty/
+// non-finite data yields no event and no error, matching the metric source's
+// partial tolerance. The Prometheus backend is the deterministic default.
 func (s *budgetSource) RecentChanges(ctx context.Context, _ change.ChangeQuery) ([]change.ChangeEvent, error) {
 	_, client, err := tools.PickDefaultEndpoint(s.clients, "correlate", "prometheus endpoint")
 	if err != nil {
@@ -70,28 +75,44 @@ func (s *budgetSource) RecentChanges(ctx context.Context, _ change.ChangeQuery) 
 
 	now := time.Now()
 	budget := 1 - s.target
-	burnAt := func(window string) (float64, bool) {
+	// burnAt returns (burn, hasData, error): error = the query failed and must
+	// be surfaced; hasData=false = empty/non-finite result (a quiet "no data").
+	burnAt := func(window string) (float64, bool, error) {
 		q := strings.ReplaceAll(s.query, budgetWindowToken, window)
 		res, qerr := client.Query(ctx, q, now)
 		if qerr != nil {
-			return 0, false
+			return 0, false, qerr
 		}
 		v, ok := instantScalar(res)
 		if !ok {
-			return 0, false
+			return 0, false, nil
 		}
-		return v / budget, true
+		return v / budget, true, nil
 	}
 
-	burnShort, okS := burnAt(burnShortWindow)
-	burnLong, okL := burnAt(burnLongWindow)
-	if !okS || !okL {
+	burnShort, okS, err := burnAt(burnShortWindow)
+	if err != nil {
+		return nil, err
+	}
+	if !okS || burnShort < fastBurnThreshold {
 		return nil, nil
 	}
-	if burnShort < fastBurnThreshold || burnLong < fastBurnThreshold {
+	burnLong, okL, err := burnAt(burnLongWindow)
+	if err != nil {
+		return nil, err
+	}
+	if !okL || burnLong < fastBurnThreshold {
 		return nil, nil
 	}
 
+	// The symptom is anchored at detection time (now), NOT at the burn's true
+	// onset — unlike metric_breach, which uses the actual breach timestamp. The
+	// onset is not recoverable from two instant burn-rate samples (finding it
+	// would need a range scan, which is the metric source's job). One
+	// consequence: when budget_burn is the ONLY symptom, every change in the
+	// window precedes it, so the cause ranking leans coarser/recency-biased.
+	// When a timestamped symptom (metric/log/trace) co-exists, the cause engine
+	// anchors on that earlier symptom instead, and this just rides the timeline.
 	return []change.ChangeEvent{{
 		Time:    now,
 		Kind:    "budget_burn",
