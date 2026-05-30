@@ -68,6 +68,10 @@ type Config struct {
 	// the read-only v1 HTTP API.
 	ArgoCD []ArgoCDEndpoint `yaml:"argocd,omitempty"`
 
+	// PagerDuty is the list of PagerDuty accounts cloudy may query for
+	// active incidents and who is currently on call. Read-only REST API v2.
+	PagerDuty []PagerDutyEndpoint `yaml:"pagerduty,omitempty"`
+
 	// Contexts is the explicit list of kubeconfig contexts to expose to the
 	// agent. Empty (or missing) means "use the kubeconfig current-context".
 	Contexts []string `yaml:"contexts,omitempty"`
@@ -192,6 +196,21 @@ type ArgoCDEndpoint struct {
 	// BasicPassEnv is the environment variable holding the Basic Auth
 	// password (optional, for gateways).
 	BasicPassEnv string `yaml:"basic_pass_env,omitempty"`
+}
+
+// PagerDutyEndpoint describes a single PagerDuty account. PagerDuty's REST
+// API v2 authenticates with a classic API token sent as
+// "Authorization: Token token=<key>" — neither Bearer nor Basic — so the
+// token is read from TokenEnv and injected via httpapi's TokenTripper.
+type PagerDutyEndpoint struct {
+	// Name is a human-readable label used in UI and as the tool argument key.
+	Name string `yaml:"name"`
+
+	// URL is the REST API base URL; empty defaults to https://api.pagerduty.com.
+	URL string `yaml:"url,omitempty"`
+
+	// TokenEnv is the environment variable holding the PagerDuty API token.
+	TokenEnv string `yaml:"token_env"`
 }
 
 // DatabaseEndpoint describes a single read-only database the agent can

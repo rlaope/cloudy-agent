@@ -30,6 +30,14 @@ type Auth struct {
 	BasicUser string
 	// BasicPassEnv is the environment variable holding the Basic Auth password.
 	BasicPassEnv string
+	// TokenEnv is the environment variable holding a raw token injected as
+	// "Authorization: <TokenScheme><token>". For APIs whose scheme is neither
+	// Bearer nor Basic — e.g. PagerDuty's "Token token=<key>".
+	TokenEnv string
+	// TokenScheme is the Authorization-header prefix used with TokenEnv,
+	// including any trailing space or "=" (e.g. "Token token="). Empty defaults
+	// to "Bearer ".
+	TokenScheme string
 }
 
 // Client is a read-only HTTP client bound to a single base URL. It enforces
@@ -122,11 +130,32 @@ func (b *BasicTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 	return b.Inner.RoundTrip(r2)
 }
 
+// TokenTripper injects a verbatim Authorization header value. Used for schemes
+// that are neither Bearer nor Basic (e.g. PagerDuty's "Token token=<key>").
+type TokenTripper struct {
+	Inner  http.RoundTripper
+	Header string
+}
+
+func (t *TokenTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	r2 := r.Clone(r.Context())
+	r2.Header.Set("Authorization", t.Header)
+	return t.Inner.RoundTrip(r2)
+}
+
 // WrapAuth wraps inner with the auth tripper selected by env-resolved
 // credentials in auth. Returns inner unchanged when no auth is configured
 // or when the configured env var is empty.
 func WrapAuth(inner http.RoundTripper, auth Auth) http.RoundTripper {
 	switch {
+	case auth.TokenEnv != "":
+		if token := os.Getenv(auth.TokenEnv); token != "" {
+			scheme := auth.TokenScheme
+			if scheme == "" {
+				scheme = "Bearer "
+			}
+			return &TokenTripper{Inner: inner, Header: scheme + token}
+		}
 	case auth.BearerEnv != "":
 		if token := os.Getenv(auth.BearerEnv); token != "" {
 			return &BearerTripper{Inner: inner, Token: token}

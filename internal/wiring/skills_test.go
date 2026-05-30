@@ -37,6 +37,8 @@ var canonicalToolNames = []string{
 
 	"gitops.argo_list_apps", "gitops.argo_app_status", "gitops.argo_app_history",
 
+	"oncall.list_incidents", "oncall.who_is_oncall",
+
 	"db.pg_version", "db.pg_stat_activity", "db.pg_stat_database",
 	"db.pg_stat_replication", "db.pg_locks", "db.pg_top_table_size",
 	"db.mysql_version", "db.mysql_processlist", "db.mysql_global_status",
