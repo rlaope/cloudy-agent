@@ -127,11 +127,57 @@ func TestResetHistory_ClearsHistory(t *testing.T) {
 	}
 }
 
-func TestSeedHistory_LoadsHistory(t *testing.T) {
+func TestSeedHistory_LoadsHistoryAndRollsSession(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
 	state := &convoState{}
 	seed := longHistory(3)
-	makeSeedHistory(state)(seed)
+	if err := makeSeedHistory(state)("resumed-id", seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
 	if len(state.history) != 3 {
 		t.Errorf("seed not applied: %d", len(state.history))
 	}
+	if state.sess == nil || state.sess.ID != "resumed-id" {
+		t.Errorf("session not rolled to resumed id: %+v", state.sess)
+	}
+}
+
+// TestCompactHistory_AbortsOnConcurrentChange proves the version CAS guard:
+// if history changes during the (here, synchronous-but-version-bumped)
+// summarizer window, compaction refuses to overwrite the newer state.
+func TestCompactHistory_AbortsOnConcurrentChange(t *testing.T) {
+	bumped := longHistory(8)
+	// The fake provider mutates state mid-summarize to simulate a turn
+	// landing while the round-trip is outstanding.
+	state := &convoState{history: longHistory(20)}
+	ref := &providerRef{provider: &mutatingProvider{state: state, replacement: bumped}, model: "claude-x"}
+
+	_, err := makeCompactHistory(ref, state)(context.Background())
+	if err == nil {
+		t.Fatal("expected compaction to abort on concurrent change")
+	}
+	if len(state.history) != 8 {
+		t.Errorf("concurrent change was clobbered: len = %d, want 8", len(state.history))
+	}
+}
+
+// mutatingProvider replaces the shared history (and bumps version) while
+// "streaming", standing in for a concurrent agent turn / /new / /resume.
+type mutatingProvider struct {
+	state       *convoState
+	replacement []llm.Message
+}
+
+func (p *mutatingProvider) Name() string { return "mutating" }
+
+func (p *mutatingProvider) Stream(_ context.Context, _ llm.Request) (<-chan llm.Chunk, error) {
+	p.state.mu.Lock()
+	p.state.history = p.replacement
+	p.state.version++
+	p.state.mu.Unlock()
+	ch := make(chan llm.Chunk, 2)
+	ch <- llm.Chunk{DeltaText: "late summary"}
+	ch <- llm.Chunk{Done: true}
+	close(ch)
+	return ch, nil
 }

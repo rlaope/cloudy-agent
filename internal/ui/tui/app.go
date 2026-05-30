@@ -92,9 +92,10 @@ type Deps struct {
 	// ResetHistory clears the conversation and rolls a fresh session file,
 	// returning the new session id. /new calls it. Injected by run.go.
 	ResetHistory func() (newSessionID string, err error)
-	// SeedHistory loads a past conversation into the live history. /resume
-	// calls it after session.LoadHistory. Injected by run.go.
-	SeedHistory func(history []llm.Message)
+	// SeedHistory loads a past conversation into the live history and rolls
+	// the session to id so follow-up turns continue that same conversation.
+	// /resume calls it after session.LoadHistory. Injected by run.go.
+	SeedHistory func(id string, history []llm.Message) error
 }
 
 // AgentEvent, ApprovalRequest, the tool/event message envelopes, and the
@@ -1444,7 +1445,12 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		if err != nil {
 			return m.writeStream(agentError("resume", err))
 		}
-		m.deps.SeedHistory(msgs)
+		if err := m.deps.SeedHistory(action.arg, msgs); err != nil {
+			return m.writeStream(agentError("resume", err))
+		}
+		// The resumed context replaces the current one; reset the gauge so
+		// it isn't stale until the next turn's usage event recomputes it.
+		m.usage.LastInputTokens = 0
 		return m.writeStream(fmt.Sprintf("✓ resumed session %s — %d message(s) restored\n", action.arg, len(msgs)))
 
 	case "quit", "exit":

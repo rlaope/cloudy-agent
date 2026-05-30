@@ -62,6 +62,7 @@ func makeCompactHistory(ref *providerRef, state *convoState) func(context.Contex
 
 		state.mu.Lock()
 		history := state.history
+		startVer := state.version
 		state.mu.Unlock()
 
 		if len(history) <= compactKeepMessages+1 {
@@ -81,15 +82,24 @@ func makeCompactHistory(ref *providerRef, state *convoState) func(context.Contex
 		newHistory = append(newHistory, keep...)
 
 		state.mu.Lock()
+		// The summarizer round-trip is slow; if the conversation changed in
+		// the meantime (an agent turn finished, /new, /resume), abort rather
+		// than overwrite their work with this stale compaction.
+		if state.version != startVer {
+			state.mu.Unlock()
+			return "", fmt.Errorf("conversation changed during compaction; aborted — run /compact again")
+		}
 		state.history = newHistory
+		state.version++
+		sess := state.sess
 		state.mu.Unlock()
 
 		// Re-persist the compacted history so a restart resumes the smaller
 		// conversation, not the pre-compact one. Best-effort.
-		if state.sess != nil {
+		if sess != nil {
 			activeProfile, _ := permission.LoadActive()
 			masked := permission.MaskHistory(activeProfile, newHistory)
-			_ = session.SaveHistory(state.sess.ID, modelID, masked)
+			_ = session.SaveHistory(sess.ID, modelID, masked)
 		}
 		return summaryText, nil
 	}
@@ -100,30 +110,39 @@ func makeCompactHistory(ref *providerRef, state *convoState) func(context.Contex
 // returning the new session id.
 func makeResetHistory(state *convoState) func() (string, error) {
 	return func() (string, error) {
-		newSess, err := session.New("")
-		if err != nil {
-			return "", err
-		}
-		state.mu.Lock()
-		old := state.sess
-		state.sess = newSess
-		state.history = nil
-		state.mu.Unlock()
-		if old != nil {
-			_ = old.Close()
-		}
-		return newSess.ID, nil
+		return swapSession(state, "", nil)
 	}
 }
 
 // makeSeedHistory returns the Deps.SeedHistory closure used by /resume to
-// load a past conversation into the live history.
-func makeSeedHistory(state *convoState) func([]llm.Message) {
-	return func(msgs []llm.Message) {
-		state.mu.Lock()
-		state.history = msgs
-		state.mu.Unlock()
+// load a past conversation into the live history. It rolls the session to
+// the resumed id so follow-up turns append to — and re-snapshot — the SAME
+// conversation, matching `cloudy ask --resume` rather than diverging from it.
+func makeSeedHistory(state *convoState) func(string, []llm.Message) error {
+	return func(id string, msgs []llm.Message) error {
+		_, err := swapSession(state, id, msgs)
+		return err
 	}
+}
+
+// swapSession opens session id (empty → fresh id), installs it plus history
+// onto state, bumps the version, and closes the prior session. Shared by
+// /new (nil history) and /resume (loaded history).
+func swapSession(state *convoState, id string, history []llm.Message) (string, error) {
+	newSess, err := session.New(id)
+	if err != nil {
+		return "", err
+	}
+	state.mu.Lock()
+	old := state.sess
+	state.sess = newSess
+	state.history = history
+	state.version++
+	state.mu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+	return newSess.ID, nil
 }
 
 // summarizeMessages renders the older slice to text and asks the active

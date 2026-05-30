@@ -58,3 +58,28 @@ func TestMaskHistoryRespectsActiveProfile(t *testing.T) {
 		t.Errorf("profile value_regex not applied: %q", out[0].Content)
 	}
 }
+
+// TestMaskHistoryToolResultKeyNamedSecret verifies a key-named secret in a
+// RoleTool JSON body (only identifiable by its key, not its value shape) is
+// redacted — these are value-regex-blind and would otherwise reach disk.
+func TestMaskHistoryToolResultKeyNamedSecret(t *testing.T) {
+	out := MaskHistory(nil, []llm.Message{
+		{Role: llm.RoleTool, ToolCallID: "c1", Content: `{"db_password":"s3kr3t-custom","host":"db"}`},
+	})
+	if strings.Contains(out[0].Content, "s3kr3t-custom") {
+		t.Errorf("key-named secret in tool result not redacted: %q", out[0].Content)
+	}
+}
+
+// TestDefaultMaskingPatternsCompile locks the invariant that the built-in
+// fallback patterns always compile — if they don't, maskerOrDefault silently
+// degrades to no masking, re-opening the gap it exists to close.
+func TestDefaultMaskingPatternsCompile(t *testing.T) {
+	m, err := NewMasker(&Profile{Masking: DefaultMaskingPatterns()})
+	if err != nil {
+		t.Fatalf("DefaultMaskingPatterns must compile: %v", err)
+	}
+	if m == nil {
+		t.Fatal("DefaultMaskingPatterns produced a nil masker")
+	}
+}

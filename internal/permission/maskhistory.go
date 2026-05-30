@@ -22,6 +22,16 @@ func MaskHistory(p *Profile, msgs []llm.Message) []llm.Message {
 	masker := maskerOrDefault(p)
 	out := cloneHistory(msgs)
 	for i := range out {
+		// Tool-result bodies are usually JSON blobs carrying key-named
+		// secrets (a db row's `password` column, an env dump's `API_KEY`).
+		// MaskJSON applies the KeyRegex set too (it no-ops on non-JSON), so
+		// run it first for RoleTool Content; MaskString (value patterns)
+		// then covers everything, prose included.
+		if out[i].Role == llm.RoleTool {
+			if masked, err := masker.MaskJSON([]byte(out[i].Content)); err == nil {
+				out[i].Content = string(masked)
+			}
+		}
 		out[i].Content = masker.MaskString(out[i].Content)
 		for j := range out[i].ToolCalls {
 			if masked, err := masker.MaskJSON(out[i].ToolCalls[j].Arguments); err == nil {

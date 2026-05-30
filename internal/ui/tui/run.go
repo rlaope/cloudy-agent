@@ -52,6 +52,11 @@ type convoState struct {
 	mu      sync.Mutex
 	history []llm.Message
 	sess    *session.Session
+	// version bumps on every history mutation. /compact captures it before
+	// its (slow) summarizer round-trip and refuses to overwrite if it
+	// changed underneath — so a concurrent agent turn, /new, or /resume is
+	// never silently clobbered by a stale compaction result.
+	version uint64
 }
 
 // Run builds the TUI Model, wires the agent runner, and starts the bubbletea
@@ -230,6 +235,7 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps, state
 		if len(newMsgs) > 0 {
 			state.mu.Lock()
 			state.history = newMsgs
+			state.version++
 			state.mu.Unlock()
 			// Persist a masked resume snapshot so the conversation survives
 			// a restart. MaskHistory is a hard requirement: the in-memory
