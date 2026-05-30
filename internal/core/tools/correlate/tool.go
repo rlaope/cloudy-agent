@@ -82,7 +82,7 @@ func (t *correlateTool) Schema() json.RawMessage {
 		"type": "object",
 		"properties": map[string]any{
 			"workload":         str("Workload to correlate (deployment/statefulset/daemonset, container/compose service, or Argo CD application name). Required."),
-			"namespace":        str("Kubernetes namespace to scope the change search; ignored by the Docker and Argo change sources and by the metric/log/trace symptom sources (namespace-agnostic in v2 — scope symptoms via metric_query or workload/service naming)."),
+			"namespace":        str("Kubernetes namespace to scope the search. Honored by the k8s change source, the Loki/Elasticsearch log symptom sources, and the Tempo trace symptom source. Ignored by the Docker and Argo change sources, the Jaeger trace source (no standard namespace tag), and the metric source (scope namespace inside metric_query)."),
 			"context":          str("kubeconfig context, Docker host, or Argo CD endpoint name to query; empty = each backend's default."),
 			"since":            str("How far back to look, as a Go duration (e.g. \"1h\", \"90m\"); default \"1h\"."),
 			"limit":            map[string]any{"type": "integer", "description": "Maximum number of timeline events to return; default 50."},

@@ -39,7 +39,7 @@ func RegisterAll(reg *tools.Registry, k8sHub *k8sclient.Hub, dockerHub *dockercl
 	}
 	// Register when any change source OR any symptom backend exists; a
 	// symptom-only setup (e.g. prom + loki, no k8s/docker/argo) is still valid.
-	hasSymptom := len(prom) > 0 || len(logs.Loki) > 0 || len(traces.Jaeger) > 0
+	hasSymptom := len(prom) > 0 || len(logs.Loki) > 0 || len(logs.ES) > 0 || len(traces.Jaeger) > 0 || len(traces.Tempo) > 0
 	if len(sources) == 0 && !hasSymptom {
 		return
 	}
