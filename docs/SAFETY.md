@@ -324,6 +324,39 @@ LLM picks a tool
 
 ---
 
+## Active probing: `synthetic.http_check`
+
+Almost every cloudy tool *passively reads* telemetry that already exists.
+The one exception is `synthetic.http_check`, which makes an **outbound
+GET/HEAD request to a URL the agent chooses** to test reachability,
+latency, and TLS-cert expiry. This is the only tool that emits traffic
+to an LLM-selected destination, so its exposure is documented here.
+
+What constrains it:
+
+- **Verb**: the tool issues only GET/HEAD, and every hop (including
+  redirects) flows through `transport.ReadOnlyRoundTripper`, which
+  refuses any non-read method. No probe can mutate anything.
+- **Link-local / metadata guard**: a dial-time control function refuses
+  connections to link-local addresses (`169.254.0.0/16`, `fe80::/10`).
+  This blocks the cloud-metadata endpoint `169.254.169.254`, which
+  serves IAM credentials over a plain GET — the one egress the verb
+  contract cannot defend. The guard runs on the post-DNS IP, so it also
+  defeats DNS-rebinding and a redirect aimed at metadata.
+- **Timeout**: bounded (default 10s, hard max 30s) so a probe cannot
+  hang the session.
+
+What it does **not** restrict: loopback and private/RFC1918 ranges stay
+reachable on purpose — probing an internal service is the tool's whole
+point, and cloudy's host can already reach them. The residual exposure
+is therefore *egress to an attacker-chosen public or internal URL* (data
+egress / internal recon, not mutation). To fence it in a hardened
+deployment, point `HTTPS_PROXY` / `NO_PROXY` at an audit-logging egress
+proxy (see [BASTION.md](BASTION.md)), or drop the `synthetic` group via a
+Permission Profile tool-deny.
+
+---
+
 ## Threat model: what cloudy is *not* protecting against
 
 - **A malicious operator on the bastion**. cloudy reads whatever its

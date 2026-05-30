@@ -58,6 +58,8 @@ var canonicalToolNames = []string{
 	"ebpf.biolatency", "ebpf.tcptop", "ebpf.tcprtt", "ebpf.execsnoop",
 	"ebpf.bpftrace_oneliner",
 
+	"synthetic.http_check",
+
 	"change.recent",
 
 	"metric.container_stats",
