@@ -126,6 +126,41 @@ func TestScoreAnomalies_RanksAnomalousFirst(t *testing.T) {
 	}
 }
 
+func TestScoreAnomalies_NaNBaselineFiltered(t *testing.T) {
+	// A stale NaN in the baseline must be dropped, not poison mean/stddev.
+	// Remaining finite baseline ~10; eval at 10 → normal (NOT falsely anomalous).
+	nan := math.NaN()
+	res := matrixOf(map[string]string{"job": "x"},
+		[2]float64{100, 10}, [2]float64{200, nan}, [2]float64{300, 10},
+		[2]float64{400, 10}, [2]float64{500, 10},
+		[2]float64{1000, 10},
+	)
+	rep := scoreAnomalies(res, anomalyEvalStart, 3.0)
+	if rep.anomalies != 0 {
+		t.Fatalf("NaN baseline sample must not manufacture an anomaly, got %d: %+v", rep.anomalies, rep.series)
+	}
+	if rep.series[0].insufficient {
+		t.Errorf("4 finite baseline points remain after dropping NaN; should be sufficient: %+v", rep.series[0])
+	}
+}
+
+func TestScoreAnomalies_NaNFirstEvalPointDoesNotMaskSpike(t *testing.T) {
+	// NaN is the first eval sample; a real spike follows. The spike must still
+	// be detected — a NaN seed would have made 80 > NaN false and masked it.
+	nan := math.NaN()
+	res := matrixOf(map[string]string{"job": "x"},
+		[2]float64{100, 10}, [2]float64{200, 11}, [2]float64{300, 9}, [2]float64{400, 10},
+		[2]float64{1000, nan}, [2]float64{1015, 80},
+	)
+	rep := scoreAnomalies(res, anomalyEvalStart, 3.0)
+	if rep.anomalies != 1 {
+		t.Fatalf("spike after a NaN eval point must be detected, got %d: %+v", rep.anomalies, rep.series)
+	}
+	if rep.series[0].evalPeak != 80 {
+		t.Errorf("eval peak should be the real spike 80, got %g", rep.series[0].evalPeak)
+	}
+}
+
 func TestMeanStd(t *testing.T) {
 	mean, std := meanStd([]float64{2, 4, 4, 4, 5, 5, 7, 9})
 	if mean != 5 {

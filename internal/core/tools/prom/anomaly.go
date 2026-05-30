@@ -53,7 +53,7 @@ func (t *AnomalyTool) Schema() json.RawMessage {
 		"query":       strProp("PromQL expression to evaluate; each returned series is scored independently."),
 		"baseline":    strProp("Reference window to learn normal from, as a Go duration (e.g. \"1h\", \"6h\"); default \"1h\"."),
 		"eval":        strProp("Recent window tested for anomaly, as a Go duration (e.g. \"5m\", \"15m\"); default \"5m\"."),
-		"z_threshold": map[string]any{"type": "number", "description": "Standard deviations of deviation at/above which the eval window is anomalous; default 3."},
+		"z_threshold": map[string]any{"type": "number", "description": "Standard deviations of deviation at/above which the eval window is anomalous; default 3. A value <= 0 resets to the default."},
 	}, []string{"query"})
 }
 
@@ -151,9 +151,12 @@ func scoreAnomalies(res *promclient.Result, evalStart time.Time, z float64) anom
 		var sa seriesAnomaly
 		sa.labels = labelsString(s.Labels)
 
-		// First pass: collect baseline values.
+		// First pass: collect baseline values. Prometheus serializes stale
+		// samples as NaN (and the client discards the parse error), so a
+		// non-finite point must be dropped — left in, it poisons mean/stddev
+		// (NaN propagates) and falsely marks every eval point anomalous.
 		for _, pt := range s.Values {
-			if pt[0] < evalStartSec {
+			if pt[0] < evalStartSec && isFinite(pt[1]) {
 				base = append(base, pt[1])
 			}
 		}
@@ -167,10 +170,13 @@ func scoreAnomalies(res *promclient.Result, evalStart time.Time, z float64) anom
 		sa.baselineMean = mean
 		sa.baselineStd = std
 
-		// Second pass: score eval points.
+		// Second pass: score eval points. A non-finite eval sample (stale NaN)
+		// is skipped too — left in, a NaN-first eval point would seed maxAbsZ
+		// as NaN and a later real spike (50 > NaN is false) could never
+		// override it, silently masking a true anomaly.
 		haveEval := false
 		for _, pt := range s.Values {
-			if pt[0] < evalStartSec {
+			if pt[0] < evalStartSec || !isFinite(pt[1]) {
 				continue
 			}
 			val := pt[1]
@@ -221,17 +227,19 @@ func (rep anomalyReport) observation(query string, baseline, eval time.Duration,
 		return nil, fmt.Sprintf("prom.anomaly: query=%q returned no series over the baseline+eval window", query)
 	}
 	tbl := &render.Table{
-		Headers: []string{"SERIES", "BASELINE_MEAN", "BASELINE_STD", "EVAL_PEAK", "MAX_Z", "VERDICT"},
+		Headers: []string{"SERIES", "BASELINE_MEAN", "BASELINE_STD", "EVAL_PEAK", "MAX_Z", "PEAK_AT", "VERDICT"},
 		Aligns: []render.Align{
 			render.AlignLeft, render.AlignRight, render.AlignRight,
-			render.AlignRight, render.AlignRight, render.AlignLeft,
+			render.AlignRight, render.AlignRight, render.AlignLeft, render.AlignLeft,
 		},
 	}
 	for _, s := range rep.series {
 		verdict := "normal"
+		peakAt := s.peakAt.UTC().Format(time.RFC3339)
 		switch {
 		case s.insufficient:
-			verdict = "insufficient baseline"
+			verdict = fmt.Sprintf("insufficient baseline (%d pts)", s.baselineCount)
+			peakAt = "—"
 		case s.anomalous:
 			verdict = "ANOMALY"
 		}
@@ -241,6 +249,7 @@ func (rep anomalyReport) observation(query string, baseline, eval time.Duration,
 			fmtMaybe(s.insufficient, s.baselineStd),
 			fmtMaybe(s.insufficient, s.evalPeak),
 			zString(s),
+			peakAt,
 			verdict,
 		})
 	}
@@ -264,6 +273,12 @@ func meanStd(xs []float64) (mean, std float64) {
 	}
 	std = math.Sqrt(sq / float64(len(xs)))
 	return mean, std
+}
+
+// isFinite reports whether v is a usable sample (not a Prometheus staleness
+// NaN or an infinity from a divide-by-zero in the PromQL expression).
+func isFinite(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
 }
 
 func parseDurationOr(s string, def time.Duration) time.Duration {
