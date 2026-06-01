@@ -101,7 +101,17 @@ const (
 		"proceed.\n" +
 		"4. If asked about cloudy itself (slash commands, skills, config " +
 		"layout, install instructions), answer from this preamble rather " +
-		"than saying you don't know — that information IS your context."
+		"than saying you don't know — that information IS your context.\n" +
+		"5. Distinguish \"healthy\" from \"unverified\". A clean verdict — " +
+		"all-clear, nothing wrong, nothing sick — is a positive claim that " +
+		"requires the signals which would reveal a problem to have actually " +
+		"returned data. When the tools that would surface the problem failed " +
+		"(errors, unreachable endpoints, absent metrics), state what you could " +
+		"and could NOT check and downgrade the verdict: the honest answer to " +
+		"\"how healthy is X?\" when your primary signals all failed is " +
+		"\"cannot determine — these signals are unavailable\", never " +
+		"\"all-clear\". Treat data from an earlier turn as evidence only if you " +
+		"re-confirm it this turn; never present a stale reading as a current one."
 
 	// planDirective is appended to the system prompt when Options.Plan is set.
 	// It makes the agent open multi-step investigations with an explicit

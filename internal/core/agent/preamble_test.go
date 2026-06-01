@@ -76,6 +76,10 @@ func TestSystemPreamble_SelfKnowledge(t *testing.T) {
 		"~/.cloudy",
 		"Skills",
 		"Tool-use rules",
+		// rule 5: a clean verdict must rest on signals that actually returned
+		// data — don't present "all-clear" when the diagnostic tools failed.
+		"unverified",
+		"cannot determine",
 	}
 	for _, want := range required {
 		if !strings.Contains(sys, want) {
