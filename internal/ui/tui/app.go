@@ -271,6 +271,16 @@ type Model struct {
 	// follow-up questions while a reply is in flight). Drained as one
 	// block into the stream by flushPendingUserEcho.
 	pendingUserEcho string
+
+	// queuedInputs holds follow-up prompts submitted while a turn was
+	// still in flight (or its reply was still typing out). They dispatch
+	// one at a time as each turn fully completes, so the in-flight turn
+	// runs to completion instead of being cancelled and restarted — the
+	// cancel both truncated the streaming reply on screen and dropped the
+	// turn from conversation history (a cancelled ag.Run returns no
+	// messages, so state.history was never updated). Cleared on cancel
+	// (Ctrl+C / Esc) and clear (Ctrl+L / /clear).
+	queuedInputs []string
 }
 
 // NewModel constructs the root TUI model.
@@ -373,9 +383,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.playbackBuf) == 0 {
 				// Turn fully played back — commit it to native scrollback
 				// and collapse the live viewport so the next turn starts
-				// fresh below the committed history.
+				// fresh below the committed history. Then dispatch any
+				// follow-up queued while this turn was in flight.
 				m.playbackActive = false
-				return m, m.commitTurn()
+				return m, tea.Batch(m.commitTurn(), m.dispatchQueuedInput())
 			}
 			// Emittable window momentarily closed; keep the loop alive so
 			// the remaining tail still drains.
@@ -385,7 +396,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stream, sCmd = m.stream.Update(streamWriteMsg(chunk))
 		if len(m.playbackBuf) == 0 {
 			m.playbackActive = false
-			return m, tea.Batch(sCmd, m.commitTurn())
+			return m, tea.Batch(sCmd, m.commitTurn(), m.dispatchQueuedInput())
 		}
 		return m, tea.Batch(sCmd, playbackTickCmd())
 
@@ -523,6 +534,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.playbackBuf = m.playbackBuf[:0]
 			m.playbackEmittable = 0
 			m.playbackActive = false
+			// Drop any follow-ups queued behind this turn — Ctrl+C means
+			// "stop", not "stop this one and run the next".
+			m.queuedInputs = nil
 			// Move the queued user chip + any in-flight turn content into
 			// native scrollback before returning to idle — otherwise the
 			// operator's question (and partial output) vanishes on Ctrl+C.
@@ -550,6 +564,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.playbackEmittable = 0
 			m.playbackActive = false
 			m.pendingUserEcho = ""
+			m.queuedInputs = nil
 			var sCmd tea.Cmd
 			m.stream, sCmd = m.stream.Update(streamClearMsg{})
 			// Native scrollback can't be un-printed, but clearing the
@@ -626,6 +641,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if val == "/setup" || strings.HasPrefix(val, "/setup ") {
 			return m, m.enterSetup()
+		}
+
+		// A turn's agent is still streaming (or earlier follow-ups are still
+		// queued behind it): queue this prompt instead of dispatching a second
+		// agent run. runAgent cancels the previous run, which (a) truncated the
+		// streaming reply — the commitTurn below drains the half-filled playback
+		// buffer mid-stream — and (b) dropped the cancelled turn from
+		// conversation history (a cancelled ag.Run returns no messages, so
+		// state.history is never updated and the next turn has no memory of it).
+		// Queued prompts dispatch one at a time as each turn fully completes
+		// (see dispatchQueuedInput). The echo chip stacks above the prompt so
+		// the operator sees the follow-up waiting; it drains into the stream
+		// when its own turn starts.
+		//
+		// We deliberately do NOT queue during playback (m.running is already
+		// false there): the reply is fully received and committed to history,
+		// so the existing "finalise the prior playback, then dispatch" path
+		// below is correct and must run. The len(queuedInputs) check keeps FIFO
+		// order if a turn happens to be playing back with a non-empty queue.
+		// Slash commands stay live so /cancel, /model, /compact act immediately.
+		if !strings.HasPrefix(val, "/") && (m.running || len(m.queuedInputs) > 0) {
+			echo := userEchoStyle.Render("> " + val)
+			m.pendingUserEcho += "\n" + echo + "\n"
+			m.queuedInputs = append(m.queuedInputs, val)
+			return m, nil
 		}
 
 		// If the previous turn's answer is still typing out (playback
@@ -863,7 +903,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.assistantTurnStarted = false
 			var sCmd tea.Cmd
 			m.stream, sCmd = m.stream.Update(streamWriteMsg(out))
-			return m, tea.Batch(sCmd, m.commitTurn())
+			return m, tea.Batch(sCmd, m.commitTurn(), m.dispatchQueuedInput())
 		}
 		// Happy path: render the buffered markdown through glamour so
 		// headings / bold / code fences / lists land as terminal-
@@ -906,9 +946,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.playbackBuf) == 0 {
 			// No prose to type out (e.g. a tool-only turn): commit whatever
 			// landed in the live viewport (echo + tool blocks) straight to
-			// native scrollback.
+			// native scrollback, then dispatch any queued follow-up.
 			m.playbackActive = false
-			cmds = append(cmds, m.commitTurn())
+			cmds = append(cmds, m.commitTurn(), m.dispatchQueuedInput())
 			return m, tea.Batch(cmds...)
 		}
 		m.playbackActive = true
@@ -1259,6 +1299,26 @@ func (m *Model) commitTurn() tea.Cmd {
 	return tea.Println(out)
 }
 
+// dispatchQueuedInput starts the oldest follow-up prompt queued while an
+// earlier turn was in flight, returning nil when the queue is empty. It is
+// called at every turn-completion point (playback drain, tool-only commit,
+// error commit) so queued prompts run one at a time, each as its own
+// fully-committed turn — the in-flight turn is never cancelled, so its reply
+// renders in full and its messages reach conversation history. The echo chip
+// was already stacked when the prompt was queued, so it is not re-added here;
+// it drains into the stream on this turn's first agent event.
+func (m *Model) dispatchQueuedInput() tea.Cmd {
+	if len(m.queuedInputs) == 0 {
+		return nil
+	}
+	val := m.queuedInputs[0]
+	m.queuedInputs = m.queuedInputs[1:]
+	m.thinking.reset()
+	m.assistantTurnStarted = false
+	m.prompt.SetInFlight(true)
+	return tea.Batch(m.runAgent(val), thinkingTickCmd())
+}
+
 // finalizeActivePlayback flushes a still-draining previous reply into the
 // live viewport and stops the typewriter, so a commit that follows
 // captures the WHOLE answer and no stray playbackTick re-commits its tail
@@ -1472,6 +1532,8 @@ func (m *Model) handleEscape() tea.Cmd {
 		m.playbackBuf = m.playbackBuf[:0]
 		m.playbackEmittable = 0
 		m.playbackActive = false
+		// Mirror Ctrl+C: dropping the run also drops any queued follow-ups.
+		m.queuedInputs = nil
 		// Mirror Ctrl+C: preserve the queued question + any in-flight turn
 		// content in native scrollback so it doesn't disappear on cancel.
 		var cmds []tea.Cmd
@@ -1511,6 +1573,7 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 		m.playbackEmittable = 0
 		m.playbackActive = false
 		m.pendingUserEcho = ""
+		m.queuedInputs = nil
 		var sCmd tea.Cmd
 		m.stream, sCmd = m.stream.Update(streamClearMsg{})
 		m.prompt.SetValue("")
