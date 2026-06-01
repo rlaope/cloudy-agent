@@ -36,8 +36,12 @@ const (
 		// --- Identity ---
 		"You are cloudy, a read-only multi-cluster SRE monitoring CLI agent " +
 		"written in Go (github.com/rlaope/cloudy). The user is talking to you " +
-		"through cloudy's terminal UI (a bubbletea TUI). Every tool you can " +
-		"call is read-only by construction — there is no mutation surface.\n\n" +
+		"through cloudy's terminal UI (a bubbletea TUI). Every tool that touches " +
+		"the infrastructure you monitor is read-only by construction — clusters, " +
+		"databases, logs, and traces are never mutated. The single exception is " +
+		"your own memory: `memory.record` writes a durable fact to cloudy's local " +
+		"memory file so you remember it across sessions; it touches no monitored " +
+		"infrastructure.\n\n" +
 		// --- Slash commands the operator can type ---
 		"## cloudy slash commands\n" +
 		"The operator may reference these by name; answer questions about " +
@@ -83,12 +87,21 @@ const (
 		"live embedded in the binary; user skills live in `~/.cloudy/skills/` " +
 		"(user wins on name conflicts). The full skill list appears below " +
 		"under \"## Available skills\" when a skill registry is provided.\n\n" +
+		// --- Cross-session memory ---
+		"## Cross-session memory\n" +
+		"You have a durable memory that survives across sessions. Facts you " +
+		"already recorded appear below under \"## Environment memory\" when " +
+		"present — treat them as trusted background. When you learn a STABLE " +
+		"fact about this environment (a context→environment mapping, a naming " +
+		"convention, a normal baseline, a confirmed root cause), call " +
+		"`memory.record` so future sessions start already knowing it. Never " +
+		"record transient readings (a current pod count, a one-off metric).\n\n" +
 		// --- State / config layout ---
 		"## State layout\n" +
 		"cloudy resolves its state directory in this order: `$CLOUDY_HOME` → " +
 		"`$XDG_CONFIG_HOME/cloudy` → `$HOME/.cloudy`. Files there: " +
 		"`config.yaml`, `profile.yaml`, `secrets`, `profiles/<name>.yaml`, " +
-		"`active_profile`, `skills/*.md`, `logs/*.jsonl`.\n\n" +
+		"`active_profile`, `memory.md`, `skills/*.md`, `logs/*.jsonl`.\n\n" +
 		// --- Behaviour contract ---
 		"## Tool-use rules\n" +
 		"1. Use the registered tools; never invent tools or arguments.\n" +
@@ -209,6 +222,12 @@ type Options struct {
 	Profile *permission.Profile
 	// History is the prior conversation context prepended to each run.
 	History []llm.Message
+	// EnvironmentMemory is cloudy's durable cross-session memory (see
+	// internal/memory), injected verbatim into the system prompt under an
+	// "## Environment memory" heading at the top of each run so the agent
+	// starts already knowing facts it recorded in earlier sessions. Empty =
+	// nothing injected (fresh install, or the caller did not load memory).
+	EnvironmentMemory string
 	// Plan, when true, appends an investigation-planning directive to the
 	// system prompt: the agent opens any multi-step request with a brief
 	// hypothesis plan (symptom → candidate causes → the read-only probe for
@@ -674,6 +693,16 @@ func (a *Agent) buildSystemPrompt(reg *tools.Registry, skill resolvedSkill) stri
 	sb.WriteString(basePreamble)
 	if a.opts.Plan {
 		sb.WriteString(planDirective)
+	}
+	// Durable cross-session memory is injected high in the prompt (right after
+	// the preamble, before the per-run skill/tool catalogs) so the model treats
+	// recorded facts as standing background rather than transient noise.
+	if a.opts.EnvironmentMemory != "" {
+		sb.WriteString("\n\n## Environment memory\n")
+		sb.WriteString("Durable facts you recorded about this operator's environment in earlier " +
+			"sessions. Treat them as trusted background, but re-verify with tools when a fact may " +
+			"be stale:\n")
+		sb.WriteString(a.opts.EnvironmentMemory)
 	}
 	// Skill catalog (all skills by name + description) is listed ONLY when no
 	// skill is active. Once the operator has switched into a skill — its full

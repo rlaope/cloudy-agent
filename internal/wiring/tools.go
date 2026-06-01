@@ -30,6 +30,7 @@ import (
 	"github.com/rlaope/cloudy/internal/core/tools/jvm"
 	"github.com/rlaope/cloudy/internal/core/tools/k8s"
 	tlog "github.com/rlaope/cloudy/internal/core/tools/log"
+	"github.com/rlaope/cloudy/internal/core/tools/memory"
 	"github.com/rlaope/cloudy/internal/core/tools/metric"
 	"github.com/rlaope/cloudy/internal/core/tools/oncall"
 	"github.com/rlaope/cloudy/internal/core/tools/perf"
@@ -150,6 +151,11 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 	ebpf.RegisterAll(reg)
 
 	synthetic.RegisterAll(reg)
+
+	// memory.record is cloudy's only write surface — it persists durable facts
+	// to the local memory file, not to any monitored infrastructure. Needs no
+	// backend config, so it is always registered.
+	memory.RegisterAll(reg)
 
 	// change.* spans k8s, docker, and cloud control-plane audit logs. Register
 	// when at least one backend is available; skip the whole group only when

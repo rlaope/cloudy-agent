@@ -182,6 +182,52 @@ func TestSystemPreamble_DropsCatalogWhenSkillActive(t *testing.T) {
 	}
 }
 
+// TestSystemPreamble_InjectsEnvironmentMemory verifies that durable
+// cross-session memory passed via Options.EnvironmentMemory is injected under
+// an "## Environment memory" heading, and that nothing is injected when memory
+// is empty (a fresh install must not add an empty section).
+func TestSystemPreamble_InjectsEnvironmentMemory(t *testing.T) {
+	const fact = "- (2026-06-01) ctx prod-east is production"
+
+	prov := &capturingProvider{}
+	ag, err := agent.New(agent.Options{
+		Provider:          prov,
+		Model:             "test-model",
+		Registry:          tools.New(),
+		EnvironmentMemory: fact,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := ag.Run(context.Background(), "hi", render.NewStream(discardWriter{}, render.NewTheme(true))); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// injectionMarker is unique to the dynamic memory block in buildSystemPrompt.
+	// basePreamble's "## Cross-session memory" prose self-references the
+	// "## Environment memory" heading, so asserting on the heading would be a
+	// false positive — assert on this sentence instead (mirrors the skill-
+	// catalog test's header-vs-content distinction).
+	const injectionMarker = "re-verify with tools when a fact may"
+
+	sys := systemMessage(prov.captured)
+	if !strings.Contains(sys, injectionMarker) || !strings.Contains(sys, fact) {
+		t.Errorf("recorded memory must be injected\n--- prompt ---\n%s\n--- end ---", sys)
+	}
+
+	// Empty memory → no injected block.
+	prov2 := &capturingProvider{}
+	ag2, err := agent.New(agent.Options{Provider: prov2, Model: "test-model", Registry: tools.New()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := ag2.Run(context.Background(), "hi", render.NewStream(discardWriter{}, render.NewTheme(true))); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(systemMessage(prov2.captured), injectionMarker) {
+		t.Error("empty memory must not inject an Environment memory block")
+	}
+}
+
 type discardWriter struct{}
 
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }

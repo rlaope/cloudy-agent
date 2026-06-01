@@ -13,6 +13,7 @@ import (
 	"github.com/rlaope/cloudy/internal/core/agent"
 	"github.com/rlaope/cloudy/internal/core/llm"
 	"github.com/rlaope/cloudy/internal/core/skills"
+	"github.com/rlaope/cloudy/internal/memory"
 	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/render"
 	"github.com/rlaope/cloudy/internal/session"
@@ -147,6 +148,7 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Profile:                  activeProfile,
 		History:                  history,
 		Plan:                     opts.plan,
+		EnvironmentMemory:        loadEnvMemory(stderr),
 	})
 	if err != nil {
 		return errf("agent: %w", err)
@@ -168,4 +170,16 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	fmt.Fprintln(stdout)
 	fmt.Fprintf(stdout, "— model=%s session=%s\n", modelID, sess.ID)
 	return nil
+}
+
+// loadEnvMemory returns cloudy's durable cross-session memory for system-prompt
+// injection. A read failure is non-fatal — the agent simply starts without
+// recalled facts — so the error is reported to stderr and "" returned.
+func loadEnvMemory(stderr io.Writer) string {
+	mem, err := memory.Load()
+	if err != nil {
+		fmt.Fprintf(stderr, "cloudy: memory: %v\n", err)
+		return ""
+	}
+	return mem
 }
