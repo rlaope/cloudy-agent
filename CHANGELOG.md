@@ -61,6 +61,12 @@
     `change.ChangeSource` so `change` stays decoupled from `cloud`. New
     read-only allowlist entries: `cloudtrail lookup-events`,
     `monitor activity-log list`.
+  - **Cross-cutting: `correlate.workload` cloud-audit causes** — the same cloud
+    control-plane audit events now also feed `correlate.workload` as ranked
+    candidate *causes*: `cloud_audit` is registered in `changeKinds` with weight
+    `0.8` (above `scale`/restart, below a workload deploy or Argo `sync`), and the
+    wiring layer passes `cloud.NewAuditChangeSource` into `correlate.RegisterAll`.
+    A cloud-audit-only setup (GCP/Azure with no X-Ray) now lights up `correlate`.
 - **K8s workload tools (10)** — `list_deployments`, `list_statefulsets`,
   `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`,
   `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`.

@@ -201,15 +201,18 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 	// group only when none do. Reuses hub / dockerHub / Argo / prom / log /
 	// trace clients already built above.
 	// cloudTrace folds AWS X-Ray trace symptoms onto the correlate timeline;
-	// nil when no AWS account is configured. Built from the cloudClients already
-	// constructed above so an AWS-only setup still lights up correlate.
+	// nil when no AWS account is configured. cloudAudit (built above for the
+	// change group) folds cloud control-plane mutations on as candidate causes;
+	// nil when no cloud provider is configured. Both are reused so an AWS-only,
+	// or even a GCP/Azure-only (audit but no X-Ray), setup still lights up
+	// correlate.
 	cloudTrace := cloud.NewTraceSymptomSource(cloudClients)
 	if hub == nil && dockerHub == nil && len(gitopsClients.Argo) == 0 &&
 		len(promClients) == 0 && len(logClients.Loki) == 0 && len(traceClients.Jaeger) == 0 &&
-		cloudTrace == nil {
-		reg.MarkSkipped("correlate", "no kubeconfig, docker hosts, Argo CD, Prometheus, Loki, Jaeger, or AWS X-Ray endpoint configured")
+		cloudAudit == nil && cloudTrace == nil {
+		reg.MarkSkipped("correlate", "no kubeconfig, docker hosts, Argo CD, Prometheus, Loki, Jaeger, or cloud provider configured")
 	} else {
-		correlate.RegisterAll(reg, hub, dockerHub, gitopsClients.Argo, promClients, logClients, traceClients, cloudTrace)
+		correlate.RegisterAll(reg, hub, dockerHub, gitopsClients.Argo, promClients, logClients, traceClients, cloudAudit, cloudTrace)
 	}
 
 	// Single Profile application point: namespace checker on the Hub plus

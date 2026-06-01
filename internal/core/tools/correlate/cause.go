@@ -15,10 +15,17 @@ import (
 // rollout / argo sync) is a far stronger prior for a fresh symptom than a
 // scale or a routine image pull, so it earns a higher base score before
 // time-proximity and entity-match are folded in.
+//
+// cloud_audit covers control-plane mutations recorded by CloudTrail / Azure
+// Activity Log / GCP Audit Logs (e.g. an RDS parameter change, a security-group
+// edit, an ASG resize). These are real mutations — a strong prior, above a bare
+// scale or container restart — but coarser-grained and noisier than a deploy
+// targeted at the workload itself, so they sit just below an Argo sync.
 var changeKinds = map[string]float64{
 	"image":             1.0,
 	"rollout":           1.0,
 	"sync":              0.9,
+	"cloud_audit":       0.8,
 	"container_create":  0.7,
 	"image_pull":        0.6,
 	"container_restart": 0.6,

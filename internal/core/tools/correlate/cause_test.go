@@ -201,6 +201,37 @@ func TestCandidateCauses_TruncationNotedSilently(t *testing.T) {
 	}
 }
 
+// TestCandidateCauses_CloudAuditWeightOrdering pins cloud_audit's weight (0.8)
+// from both sides at once: with three equal-proximity changes before a symptom,
+// a workload deploy (image, 1.0) must outrank the control-plane audit change,
+// which must in turn outrank a bare scale (0.5). This proves cloud_audit is a
+// ranked candidate cause and that its tier sits strictly between the two.
+func TestCandidateCauses_CloudAuditWeightOrdering(t *testing.T) {
+	base := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	symptom := base.Add(10 * time.Minute)
+	at := base.Add(5 * time.Minute) // all three changes 5m before the symptom
+	events := merge(
+		evt("metric_breach", "p99 up", symptom),
+		evt("image", "deployed v2", at),            // weight 1.0
+		evt("cloud_audit", "ModifyDBInstance", at), // weight 0.8
+		evt("scale", "replicas 3→6", at),           // weight 0.5
+	)
+	got := candidateCauses(events, "")
+
+	if !strings.Contains(got, "candidate causes for symptom") {
+		t.Fatalf("expected a ranked-cause header, got: %s", got)
+	}
+	imgIdx := strings.Index(got, "deployed v2")
+	auditIdx := strings.Index(got, "ModifyDBInstance")
+	scaleIdx := strings.Index(got, "replicas 3→6")
+	if imgIdx == -1 || auditIdx == -1 || scaleIdx == -1 {
+		t.Fatalf("all three changes should rank; img=%d audit=%d scale=%d in: %s", imgIdx, auditIdx, scaleIdx, got)
+	}
+	if !(imgIdx < auditIdx && auditIdx < scaleIdx) {
+		t.Fatalf("expected order image < cloud_audit < scale at equal proximity; img=%d audit=%d scale=%d in: %s", imgIdx, auditIdx, scaleIdx, got)
+	}
+}
+
 func TestShortDuration(t *testing.T) {
 	cases := map[time.Duration]string{
 		0:                         "0s",
