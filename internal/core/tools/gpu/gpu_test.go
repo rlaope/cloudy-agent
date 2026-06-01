@@ -150,7 +150,7 @@ func TestDCGM_QueryAndSort(t *testing.T) {
 	srv := fakeDCGMServer(t)
 	defer srv.Close()
 
-	c, err := promclient.NewClient(srv.URL, "", "", "")
+	c, err := promclient.NewClient(srv.URL, nil, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestDCGM_TopCap(t *testing.T) {
 	srv := fakeDCGMServer(t)
 	defer srv.Close()
 
-	c, _ := promclient.NewClient(srv.URL, "", "", "")
+	c, _ := promclient.NewClient(srv.URL, nil, "", "", "")
 	tool := NewDCGMTool(map[string]*promclient.Client{"default": c})
 
 	args, _ := json.Marshal(map[string]any{"top": 1})
