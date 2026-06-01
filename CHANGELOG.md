@@ -67,6 +67,12 @@
     `0.8` (above `scale`/restart, below a workload deploy or Argo `sync`), and the
     wiring layer passes `cloud.NewAuditChangeSource` into `correlate.RegisterAll`.
     A cloud-audit-only setup (GCP/Azure with no X-Ray) now lights up `correlate`.
+    Review follow-ups: the correlate registration guard now also recognises
+    Elasticsearch and Tempo symptom-only setups (previously skipped despite
+    `RegisterAll` accepting them); candidate-cause `share %` is computed among the
+    shown top-N so a burst of `cloud_audit` events can no longer dilute the
+    leader's percentage; exact-duplicate changes are de-duplicated before ranking;
+    and the `context` arg is documented as not selecting the cloud audit account.
 - **K8s workload tools (10)** — `list_deployments`, `list_statefulsets`,
   `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`,
   `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`.

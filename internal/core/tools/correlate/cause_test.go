@@ -1,6 +1,7 @@
 package correlate
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -230,6 +231,80 @@ func TestCandidateCauses_CloudAuditWeightOrdering(t *testing.T) {
 	if !(imgIdx < auditIdx && auditIdx < scaleIdx) {
 		t.Fatalf("expected order image < cloud_audit < scale at equal proximity; img=%d audit=%d scale=%d in: %s", imgIdx, auditIdx, scaleIdx, got)
 	}
+}
+
+// TestCandidateCauses_DeduplicatesIdenticalChanges pins that exact-duplicate
+// changes (same kind/target/summary/time — e.g. one control-plane operation
+// logged repeatedly or mirrored across providers) collapse to a single ranked
+// candidate rather than crowding the ranking.
+func TestCandidateCauses_DeduplicatesIdenticalChanges(t *testing.T) {
+	base := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	symptom := base.Add(10 * time.Minute)
+	at := base.Add(5 * time.Minute)
+	events := merge(
+		evt("metric_breach", "errors", symptom),
+		evt("cloud_audit", "ModifyDBInstance", at),
+		evt("cloud_audit", "ModifyDBInstance", at),
+		evt("cloud_audit", "ModifyDBInstance", at),
+	)
+	got := candidateCauses(events, "")
+	// Three identical events collapse to one, so it is the only candidate.
+	if !strings.Contains(got, "[only candidate]") {
+		t.Fatalf("identical changes should dedupe to a single candidate, got: %s", got)
+	}
+	if c := strings.Count(got, "ModifyDBInstance"); c != 1 {
+		t.Fatalf("the deduped change should appear once in the ranking, got %d in: %s", c, got)
+	}
+}
+
+// TestRenderRanked_ShownSharesSumToHundred pins that the displayed share
+// percentages are taken among the shown top-N candidates: with a long tail of
+// lower-weight events beyond the cap, the shares of the shown candidates still
+// sum to ~100% rather than being diluted by the hidden tail.
+func TestRenderRanked_ShownSharesSumToHundred(t *testing.T) {
+	base := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	symptom := base.Add(20 * time.Minute)
+	events := merge(
+		evt("metric_breach", "p99 up", symptom),
+		evt("image", "lead deploy", base.Add(19*time.Minute)),
+		evt("cloud_audit", "a1", base.Add(1*time.Minute)),
+		evt("cloud_audit", "a2", base.Add(2*time.Minute)),
+		evt("cloud_audit", "a3", base.Add(3*time.Minute)),
+		evt("cloud_audit", "a4", base.Add(4*time.Minute)),
+		evt("cloud_audit", "a5", base.Add(5*time.Minute)),
+	)
+	got := candidateCauses(events, "")
+	if !strings.Contains(got, "…and") {
+		t.Fatalf("expected a surplus tail beyond topCandidates, got: %s", got)
+	}
+	sum := sumShownShares(got)
+	if sum < 98 || sum > 102 {
+		t.Fatalf("shown shares should sum to ~100%% (got %d) — a hidden tail must not dilute them; output:\n%s", sum, got)
+	}
+}
+
+// sumShownShares parses every "[share NN%]" marker in a ranked-cause block and
+// returns their sum.
+func sumShownShares(s string) int {
+	const marker = "[share "
+	var sum int
+	for {
+		i := strings.Index(s, marker)
+		if i < 0 {
+			break
+		}
+		s = s[i+len(marker):]
+		j := strings.Index(s, "%")
+		if j < 0 {
+			break
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(s[:j]))
+		if err == nil {
+			sum += n
+		}
+		s = s[j+1:]
+	}
+	return sum
 }
 
 func TestShortDuration(t *testing.T) {
