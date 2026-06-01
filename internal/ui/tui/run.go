@@ -15,6 +15,7 @@ import (
 	"github.com/rlaope/cloudy/internal/core/agent"
 	"github.com/rlaope/cloudy/internal/core/llm"
 	"github.com/rlaope/cloudy/internal/core/tools"
+	"github.com/rlaope/cloudy/internal/memory"
 	"github.com/rlaope/cloudy/internal/permission"
 	"github.com/rlaope/cloudy/internal/session"
 	"github.com/rlaope/cloudy/internal/wiring"
@@ -207,6 +208,11 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps, state
 		// it is a single small YAML read from ~/.cloudy/profiles/.
 		activeProfile, _ := permission.LoadActive()
 
+		// Re-read durable cross-session memory each turn (a cheap markdown read)
+		// so a memory.record made earlier this session is visible to the very
+		// next turn without restarting — mirroring the per-turn profile reload.
+		envMemory, _ := memory.Load()
+
 		// Snapshot the shared conversation state. /compact, /new, and
 		// /resume are gated on !running in the TUI, so sess/history are
 		// stable for the duration of this turn; the lock just publishes
@@ -237,6 +243,7 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps, state
 			Approver:                 approver,
 			Profile:                  activeProfile,
 			Plan:                     planOn,
+			EnvironmentMemory:        envMemory,
 		})
 		if err != nil {
 			logSessionError(sess, "agent.new", err)
