@@ -208,9 +208,10 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 	// correlate.
 	cloudTrace := cloud.NewTraceSymptomSource(cloudClients)
 	if hub == nil && dockerHub == nil && len(gitopsClients.Argo) == 0 &&
-		len(promClients) == 0 && len(logClients.Loki) == 0 && len(traceClients.Jaeger) == 0 &&
+		len(promClients) == 0 && len(logClients.Loki) == 0 && len(logClients.ES) == 0 &&
+		len(traceClients.Jaeger) == 0 && len(traceClients.Tempo) == 0 &&
 		cloudAudit == nil && cloudTrace == nil {
-		reg.MarkSkipped("correlate", "no kubeconfig, docker hosts, Argo CD, Prometheus, Loki, Jaeger, or cloud provider configured")
+		reg.MarkSkipped("correlate", "no kubeconfig, docker hosts, Argo CD, Prometheus, Loki, Elasticsearch, Jaeger, Tempo, or cloud provider configured")
 	} else {
 		correlate.RegisterAll(reg, hub, dockerHub, gitopsClients.Argo, promClients, logClients, traceClients, cloudAudit, cloudTrace)
 	}

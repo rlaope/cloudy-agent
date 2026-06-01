@@ -85,7 +85,7 @@ func (t *correlateTool) Schema() json.RawMessage {
 		"properties": map[string]any{
 			"workload":         str("Workload to correlate (deployment/statefulset/daemonset, container/compose service, or Argo CD application name). Required."),
 			"namespace":        str("Kubernetes namespace to scope the search. Honored by the k8s change source, the Loki/Elasticsearch log symptom sources, and the Tempo trace symptom source. Ignored by the Docker and Argo change sources, the Jaeger trace source (no standard namespace tag), and the metric source (scope namespace inside metric_query)."),
-			"context":          str("kubeconfig context, Docker host, or Argo CD endpoint name to query; empty = each backend's default."),
+			"context":          str("kubeconfig context, Docker host, or Argo CD endpoint name to query; empty = each backend's default. Cloud control-plane audit events are not context-selectable — they always come from the default (first configured) account/project."),
 			"since":            str("How far back to look, as a Go duration (e.g. \"1h\", \"90m\"); default \"1h\"."),
 			"limit":            map[string]any{"type": "integer", "description": "Maximum number of timeline events to return; default 50."},
 			"metric_query":     str("PromQL query whose breaches are folded onto the timeline as metric symptom events; empty = no metric symptom."),

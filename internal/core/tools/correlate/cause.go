@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -125,6 +126,7 @@ func scoreCauses(events []change.ChangeEvent, workload string, anchor *change.Ch
 	}
 
 	var out []scoredCause
+	seen := make(map[string]struct{})
 	for i := range events {
 		e := &events[i]
 		weight, ok := causeWeight(e.Kind)
@@ -136,6 +138,16 @@ func scoreCauses(events []change.ChangeEvent, workload string, anchor *change.Ch
 		if anchor != nil && !e.Time.Before(anchor.Time) {
 			continue
 		}
+		// Collapse exact-duplicate changes — the same control-plane operation
+		// logged repeatedly, or mirrored across cloud providers — so a burst of
+		// identical events cannot crowd the top-N ranking or inflate the score
+		// pool. Source is excluded from the key so a provider-mirrored event
+		// counts once. Distinct changes (different summary or time) survive.
+		key := e.Kind + "\x00" + e.Target + "\x00" + e.Summary + "\x00" + strconv.FormatInt(e.Time.Unix(), 10)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
 		dt := ref.Time.Sub(e.Time).Seconds()
 		if dt < 0 {
 			dt = -dt
@@ -212,18 +224,24 @@ func newestEvent(events []change.ChangeEvent) *change.ChangeEvent {
 // confidence (share of the total score). When symptom is non-nil each line
 // notes how long before the symptom the change landed.
 func renderRanked(header string, ranked []scoredCause, symptom *change.ChangeEvent) string {
+	n := len(ranked)
+	if n > topCandidates {
+		n = topCandidates
+	}
+
+	// share% is each shown candidate's portion of the score among the
+	// candidates actually DISPLAYED, so the shown shares sum to ~100%. Summing
+	// over every ranked candidate instead would let a long tail of low-weight
+	// events (e.g. a burst of cloud_audit entries) dilute the leader's
+	// percentage far below its true standing among the contenders shown.
 	var total float64
-	for _, c := range ranked {
-		total += c.score
+	for i := 0; i < n; i++ {
+		total += ranked[i].score
 	}
 
 	var b strings.Builder
 	b.WriteString(header)
 	b.WriteString(":\n")
-	n := len(ranked)
-	if n > topCandidates {
-		n = topCandidates
-	}
 	single := len(ranked) == 1
 	for i := 0; i < n; i++ {
 		c := ranked[i]
