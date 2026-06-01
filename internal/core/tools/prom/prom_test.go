@@ -78,7 +78,7 @@ func TestQuery_SendsCorrectPath(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c, err := promclient.NewClient(srv.URL, "", "", "")
+	c, err := promclient.NewClient(srv.URL, nil, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestQueryRange_ParsesMatrix(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c, err := promclient.NewClient(srv.URL, "", "", "")
+	c, err := promclient.NewClient(srv.URL, nil, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestLabelValues_ParsesValues(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c, err := promclient.NewClient(srv.URL, "", "", "")
+	c, err := promclient.NewClient(srv.URL, nil, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestSeries_ParsesSeries(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c, err := promclient.NewClient(srv.URL, "", "", "")
+	c, err := promclient.NewClient(srv.URL, nil, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestPromQLValidation(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := promclient.NewClient(srv.URL, "", "", "")
+	c, _ := promclient.NewClient(srv.URL, nil, "", "", "")
 	clients := map[string]*promclient.Client{"default": c}
 	tool := prom.NewQueryTool(clients)
 

@@ -20,7 +20,7 @@ func promReturning(t *testing.T, value string) (*promclient.Client, *httptest.Se
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(body))
 	}))
-	c, err := promclient.NewClient(srv.URL, "", "", "")
+	c, err := promclient.NewClient(srv.URL, nil, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -106,7 +106,7 @@ func promPerWindow(t *testing.T, byWindow map[string]string) (*promclient.Client
 		}
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"scalar","result":[1000,"` + val + `"]}}`))
 	}))
-	c, err := promclient.NewClient(srv.URL, "", "", "")
+	c, err := promclient.NewClient(srv.URL, nil, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestBudgetSource_QueryErrorPropagates(t *testing.T) {
 		_, _ = w.Write([]byte("boom"))
 	}))
 	defer srv.Close()
-	c, err := promclient.NewClient(srv.URL, "", "", "")
+	c, err := promclient.NewClient(srv.URL, nil, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

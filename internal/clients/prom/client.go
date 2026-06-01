@@ -58,16 +58,20 @@ type Client struct {
 }
 
 // NewClient constructs a Client. Exactly one of basicUser+basicPass or bearer
-// should be non-empty; both empty means unauthenticated. The underlying
-// http.Transport is wrapped by transport.New to enforce the read-only contract.
-func NewClient(baseURL, basicUser, basicPass, bearer string) (*Client, error) {
+// should be non-empty; both empty means unauthenticated. base is the inner
+// http.RoundTripper to dispatch through — pass the apiserver-authenticated
+// transport when baseURL is a kube-apiserver services/proxy URL so TLS trust
+// and auth come from the kubeconfig; pass nil to use http.DefaultTransport.
+// Either way the result is wrapped by transport.New to enforce the read-only
+// contract.
+func NewClient(baseURL string, base http.RoundTripper, basicUser, basicPass, bearer string) (*Client, error) {
 	if baseURL == "" {
 		return nil, fmt.Errorf("prom: baseURL is required")
 	}
 	// Normalise: strip trailing slash.
 	baseURL = strings.TrimRight(baseURL, "/")
 
-	rt := transport.New(nil) // wraps http.DefaultTransport
+	rt := transport.New(base) // base nil → wraps http.DefaultTransport
 	var wrapped http.RoundTripper = rt
 	if bearer != "" {
 		wrapped = &httpapi.BearerTripper{Inner: rt, Token: bearer}

@@ -30,11 +30,11 @@ func TestMetricSource_MultiEndpointPicksDefault(t *testing.T) {
 	}))
 	defer srv2.Close()
 
-	c1, err := promclient.NewClient(srv1.URL, "", "", "")
+	c1, err := promclient.NewClient(srv1.URL, nil, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient prom-1: %v", err)
 	}
-	c2, err := promclient.NewClient(srv2.URL, "", "", "")
+	c2, err := promclient.NewClient(srv2.URL, nil, "", "", "")
 	if err != nil {
 		t.Fatalf("NewClient prom-2: %v", err)
 	}

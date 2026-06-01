@@ -11,7 +11,11 @@ package wiring
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
+	"strings"
+
+	"k8s.io/client-go/rest"
 
 	dockerclient "github.com/rlaope/cloudy/internal/clients/docker"
 	k8sclient "github.com/rlaope/cloudy/internal/clients/k8s"
@@ -114,7 +118,7 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 		k8s.RegisterAll(reg, hub)
 	}
 
-	promClients := buildPromClients(opts.PromEndpoints)
+	promClients := buildPromClients(opts.PromEndpoints, hub)
 	prom.RegisterAll(reg, promClients)
 	gpu.RegisterAll(reg, promClients)
 	jvm.RegisterAll(reg)
@@ -251,8 +255,32 @@ func buildDockerHub(hosts []config.DockerHost) (*dockerclient.Hub, error) {
 // buildPromClients converts a slice of PrometheusEndpoint config entries into
 // a map of named promclient.Client values, resolving credentials from the
 // environment.
-func buildPromClients(endpoints []config.PrometheusEndpoint) map[string]*promclient.Client {
+//
+// Prometheus services discovered in-cluster are registered as kube-apiserver
+// services/proxy URLs. Reaching those needs the kubeconfig CA + auth that
+// http.DefaultTransport lacks — without it the next query 4xx'd or failed TLS
+// with `x509: "kube-apiserver" certificate is not trusted`. So when an
+// endpoint URL points at the apiserver proxy, we dispatch it through the same
+// apiserver-authenticated transport k8s tools use (resolved from the default
+// kubeconfig context); direct external endpoints keep the default transport.
+func buildPromClients(endpoints []config.PrometheusEndpoint, hub *k8sclient.Hub) map[string]*promclient.Client {
 	clients := make(map[string]*promclient.Client, len(endpoints))
+
+	// Lazily resolve the apiserver transport once; mirrors discovery's
+	// "first context wins" routing.
+	var apiHost string
+	var apiRT http.RoundTripper
+	if hub != nil {
+		if cli, err := hub.Get(""); err == nil {
+			if cfg := cli.RESTConfig(); cfg != nil {
+				if rt, err := rest.TransportFor(cfg); err == nil {
+					apiHost = strings.TrimRight(cfg.Host, "/")
+					apiRT = rt
+				}
+			}
+		}
+	}
+
 	for _, ep := range endpoints {
 		if ep.URL == "" {
 			continue
@@ -265,7 +293,14 @@ func buildPromClients(endpoints []config.PrometheusEndpoint) map[string]*promcli
 		if ep.BasicPassEnv != "" {
 			basicPass = os.Getenv(ep.BasicPassEnv)
 		}
-		c, err := promclient.NewClient(ep.URL, ep.BasicUser, basicPass, bearer)
+
+		var base http.RoundTripper
+		if apiRT != nil && apiHost != "" &&
+			strings.HasPrefix(ep.URL, apiHost) && strings.Contains(ep.URL, "/proxy") {
+			base = apiRT
+		}
+
+		c, err := promclient.NewClient(ep.URL, base, ep.BasicUser, basicPass, bearer)
 		if err != nil {
 			continue
 		}
