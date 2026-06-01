@@ -127,6 +127,31 @@ func TestCorrelate_CandidateCausePicksSync(t *testing.T) {
 	}
 }
 
+// TestCorrelate_CloudAuditIsRankedCause: a cloud control-plane audit event
+// (Kind "cloud_audit", as emitted by cloud.NewAuditChangeSource) folded onto the
+// timeline is ranked as a candidate cause for a preceding-aligned symptom — the
+// end-to-end check that the audit source, once wired in, surfaces through Run.
+func TestCorrelate_CloudAuditIsRankedCause(t *testing.T) {
+	base := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	audit := fakeSource{name: "cloud_audit", events: []change.ChangeEvent{
+		{Time: base.Add(-5 * time.Minute), Kind: "cloud_audit", Target: "app", Summary: "ModifyDBInstance by ops", Source: "cloud_audit_aws"},
+	}}
+	symptom := fakeSource{name: "metric", events: []change.ChangeEvent{
+		{Time: base, Kind: "metric_breach", Target: "app", Summary: "errors up", Source: "metric"},
+	}}
+	tool := newCorrelateTool(audit, symptom)
+	obs, err := runCorrelate(t, tool, map[string]any{"workload": "app", "since": "24h"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(obs.Text, "candidate causes for symptom") {
+		t.Fatalf("expected a ranked candidate-cause block, got:\n%s", obs.Text)
+	}
+	if !strings.Contains(obs.Text, "cloud_audit_aws cloud_audit on app") || !strings.Contains(obs.Text, "ModifyDBInstance by ops") {
+		t.Errorf("expected the cloud_audit event ranked as a candidate cause, got:\n%s", obs.Text)
+	}
+}
+
 // TestCorrelate_CandidateCauseNone: with only "event" kinds in the window there
 // is no state-altering change to blame.
 func TestCorrelate_CandidateCauseNone(t *testing.T) {

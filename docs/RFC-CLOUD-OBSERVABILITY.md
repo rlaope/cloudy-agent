@@ -355,10 +355,14 @@ as long as another yields events. Allowlist additions (read verbs only):
 new entry. A test asserts the mutating counterparts (`cloudtrail delete-trail`,
 `monitor activity-log alert create`) are refused before exec.
 
-The remaining cloud cross-cutting idea — also feeding these audit events into
-`correlate.workload` as candidate *causes* — is a natural next step (it would
-add `cloud_audit` to `correlate`'s `changeKinds`), but is intentionally left out
-here to keep `change.recent` and `correlate` changes separate.
+These same audit events are now also fed into `correlate.workload` as candidate
+*causes* (delivered): the wiring layer passes the same `cloud.NewAuditChangeSource`
+into `correlate.RegisterAll`, and `cloud_audit` is registered in `correlate`'s
+`changeKinds` with weight `0.8` — above a bare `scale` (0.5) or container restart
+(0.6), below a workload-targeted deploy (`image`/`rollout`, 1.0) and an Argo
+`sync` (0.9), reflecting that a control-plane mutation is a strong but
+coarser-grained prior than the workload's own deploy. A cloud-audit-only setup
+(e.g. GCP/Azure with no X-Ray) now lights up `correlate` on its own.
 
 ## 12. Phase 5 — FinOps / cost (AWS + Azure delivered, GCP deferred)
 
