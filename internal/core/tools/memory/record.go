@@ -12,6 +12,7 @@ import (
 
 	"github.com/rlaope/cloudy/internal/core/tools"
 	memstore "github.com/rlaope/cloudy/internal/memory"
+	"github.com/rlaope/cloudy/internal/permission"
 )
 
 // newRecordTool builds memory.record.
@@ -43,13 +44,23 @@ func newRecordTool() tools.Tool {
 			"rediscover it later. Do not record transient observations.",
 		Schema: schema,
 		Run: func(_ context.Context, a args) (tools.Observation, error) {
-			if strings.TrimSpace(a.Fact) == "" {
+			fact := strings.TrimSpace(a.Fact)
+			if fact == "" {
 				return tools.Observation{Text: "Nothing recorded: fact was empty."}, nil
 			}
-			if err := memstore.Append(a.Fact); err != nil {
+			// Redact before persisting. memory.md is injected verbatim into the
+			// system prompt of every future session, and the system prompt never
+			// passes the MaskingHook (which only runs on tool observations). So a
+			// secret recorded here would otherwise leak both to disk in clear text
+			// and into every future prompt. Masking at the write keeps the on-disk
+			// store from ever being less redacted than the model-facing path —
+			// the persisted-state invariant the v0.5 audit established.
+			profile, _ := permission.LoadActive()
+			fact = permission.MaskerOrDefault(profile).MaskString(fact)
+			if err := memstore.Append(fact); err != nil {
 				return tools.Observation{}, fmt.Errorf("memory.record: %w", err)
 			}
-			return tools.Observation{Text: fmt.Sprintf("Recorded to cross-session memory: %s", strings.TrimSpace(a.Fact))}, nil
+			return tools.Observation{Text: "Recorded to cross-session memory: " + fact}, nil
 		},
 	}.Build()
 }

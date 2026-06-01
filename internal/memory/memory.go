@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/rlaope/cloudy/internal/config"
 )
@@ -50,10 +51,20 @@ func Load() (string, error) {
 	s := string(data)
 	if len(s) > maxInjectBytes {
 		s = s[len(s)-maxInjectBytes:]
-		// Drop the partial leading line the byte-level cut may have created so
-		// the injected text always starts at a whole entry.
-		if i := strings.IndexByte(s, '\n'); i >= 0 {
+		if i := strings.IndexByte(s, '\n'); i >= 0 && i+1 < len(s) {
+			// Normal case: drop the partial leading line the byte-level cut
+			// created so the injected text starts at a whole entry.
 			s = s[i+1:]
+		} else {
+			// No usable line boundary in the window — a single entry larger
+			// than the cap (e.g. a hand-edited block). Don't silently drop it;
+			// just make the byte-cut safe to inject: advance to the next rune
+			// boundary and scrub any leftover invalid sequences, so we never
+			// feed a mid-rune fragment to a provider that rejects non-UTF-8.
+			for len(s) > 0 && !utf8.RuneStart(s[0]) {
+				s = s[1:]
+			}
+			s = strings.ToValidUTF8(s, "")
 		}
 	}
 	return strings.TrimSpace(s), nil

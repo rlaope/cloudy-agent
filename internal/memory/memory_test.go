@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // withHome points cloudy's state directory at a fresh temp dir so each test
@@ -99,5 +100,30 @@ func TestLoad_TailTrimsOversizedFileOnLineBoundary(t *testing.T) {
 	raw, _ := os.ReadFile(Path())
 	if len(raw) <= maxInjectBytes {
 		t.Fatalf("test precondition: raw file %d bytes not larger than cap %d", len(raw), maxInjectBytes)
+	}
+}
+
+func TestLoad_NoNewlineOversizedWindowStaysValidUTF8(t *testing.T) {
+	withHome(t)
+	// A single hand-edited entry larger than the cap, made of multibyte runes
+	// and with NO newline in the last maxInjectBytes. The byte-level cut lands
+	// mid-rune; Load must not inject an invalid-UTF-8 fragment, and must not
+	// silently drop the operator's only fact.
+	huge := "- (2026-06-01) " + strings.Repeat("가", 4000) // 4000*3 bytes, no '\n'
+	if err := os.WriteFile(Path(), []byte(huge), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("Load returned invalid UTF-8 for a mid-rune byte cut")
+	}
+	if got == "" {
+		t.Errorf("oversized single entry was silently dropped to empty")
+	}
+	if len(got) > maxInjectBytes {
+		t.Errorf("Load returned %d bytes, want <= %d", len(got), maxInjectBytes)
 	}
 }

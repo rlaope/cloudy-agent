@@ -394,7 +394,19 @@ func (a *Agent) Run(ctx context.Context, userInput string, sink render.Sink) ([]
 
 	msgs := make([]llm.Message, 0, len(a.opts.History)+2)
 	msgs = append(msgs, llm.Message{Role: llm.RoleSystem, Content: sysPrompt})
-	msgs = append(msgs, a.opts.History...)
+	// Never replay a system message from prior turns. The system prompt is
+	// rebuilt every turn from current state (environment memory, plan, skill,
+	// tool catalog), and some provider adapters resolve the system block
+	// last-wins over the message list — so an accumulated older copy would
+	// silently override the fresh one (e.g. a fact recorded this session would
+	// not take effect until the next). Skipping RoleSystem here also keeps the
+	// returned history free of system messages, so it never accumulates.
+	for _, m := range a.opts.History {
+		if m.Role == llm.RoleSystem {
+			continue
+		}
+		msgs = append(msgs, m)
+	}
 	msgs = append(msgs, llm.Message{Role: llm.RoleUser, Content: userInput})
 
 	llmTools := reg.ToolsFor(a.opts.Provider.Name())

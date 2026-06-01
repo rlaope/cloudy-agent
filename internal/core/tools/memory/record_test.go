@@ -33,6 +33,28 @@ func TestRecordTool_AppendsAndConfirms(t *testing.T) {
 	}
 }
 
+func TestRecordTool_RedactsSecretBeforePersisting(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+
+	// memory.md is injected into the system prompt unmasked, so a secret must be
+	// redacted at the write. The default masking patterns catch AWS access keys.
+	obs, err := newRecordTool().Run(context.Background(), []byte(`{"fact":"prod creds AKIAIOSFODNN7EXAMPLE for the east cluster"}`))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(obs.Text, "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("secret leaked into observation: %q", obs.Text)
+	}
+	stored, _ := memstore.Load()
+	if strings.Contains(stored, "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("secret persisted to memory.md in clear text: %q", stored)
+	}
+	// The surrounding non-secret context is still recorded.
+	if !strings.Contains(stored, "east cluster") {
+		t.Errorf("non-secret context was lost: %q", stored)
+	}
+}
+
 func TestRecordTool_EmptyFactRecordsNothing(t *testing.T) {
 	t.Setenv("CLOUDY_HOME", t.TempDir())
 
