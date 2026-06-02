@@ -62,11 +62,25 @@ var canonicalToolNames = []string{
 
 	"queue.rabbitmq_queues", "queue.kafka_consumer_lag",
 
-	"cloud.aws_sqs_queue_depth",
+	"cloud.aws_eks_list_clusters", "cloud.aws_rds_describe_instances",
+	"cloud.aws_lambda_list_functions", "cloud.aws_sqs_queue_depth",
+	"cloud.aws_cw_list_metrics", "cloud.aws_cw_get_metric_statistics",
+	"cloud.aws_logs_describe_groups", "cloud.aws_logs_filter_events",
+	"cloud.aws_logs_insights_query", "cloud.aws_xray_trace_summaries",
+	"cloud.aws_xray_batch_get_traces", "cloud.aws_xray_service_graph",
+	"cloud.aws_ce_cost_and_usage", "cloud.azure_aks_list",
+	"cloud.azure_sql_server_list", "cloud.azure_functionapp_list",
+	"cloud.azure_monitor_metric_definitions", "cloud.azure_monitor_metrics",
+	"cloud.azure_log_analytics_query", "cloud.azure_appinsights_query",
+	"cloud.azure_consumption_usage", "cloud.gcp_container_clusters_list",
+	"cloud.gcp_sql_instances_list", "cloud.gcp_run_services_list",
+	"cloud.gcp_logging_read",
 
 	"change.recent",
 
 	"metric.container_stats",
+
+	"memory.record",
 
 	"correlate.workload",
 }

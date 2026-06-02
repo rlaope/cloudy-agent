@@ -2,6 +2,7 @@ package skills
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/rlaope/cloudy/internal/registry"
@@ -32,21 +33,48 @@ func (r *Registry) Get(name string) (*Skill, bool) { return r.items.Get(name) }
 // List returns all skills in stable alphabetical order by name.
 func (r *Registry) List() []*Skill { return r.items.All() }
 
-// Suggest returns up to 3 skills whose Triggers contain input as a
-// case-insensitive substring. The returned slice is in alphabetical order.
+// Suggest returns up to 3 skills whose Triggers match input
+// (case-insensitive), ranked so that an exact trigger match outranks a mere
+// substring match, with alphabetical name order as a stable tiebreaker. The
+// ranking keeps a specific keyword like "gc" surfacing the skill whose trigger
+// is exactly "gc" ahead of skills that only contain it as a substring (e.g. a
+// "gcp" trigger), instead of letting the alphabetically-first three matches
+// crowd it out of the cap.
 func (r *Registry) Suggest(input string) []*Skill {
 	lower := strings.ToLower(input)
-	var matches []*Skill
+
+	type scored struct {
+		skill *Skill
+		score int // 2 = exact trigger match, 1 = substring match
+	}
+	// r.items.All() is alphabetical and stable, so SliceStable below preserves
+	// alphabetical order within a score tier.
+	var ranked []scored
 	for _, s := range r.items.All() {
+		best := 0
 		for _, t := range s.Triggers {
-			if strings.Contains(strings.ToLower(t), lower) {
-				matches = append(matches, s)
-				break
+			lt := strings.ToLower(t)
+			switch {
+			case lt == lower:
+				best = 2
+			case best < 1 && strings.Contains(lt, lower):
+				best = 1
 			}
 		}
+		if best > 0 {
+			ranked = append(ranked, scored{skill: s, score: best})
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		return ranked[i].score > ranked[j].score
+	})
+
+	matches := make([]*Skill, 0, 3)
+	for _, sc := range ranked {
 		if len(matches) == 3 {
 			break
 		}
+		matches = append(matches, sc.skill)
 	}
 	return matches
 }
