@@ -21,7 +21,7 @@ type Env struct {
 	// local http.Client.
 	HTTPClient *http.Client
 	// Hints carries user-supplied external endpoints from /setup (or
-	// cloudy.yaml). Detectors can include these directly as External findings.
+	// config.yaml). Detectors can include these directly as External findings.
 	Hints []config.HTTPEndpoint
 	// DBHints carries user-supplied external DB endpoints.
 	DBHints []config.DatabaseEndpoint

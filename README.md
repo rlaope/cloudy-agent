@@ -104,7 +104,8 @@ Headless / CI usage:
 
 ```sh
 cloudy ask "Why is the checkout service slow right now?"   # one-shot
-cloudy setup                                # non-interactive setup
+cloudy setup --auto                         # non-interactive setup
+cloudy setup --auto --dry-run               # scan contexts and synthesize config without writing files
 cloudy profile use payments-sre             # activate a permission profile
 cloudy profile cluster                      # show RBAC for current context
 ```
@@ -165,22 +166,30 @@ TCP backends via in-process SPDY port-forward. A single
 `kubectl`-reachable cluster is enough — no VPN, no per-service
 ingress.
 
-### Tool surface (112 tools across 16 groups)
+### Tool surface
 
 Every probe the agent can call is a typed tool with a JSON schema.
-Tools self-register at boot — perf, eBPF, and DB groups also gate on
-binary / driver presence. Type `/tools` in the TUI to see what's
-wired in your environment.
+Tools self-register at boot, and several groups are conditional on the
+active profile, configured backends, host binaries, and reachable local
+services. Type `/tools` in the TUI or run `cloudy tools --json` to see
+the code-derived registry for your environment, including skipped groups
+and reasons.
+
+The built-in skill reference guard tracks the tool names that skills may
+invoke. The runtime registry can be smaller or larger depending on configured
+backends: for example, `perf.rbspy_dump` is always present, while Go pprof,
+V8 inspector, Linux perf, cloud, Docker, queue, log, trace, and database
+tools register only when their prerequisites exist.
 
 | Group | Tools (count) |
 | ----- | ------------- |
 | `k8s` (20) | `list_pods`, `list_nodes`, `list_namespaces`, `describe_pod`, `events`, `logs`, `top_pods`, `top_nodes`, `list_deployments`, `list_statefulsets`, `list_daemonsets`, `list_jobs`, `list_cronjobs`, `list_services`, `list_ingresses`, `list_hpa`, `list_pdbs`, `list_networkpolicies`, `list_crds`, `list_cr` *(CRD-generic dynamic-client reader; unlocks Argo Rollouts, KEDA, cert-manager, Gateway API, Sloth SLOs, ServiceMonitor, etc. in one tool)* |
-| `prom` (4) | `query`, `query_range`, `label_values`, `series` |
+| `prom` (6) | `query`, `query_range`, `label_values`, `series`, `anomaly`, `error_budget` |
 | `log` (8) | `loki_query_range`, `loki_labels`, `loki_label_values`, `loki_series`, `es_search`, `es_indices`, `es_cluster_health`, `container` *(Docker container logs; registers when `docker_hosts` is configured)* |
 | `trace` (7) | `tempo_get_trace`, `tempo_search`, `service_graph` *(Tempo metrics-generator service-graph edges)*, `route_red` *(Tempo metrics-generator per-route RED)*, `jaeger_services`, `jaeger_operations`, `jaeger_search_traces` |
 | `alert` (3) | `list_active`, `list_silences` *(Alertmanager v2)*, `list_rules` *(Prometheus rules API)* |
 | `gitops` (3) | `argo_list_apps`, `argo_app_status`, `argo_app_history` *(Argo CD v1 API)* |
-| `cloud` (24) | CloudWatch metrics: `aws_cw_list_metrics`, `aws_cw_get_metric_statistics`. CloudWatch Logs: `aws_logs_describe_groups`, `aws_logs_filter_events`, `aws_logs_insights_query` *(Logs Insights, start+poll)*. X-Ray traces: `aws_xray_trace_summaries`, `aws_xray_batch_get_traces`, `aws_xray_service_graph`. AWS inventory: `aws_rds_describe_instances`, `aws_lambda_list_functions`, `aws_eks_list_clusters`. Azure Monitor: `azure_monitor_metric_definitions`, `azure_monitor_metrics`. Azure Log Analytics: `azure_log_analytics_query` *(KQL)*. Azure App Insights: `azure_appinsights_query` *(KQL traces/requests/dependencies)*. Azure inventory: `azure_sql_server_list`, `azure_functionapp_list`, `azure_aks_list`. GCP Cloud Logging: `gcp_logging_read` *(`gcloud logging read`)*. GCP inventory: `gcp_sql_instances_list`, `gcp_run_services_list`, `gcp_container_clusters_list`. FinOps/cost: `aws_ce_cost_and_usage` *(Cost Explorer)*, `azure_consumption_usage` *(consumption usage detail)*. Read-only via the operator's `aws`/`az`/`gcloud` CLIs; no stored secrets. Registers when a `cloud_aws:` / `cloud_gcp:` / `cloud_azure:` block is configured. GCP metric/trace/cost read is deferred (see `docs/RFC-CLOUD-OBSERVABILITY.md`) |
+| `cloud` (25) | CloudWatch metrics: `aws_cw_list_metrics`, `aws_cw_get_metric_statistics`. CloudWatch Logs: `aws_logs_describe_groups`, `aws_logs_filter_events`, `aws_logs_insights_query` *(Logs Insights, start+poll)*. X-Ray traces: `aws_xray_trace_summaries`, `aws_xray_batch_get_traces`, `aws_xray_service_graph`. AWS inventory: `aws_rds_describe_instances`, `aws_lambda_list_functions`, `aws_eks_list_clusters`. AWS queues: `aws_sqs_queue_depth`. Azure Monitor: `azure_monitor_metric_definitions`, `azure_monitor_metrics`. Azure Log Analytics: `azure_log_analytics_query` *(KQL)*. Azure App Insights: `azure_appinsights_query` *(KQL traces/requests/dependencies)*. Azure inventory: `azure_sql_server_list`, `azure_functionapp_list`, `azure_aks_list`. GCP Cloud Logging: `gcp_logging_read` *(`gcloud logging read`)*. GCP inventory: `gcp_sql_instances_list`, `gcp_run_services_list`, `gcp_container_clusters_list`. FinOps/cost: `aws_ce_cost_and_usage` *(Cost Explorer)*, `azure_consumption_usage` *(consumption usage detail)*. Read-only via the operator's `aws`/`az`/`gcloud` CLIs; no stored secrets. Registers when a `cloud_aws:` / `cloud_gcp:` / `cloud_azure:` block is configured. GCP metric/trace/cost read is deferred (see `docs/RFC-CLOUD-OBSERVABILITY.md`) |
 | `change` (1) | `recent` *(orchestrator-agnostic deploy / image / scale / rollout timeline across Kubernetes **and** Docker, plus cloud control-plane audit events — AWS CloudTrail, GCP Cloud Audit Logs, Azure Activity Log; registers when k8s, `docker_hosts`, or a cloud provider is available)* |
 | `metric` (1) | `container_stats` *(read-only Docker container CPU / mem / net / block-IO; k8s metrics live in `prom` + `k8s.top_*`; needs `docker_hosts`)* |
 | `correlate` (1) | `workload` *(cross-signal evidence timeline — change history + metric / log / trace symptoms — with a candidate-cause that aligns the earliest symptom to the change before it; folds in Argo CD sync, cloud control-plane audit changes, and AWS X-Ray cloud-trace symptoms)* |
@@ -190,11 +199,15 @@ wired in your environment.
 | `py` (2) | `spy_dump`, `spy_top_snapshot` |
 | `gpu` (2) | `nvidia_smi`, `dcgm_metrics` |
 | `ebpf` (5) | `biolatency`, `tcptop`, `tcprtt`, `execsnoop`, `bpftrace_oneliner` *(all RiskHigh; gated by the approval banner)* |
+| `queue` (2) | `rabbitmq_queues`, `kafka_consumer_lag` |
+| `oncall` (2) | `list_incidents`, `who_is_oncall` |
+| `memory` (1) | `record` *(local-only durable fact recording, not a cluster mutation)* |
+| `synthetic` (1) | `http_check` |
 
 > **No `ruby` group.** rbspy is registered as `perf.rbspy_dump`. If
 > you are looking for Ruby profiling in `/tools`, search `perf`.
 
-### Skill playbooks (24 built-in)
+### Skill playbooks (31 built-in)
 
 Skills are curated multi-step playbooks the agent picks when a
 question matches their triggers. They live in
@@ -202,6 +215,8 @@ question matches their triggers. They live in
 embedded into the binary via `//go:embed`; you can override or add by
 dropping a `.md` file into `~/.cloudy/skills/` — user files win on name
 conflicts.
+
+Run `cloudy skills --json` for the code-derived skill inventory.
 
 | Skill | When it fires |
 | ----- | ------------- |

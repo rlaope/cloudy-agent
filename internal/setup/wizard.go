@@ -40,6 +40,10 @@ type WizardOptions struct {
 	// AutoRun skips interactive prompts: all contexts are selected and defaults
 	// are accepted. Useful for CI and scripted setup.
 	AutoRun bool
+
+	// DryRun runs discovery and config synthesis without writing config.yaml or
+	// profile.yaml. Useful for scripted setup validation.
+	DryRun bool
 }
 
 // Run launches the setup wizard and blocks until the user completes or aborts
@@ -527,6 +531,8 @@ func (m *WizardModel) advanceCredOrHints() {
 //
 //   - `$NAME`     → store env-var reference; do not call os.Getenv now.
 //   - literal     → secrets.Add(generated env name, value); store env-var name.
+//     In dry-run mode, only thread the generated env-var name
+//     through config synthesis; do not write the secrets file.
 //
 // Returns the env-var name that should be threaded into the emitted config.
 func (m *WizardModel) recordCredential(p credPrompt, raw string) (string, string, error) {
@@ -539,6 +545,10 @@ func (m *WizardModel) recordCredential(p credPrompt, raw string) (string, string
 		return env, "env", nil
 	}
 	env := generatedEnvVarName(p.finding)
+	if m.opts.DryRun {
+		m.authEnvByFindingIdx[p.findingIdx] = env
+		return env, "literal-dry-run", nil
+	}
 	if err := secrets.Add(env, raw); err != nil {
 		return "", "", err
 	}
@@ -874,10 +884,10 @@ func (m *WizardModel) viewDiscovered() string {
 		b.WriteString(fmt.Sprintf("%s%s %-10s (%d)  %s\n", cursor, checked, g.Kind, count, detail))
 	}
 	// Advisory: if any cloud identity is available, remind the operator that
-	// they can add a cloud_aws / cloud_gcp / cloud_azure block to cloudy.yaml.
+	// they can add a cloud_aws / cloud_gcp / cloud_azure block to config.yaml.
 	for _, id := range m.cloudIDs {
 		if id.Available {
-			b.WriteString("\n  Tip: one or more cloud identities detected. Add a cloud_aws: / cloud_gcp: / cloud_azure: block to cloudy.yaml to enable cloud tools.\n")
+			b.WriteString("\n  Tip: one or more cloud identities detected. Add a cloud_aws: / cloud_gcp: / cloud_azure: block to config.yaml to enable cloud tools.\n")
 			break
 		}
 	}
@@ -974,6 +984,9 @@ func (m *WizardModel) viewDone() string {
 	if m.saveErr != nil {
 		return fmt.Sprintf("\nError saving configuration: %v\n", m.saveErr)
 	}
+	if m.opts.DryRun {
+		return "\nSetup dry run complete. No files were written.\n"
+	}
 	return "\nSetup complete. Run 'cloudy' to start.\n"
 }
 
@@ -990,10 +1003,6 @@ func (m *WizardModel) persistConfig() error {
 		}
 	}
 	profile.RecommendedSkills = enabled
-
-	if err := config.SaveProfile(m.opts.ProfilePath, profile); err != nil {
-		return err
-	}
 
 	cfg := config.Default()
 	cfg.Contexts = append([]string(nil), m.selectedContexts...)
@@ -1045,6 +1054,14 @@ func (m *WizardModel) persistConfig() error {
 		}
 	}
 	cfg.Databases = append(cfg.Databases, m.dbHints...)
+
+	if m.opts.DryRun {
+		return nil
+	}
+
+	if err := config.SaveProfile(m.opts.ProfilePath, profile); err != nil {
+		return err
+	}
 
 	if err := config.Save(m.opts.ConfigPath, cfg); err != nil {
 		return err

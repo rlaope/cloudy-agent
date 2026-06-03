@@ -79,7 +79,7 @@ func EnsureReady(_ context.Context, _ Mode, opts Options) (Result, error) {
 	if profile.SchemaVersion == 0 && len(profile.Contexts) == 0 {
 		return Result{
 			State:   StateNeedsSetup,
-			Reasons: []string{"no profile found — run 'cloudy init' to set up"},
+			Reasons: []string{"no profile found — run 'cloudy setup' to set up"},
 		}, nil
 	}
 
@@ -87,7 +87,7 @@ func EnsureReady(_ context.Context, _ Mode, opts Options) (Result, error) {
 		return Result{
 			State: StateNeedsSetup,
 			Reasons: []string{fmt.Sprintf(
-				"profile schema version %d is outdated (want %d) — re-run 'cloudy init'",
+				"profile schema version %d is outdated (want %d) — re-run 'cloudy setup'",
 				profile.SchemaVersion, config.CurrentSchemaVersion,
 			)},
 		}, nil
@@ -96,14 +96,14 @@ func EnsureReady(_ context.Context, _ Mode, opts Options) (Result, error) {
 	if profile.Expired(ttl) {
 		return Result{
 			State:   StateNeedsSetup,
-			Reasons: []string{"profile is stale — re-run 'cloudy init' to refresh"},
+			Reasons: []string{"profile is stale — re-run 'cloudy setup' to refresh"},
 		}, nil
 	}
 
 	if !profile.IsValid() {
 		return Result{
 			State:   StateNeedsSetup,
-			Reasons: []string{"profile contains no context entries — re-run 'cloudy init'"},
+			Reasons: []string{"profile contains no context entries — re-run 'cloudy setup'"},
 		}, nil
 	}
 

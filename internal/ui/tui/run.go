@@ -124,7 +124,7 @@ func fullscreenRequested() bool {
 // makeSwapModel returns a SwapModel closure that resolves modelID to a
 // fresh provider via wiring.BuildProvider, atomically swaps it into the
 // shared providerRef the agent runner reads from, and persists the new
-// DefaultModel into cloudy.yaml so the next launch picks it up.
+// DefaultModel into config.yaml so the next launch picks it up.
 //
 // On any error (unknown model, missing env var, save failure) the ref
 // is left untouched and the error is returned to the caller for
@@ -143,7 +143,7 @@ func makeSwapModel(ref *providerRef, initialModel string) func(string) error {
 		cfgPath := config.Path()
 		cfg, loadErr := config.Load(cfgPath)
 		if loadErr != nil {
-			// Treat a missing/corrupt cloudy.yaml as "start from default"
+			// Treat a missing/corrupt config.yaml as "start from default"
 			// so a brand-new user can /login before /setup. The runtime
 			// swap above has already taken effect; we just lose
 			// persistence on this one error path.

@@ -52,7 +52,7 @@ const (
 )
 
 // loginModel is one entry in a provider's model picker. The id is what
-// goes on the wire (and into cloudy.yaml's default_model); the hint is
+// goes on the wire (and into config.yaml's default_model); the hint is
 // the trailing dim description the operator sees while picking.
 type loginModel struct {
 	id   string
