@@ -1,48 +1,43 @@
 # RFC: Cloud-Provider Observability for cloudy (AWS / GCP / Azure)
 
-- **Status**: Draft (pre-implementation)
+- **Status**: Implemented foundation with documented deferrals
 - **Target**: v0.6.0 → (phased)
 - **Owner**: rlaope
 - **Last updated**: 2026-05-29
 
-> TL;DR — Today cloudy is a deep read-only SRE agent for the *open-source*
-> stack (k8s, Docker, Prometheus, Loki, Tempo, Jaeger, DBs) — 88 tools across
-> 15 groups. It has **zero** cloud-provider observability: it can already
-> *detect* which of AWS/GCP/Azure you are logged into
-> (`internal/discovery/cloud_iam.go`) but cannot query a single CloudWatch
-> metric. This RFC adds a read-only `cloud` tool group that reaches AWS, GCP,
-> and Azure telemetry **by shelling out to the operator's already-configured
-> `aws` / `gcloud` / `az` CLIs** — no new SDK dependencies, no stored secrets.
-> The agent stays strictly read-only; cloud APIs become *another* read-only
-> source the LLM can consult.
+> TL;DR — cloudy now has a read-only `cloud` tool group that reaches AWS, GCP,
+> and Azure telemetry by shelling out to the operator's already-configured
+> `aws` / `gcloud` / `az` CLIs. No SDK credentials are stored by cloudy. The
+> implemented surface covers AWS metrics/logs/traces/inventory/SQS/cost, Azure
+> metrics/logs/App Insights/inventory/cost, and GCP logging/inventory. GCP
+> metric, trace, and cost reads remain intentionally deferred because there is
+> no clean read-only `gcloud` command path for those signals.
 
 ---
 
 ## 1. Problem statement
 
-cloudy investigates clusters and hosts, but the moment an incident touches a
-managed cloud service — an RDS failover, a CloudWatch-only metric, a Lambda
-cold-start storm, a cost spike — the trail goes cold. The agent has:
+cloudy investigates clusters and hosts, and now also covers the common
+first-party cloud evidence paths. The remaining problem is expectation
+management and explicit scope:
 
-- **0** cloud metric / log / trace query tools,
-- **0** cloud inventory / managed-service health tools,
-- **0** cost / FinOps visibility,
-- a `change.recent` timeline that stops at k8s + Docker and never sees
-  CloudTrail / Cloud Audit Logs / Azure Activity Log,
-- a `cloud_iam.go` identity probe that is **detected but never wired to a
-  tool** — a dormant capability.
+- GCP Cloud Logging and inventory are supported, but GCP metric/trace/cost
+  reads are deferred.
+- Cloud provider registration is conditional on configured accounts/projects.
+- Cloud tools use read-only CLI subcommand allowlists because subprocesses do
+  not pass through the Go HTTP read-only transport.
 
-### Current-state score — cloud observability readiness ≈ 3/10
+### Current-state score — cloud observability readiness ≈ 7/10
 
 | Dimension | Score | Note |
 | --- | :---: | --- |
 | Read-only security architecture | 9/10 | mutator-name panic + transport GET/HEAD/OPTIONS whitelist + permission profiles |
-| Open-stack observability coverage | 9/10 | 88 tools / 15 groups |
-| Cloud signal coverage (metric/log/trace/cost/inventory) | 1/10 | none |
-| Multi-cloud breadth (AWS/GCP/Azure) | 2/10 | identity detection only, unwired |
-| Cloud auth / credential model | 3/10 | no query-time auth, no short-lived-token story |
-| Trend alignment (OTel / unified / FinOps / AI-SRE) | 5/10 | `correlate`/`change` align; cloud/OTel/FinOps absent |
-| DevOps convenience (discovery → setup → inquiry) | 6/10 | framework strong, cloud not connected |
+| Open-stack observability coverage | 9/10 | broad runtime registry; inspect with `cloudy tools --json` |
+| Cloud signal coverage (metric/log/trace/cost/inventory) | 7/10 | AWS/Azure broad, GCP logging/inventory only |
+| Multi-cloud breadth (AWS/GCP/Azure) | 7/10 | all three wired, with GCP signal deferrals |
+| Cloud auth / credential model | 7/10 | ambient CLI auth; no stored cloud secrets |
+| Trend alignment (OTel / unified / FinOps / AI-SRE) | 7/10 | `correlate`/`change` align; cloud and FinOps partially wired |
+| DevOps convenience (discovery → setup → inquiry) | 7/10 | framework strong; cloud registration remains config-gated |
 
 The *foundation* (registration, config, secrets, discovery, cross-signal
 `correlate`) is strong, so the marginal cost of each cloud signal is low.
@@ -210,6 +205,16 @@ secret entry and no config edits**.
   account selector argument. *(current: account selector arg, default when one
   account is configured.)*
 - Caching CLI identity probes to avoid re-shelling on every discovery run.
+
+## 8.1 Deferred-capabilities matrix
+
+| Capability | Status | Decision |
+| --- | --- | --- |
+| GCP metrics | Deferred | Document limitation only for this release; direct Monitoring API work needs a separate design because `gcloud monitoring` has no read-only time-series command. |
+| GCP traces | Deferred | Document limitation only for this release; Cloud Trace reads need the Trace API rather than a stable `gcloud trace` read command. |
+| GCP cost | Deferred | Document limitation only for this release; billing/cost data has no clean `gcloud` read path matching the current CLI-only cloud design. |
+| JVM/Python sidecar or ephemeral attach | Deferred | Later RFC. Current runtime tools stay local/host-process oriented and never create pods, sidecars, or ephemeral containers. |
+| Broader cloud parity | Later | Add as explicit follow-up issues after release readiness, not as hidden README promises. |
 
 ## 9. GCP path decision (locked)
 

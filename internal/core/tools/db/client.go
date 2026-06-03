@@ -28,7 +28,7 @@ import (
 )
 
 // Clients holds connected handles keyed by the endpoint Name from
-// cloudy.yaml. Each backend has its own map; tools look up by name.
+// config.yaml. Each backend has its own map; tools look up by name.
 type Clients struct {
 	Postgres map[string]*PostgresClient
 	MySQL    map[string]*MySQLClient

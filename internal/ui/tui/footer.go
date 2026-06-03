@@ -196,7 +196,7 @@ func nonEmpty(in []string) []string {
 
 // dedupe returns a copy of in with duplicate entries removed, preserving
 // first-seen order. Without this a kubeconfig that merged the same context
-// twice (or a copy-paste in cloudy.yaml) would render `prod +1` and imply
+// twice (or a copy-paste in config.yaml) would render `prod +1` and imply
 // the agent talks to two distinct clusters when it only has one.
 func dedupe(in []string) []string {
 	if len(in) <= 1 {

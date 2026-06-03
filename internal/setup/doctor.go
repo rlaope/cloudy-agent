@@ -96,7 +96,7 @@ func checkContextReachable(profilePath string) Check {
 	return Check{
 		Name:   "active context reachable",
 		OK:     false,
-		Detail: "no context was reachable at last scan — re-run 'cloudy init'",
+		Detail: "no context was reachable at last scan — re-run 'cloudy setup'",
 	}
 }
 

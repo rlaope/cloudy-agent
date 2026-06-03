@@ -17,7 +17,7 @@ import (
 )
 
 // Clients holds connected backend handles keyed by the endpoint Name from
-// cloudy.yaml. Each backend kind has its own map; tools look up by name.
+// config.yaml. Each backend kind has its own map; tools look up by name.
 type Clients struct {
 	RabbitMQ map[string]*httpapi.Client
 	Kafka    map[string]*kafkaClient

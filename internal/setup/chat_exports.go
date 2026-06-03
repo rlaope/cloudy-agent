@@ -29,11 +29,11 @@ func ScanResultsForContexts(ctx context.Context, kubeconfigPath string, contexts
 // findings-to-typed-config projection. It mirrors the (logs, traces,
 // proms, pprof, nodeInspectors, dbs) tuple shape used by the wizard's
 // step-7 save logic; the stream-inline /setup flow appends these into
-// the same cloudy.yaml slices.
+// the same config.yaml slices.
 //
 // Authentication info is intentionally not threaded through (the
 // inline flow does not collect per-finding credentials; the operator
-// uses /login or hand-edits cloudy.yaml for that).
+// uses /login or hand-edits config.yaml for that).
 func ConvertFindingsForChat(findings []discovery.Finding) (
 	logs []config.HTTPEndpoint,
 	traces []config.HTTPEndpoint,

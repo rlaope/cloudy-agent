@@ -23,7 +23,7 @@ import (
 // (RunDiscovery, BuildRegistry, Replace, config persistence). Anything
 // that requires per-finding interaction (credentials, hints, skill
 // curation) is intentionally cut from the inline flow; the operator
-// can edit cloudy.yaml directly for those advanced cases.
+// can edit config.yaml directly for those advanced cases.
 type setupChat struct {
 	step       int
 	ctx        context.Context
@@ -329,7 +329,7 @@ func (s *setupChat) runSave() tea.Cmd {
 	}
 }
 
-// persistAndSwap writes profile.yaml + cloudy.yaml, rebuilds the
+// persistAndSwap writes profile.yaml + config.yaml, rebuilds the
 // registry from the new config + active profile, and swaps it in.
 // Returns the human summary printed back to the stream.
 func (s *setupChat) persistAndSwap() (string, error) {
@@ -349,7 +349,7 @@ func (s *setupChat) persistAndSwap() (string, error) {
 		return "", fmt.Errorf("save profile: %w", err)
 	}
 
-	// Preserve any existing DefaultModel from a prior cloudy.yaml; /setup
+	// Preserve any existing DefaultModel from a prior config.yaml; /setup
 	// only touches infrastructure (contexts + backends), not the AI
 	// connection. The /login conversation owns model selection.
 	cfg := config.Default()
@@ -367,7 +367,7 @@ func (s *setupChat) persistAndSwap() (string, error) {
 	cfg.NodeInspectors = append(cfg.NodeInspectors, nodeEps...)
 	cfg.Databases = append(cfg.Databases, dbs...)
 	if err := config.Save(s.cfgPath, cfg); err != nil {
-		return "", fmt.Errorf("save cloudy.yaml: %w", err)
+		return "", fmt.Errorf("save config.yaml: %w", err)
 	}
 
 	_, _ = wiring.Rebuild(cfg, wiring.RebuildOpts{

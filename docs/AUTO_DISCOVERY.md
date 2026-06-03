@@ -3,7 +3,8 @@
 v0.4 introduces a `/setup` slash command inside the TUI that scans every
 selected Kubernetes context, proposes every detected observability backend,
 collects credentials inline, and rebuilds the live tool registry without a
-process restart. `cloudy.yaml` is generated, not hand-edited.
+process restart. `config.yaml` and `profile.yaml` are generated, not
+hand-edited.
 
 This document describes the wizard flow, how detectors decide what to
 propose, where secrets live, and how to recover when discovery misses
@@ -21,7 +22,8 @@ cloudy             # launches TUI; first run shows the welcome banner
 The wizard is also runnable non-interactively:
 
 ```sh
-cloudy setup       # automated path (CI / scripted bootstrap)
+cloudy setup --auto           # automated path (CI / scripted bootstrap)
+cloudy setup --auto --dry-run # scan contexts and synthesize config without writing files
 ```
 
 ---
@@ -40,7 +42,7 @@ Each step is a `WizardModel` sub-screen in
 | 5 | `hints`       | Optional loop for ad-hoc external endpoints (`kind URL [auth]`).                               |
 | 6 | `fill-in`     | LLM default model + safety limits (max tokens/session, max USD/day, allow-secrets).            |
 | 7 | `skills`      | Checkbox over `Recommend(profile, builtin)` — pre-checks the skills that match the scan.       |
-|   | `save`        | Writes `~/.cloudy/cloudy.yaml` + `~/.cloudy/profile.yaml`, rebuilds the registry, hot-swaps it. |
+|   | `save`        | Writes `~/.cloudy/config.yaml` + `~/.cloudy/profile.yaml`, rebuilds the registry, hot-swaps it. |
 
 The header reads `Step 1/7`, `Step 2/7`, … because `save` is a write step,
 not a user-input step.
@@ -65,7 +67,7 @@ produces one prompt. Three input modes:
 
 The literal path is the one that writes to disk (see *Secrets* below).
 The `$ENV_VAR` path never resolves the env var during the wizard — only
-the *name* is stored in `cloudy.yaml`, so the value can rotate without
+the *name* is stored in `config.yaml`, so the value can rotate without
 re-running `/setup`.
 
 ### Step 5 — external hints
@@ -122,14 +124,14 @@ otherwise we get the cycle `tools → discovery → tools`.
 | `perf`   | pprof: `name=*` + named port `pprof`. V8 Inspector: named port `inspector` (9229).               |
 
 A detector contributes a `Finding` only when both the label match and
-the port heuristic agree. External hints from `cloudy.yaml` are added
+the port heuristic agree. External hints from `config.yaml` are added
 unconditionally with `Source.External = true`.
 
 ---
 
 ## Credentials lifecycle: `~/.cloudy/secrets`
 
-The wizard never writes secret material into `cloudy.yaml`. Pasted
+The wizard never writes secret material into `config.yaml`. Pasted
 values go through [`internal/secrets/store.go`](../internal/secrets/store.go).
 
 **Resolution order** (mirrors `config.Path()`):
@@ -202,17 +204,17 @@ No `cloudy` restart is required.
 
 ---
 
-## Manual `cloudy.yaml` edits
+## Manual `config.yaml` edits
 
 Hand-editing remains supported for advanced use cases. The recommended
 flow is:
 
 1. Run `/setup` to produce a baseline.
-2. Edit `~/.cloudy/cloudy.yaml` (or the equivalent path under
+2. Edit `~/.cloudy/config.yaml` (or the equivalent path under
    `$CLOUDY_HOME`) to add what discovery missed.
 3. Restart cloudy (manual edits do not currently trigger a hot-swap).
 
-If you maintain `cloudy.yaml` by hand, you can still seed external
+If you maintain `config.yaml` by hand, you can still seed external
 backends through `discovery.hints` in the same file — that section is
 read by every detector in addition to its K8s scan.
 
@@ -241,7 +243,7 @@ step 5 hints with your own env-var name.
 
 **Wizard wrote credentials but the next call still fails with
 `authentication required`.**
-Re-check that `cloudy.yaml` references the env-var name the wizard
+Re-check that `config.yaml` references the env-var name the wizard
 generated (e.g. `password_env: CLOUDY_POSTGRES_ORDERS_PWD`). The value
 itself lives in `~/.cloudy/secrets` and is loaded at boot — if you
 exported a same-named env var by hand earlier, the boot-time

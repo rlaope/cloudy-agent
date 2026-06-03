@@ -3,8 +3,11 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -14,7 +17,7 @@ import (
 // covered, any future refactor of the flag wiring could silently change
 // what each subcommand interprets as its positional args.
 func TestParseInto(t *testing.T) {
-	t.Parallel()
+	t.Setenv("NO_COLOR", "")
 
 	type opts struct {
 		base baseFlags
@@ -109,6 +112,122 @@ func TestNoColorEnv(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	if !noColorEnv() {
 		t.Error("noColorEnv should be true when NO_COLOR is set")
+	}
+}
+
+func TestSetupCmd_DryRunFlagParses(t *testing.T) {
+	t.Parallel()
+	var o setupOptions
+	pos, err := parseInto(&o, "setup", []string{"--auto", "--dry-run"}, io.Discard)
+	if err != nil {
+		t.Fatalf("parseInto setup: %v", err)
+	}
+	if len(pos) != 0 {
+		t.Fatalf("positional args = %v, want none", pos)
+	}
+	if !o.auto {
+		t.Error("--auto should set auto=true")
+	}
+	if !o.dryRun {
+		t.Error("--dry-run should set dryRun=true")
+	}
+}
+
+func TestSkillsCmd_ListJSON(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+
+	var out bytes.Buffer
+	if err := (skillsCmd{}).Run(context.Background(), []string{"--json"}, &out, io.Discard); err != nil {
+		t.Fatalf("skills --json: %v", err)
+	}
+
+	var rows []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("skills list output is not JSON: %v\n%s", err, out.String())
+	}
+	if len(rows) == 0 {
+		t.Fatal("skills list --json returned no skills")
+	}
+	if _, ok := rows[0]["name"]; !ok {
+		t.Fatalf("first skill row missing name field: %#v", rows[0])
+	}
+}
+
+func TestSkillsCmd_ShowJSON(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+
+	var out bytes.Buffer
+	if err := (skillsCmd{}).Run(context.Background(), []string{"--json", "show", "cluster-recon"}, &out, io.Discard); err != nil {
+		t.Fatalf("skills show --json: %v", err)
+	}
+
+	var row map[string]any
+	if err := json.Unmarshal(out.Bytes(), &row); err != nil {
+		t.Fatalf("skills show output is not JSON: %v\n%s", err, out.String())
+	}
+	if row["name"] != "cluster-recon" {
+		t.Fatalf("skill name = %v, want cluster-recon", row["name"])
+	}
+}
+
+func TestSkillsCmd_ListJSONRejectsUnexpectedArgs(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+
+	var out bytes.Buffer
+	err := (skillsCmd{}).Run(context.Background(), []string{"--json", "unexpected"}, &out, io.Discard)
+	if err == nil {
+		t.Fatal("skills --json unexpected should return an error")
+	}
+	if !strings.Contains(err.Error(), "unexpected skills list argument") {
+		t.Fatalf("error = %v, want unexpected skills list argument", err)
+	}
+}
+
+func TestSkillsCmd_ShowRejectsUnexpectedArgs(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+
+	var out bytes.Buffer
+	err := (skillsCmd{}).Run(context.Background(), []string{"show", "cluster-recon", "extra"}, &out, io.Discard)
+	if err == nil {
+		t.Fatal("skills show cluster-recon extra should return an error")
+	}
+	if !strings.Contains(err.Error(), "unexpected skills show argument") {
+		t.Fatalf("error = %v, want unexpected skills show argument", err)
+	}
+}
+
+func TestSkillsCmd_FlagValueNamedShowDoesNotBecomeSubcommand(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+
+	var out bytes.Buffer
+	if err := (skillsCmd{}).Run(context.Background(), []string{"--context", "show", "--json"}, &out, io.Discard); err != nil {
+		t.Fatalf("skills --context show --json: %v", err)
+	}
+
+	var rows []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("skills list output is not JSON: %v\n%s", err, out.String())
+	}
+	if len(rows) == 0 {
+		t.Fatal("skills list --json returned no skills")
+	}
+}
+
+func TestSetupRun_DryRunDoesNotWriteConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLOUDY_HOME", dir)
+
+	kubeconfig := filepath.Join(dir, "missing-kubeconfig")
+	err := (setupCmd{}).Run(context.Background(), []string{"--auto", "--dry-run", "--kubeconfig", kubeconfig}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("setup --auto --dry-run: %v", err)
+	}
+
+	for _, name := range []string{"config.yaml", "profile.yaml"} {
+		path := filepath.Join(dir, name)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s should not be written during --dry-run; stat err=%v", path, err)
+		}
 	}
 }
 

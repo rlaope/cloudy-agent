@@ -11,10 +11,10 @@ import (
 	"github.com/rlaope/cloudy/internal/wiring"
 )
 
-// canonicalToolNames mirrors every tool name shipped under internal/tools/.
-// Hand-maintained because building a real tools.Registry here would require
-// live k8s.Hub / prom.Client etc. that the regression doesn't need; the
-// trade-off is that adding a tool means appending one line to this slice.
+// canonicalToolNames is the code-derived inventory of tool names referenced by
+// built-in skills. It is not the full runtime registry: some tools register
+// only with configured backends or host binaries, and some shipped tools are
+// not currently used by any built-in skill.
 var canonicalToolNames = []string{
 	"k8s.list_pods", "k8s.list_nodes", "k8s.list_namespaces", "k8s.describe_pod",
 	"k8s.events", "k8s.logs", "k8s.top_pods", "k8s.top_nodes",

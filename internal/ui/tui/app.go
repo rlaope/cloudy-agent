@@ -859,7 +859,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setupChat = nil
 		}
 		// Save succeeded: refresh the footer state segment AND deps.Contexts
-		// from the just-written cloudy.yaml so the footer reads the chosen
+		// from the just-written config.yaml so the footer reads the chosen
 		// cluster(s) — not the stale boot-time snapshot — and reset the
 		// welcome banner for the returning-user form.
 		if msg.err == nil {

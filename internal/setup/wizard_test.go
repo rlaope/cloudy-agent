@@ -2,6 +2,8 @@ package setup
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/rlaope/cloudy/internal/config"
@@ -75,6 +77,34 @@ func TestStepOrderingProgression(t *testing.T) {
 	}
 	if m.Aborted() {
 		t.Fatalf("Aborted() = true at terminal step")
+	}
+}
+
+func TestRecordCredential_DryRunDoesNotWriteSecret(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLOUDY_HOME", dir)
+
+	finding := discovery.Finding{
+		Kind:   "postgres",
+		Source: discovery.Source{ServiceName: "orders-db"},
+	}
+	m := NewWizardModel(context.Background(), WizardOptions{DryRun: true})
+
+	env, mode, err := m.recordCredential(credPrompt{findingIdx: 0, finding: finding}, "literal-secret")
+	if err != nil {
+		t.Fatalf("recordCredential dry-run: %v", err)
+	}
+	if env != "CLOUDY_POSTGRES_ORDERS_DB_PWD" {
+		t.Fatalf("env = %q, want CLOUDY_POSTGRES_ORDERS_DB_PWD", env)
+	}
+	if mode != "literal-dry-run" {
+		t.Fatalf("mode = %q, want literal-dry-run", mode)
+	}
+	if got := os.Getenv(env); got != "" {
+		t.Fatalf("%s should not be exported during dry-run, got %q", env, got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "secrets")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run should not write secrets file; stat err=%v", err)
 	}
 }
 

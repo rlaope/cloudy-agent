@@ -158,11 +158,11 @@ The TUI `/scope` command allows temporary, session-only restriction without modi
 
 ```
 /scope ns=payments
-/scope deny-tool=jvm.async_profile
+/scope ctx=prod-eu
 /scope reset
 ```
 
-These changes apply only to the current session and do not persist. The next session resumes with the Profile's settings. Layer 3 cannot widen Layer 2; it can only narrow further.
+These changes apply only to the current session and do not persist. The next session resumes with the Profile's settings. Today `/scope` is a prompt-level namespace/context narrowing aid, not a hard tool-filtering layer; persistent tool allow/deny enforcement belongs in the Profile.
 
 ## Field Masking
 
