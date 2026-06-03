@@ -115,6 +115,7 @@ func (p PromptModel) Update(msg tea.Msg) (PromptModel, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
 		p.ta.SetWidth(m.Width)
+		p.syncHeight()
 
 	case tea.KeyMsg:
 		// Selection interception comes BEFORE the regular key switch so
@@ -289,7 +290,7 @@ func (p PromptModel) Update(msg tea.Msg) (PromptModel, tea.Cmd) {
 // invisible. Without this, new users had no way to discover history
 // navigation short of reading /help.
 func (p *PromptModel) syncHeight() {
-	lines := strings.Count(p.ta.Value(), "\n") + 1
+	lines := p.visualLineCount()
 	if lines < 1 {
 		lines = 1
 	}
@@ -317,6 +318,28 @@ func (p PromptModel) Value() string {
 // SetValue sets the textarea content.
 func (p *PromptModel) SetValue(v string) {
 	p.ta.SetValue(v)
+	p.syncHeight()
+}
+
+func (p PromptModel) visualLineCount() int {
+	value := p.ta.Value()
+	if value == "" {
+		return 1
+	}
+	width := p.ta.Width()
+	if width < 1 {
+		width = 1
+	}
+	lines := 0
+	for _, line := range strings.Split(value, "\n") {
+		w := lipgloss.Width(line)
+		if w == 0 {
+			lines++
+			continue
+		}
+		lines += (w + width - 1) / width
+	}
+	return lines
 }
 
 // Focus focuses the textarea.
