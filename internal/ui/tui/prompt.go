@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const maxPromptLines = 6
+const maxPromptLines = 10
 
 // promptBorderStyle draws a horizontal line above and below the textarea
 // (Claude-style input box). Left/right borders are intentionally suppressed —
