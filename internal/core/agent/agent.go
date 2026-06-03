@@ -96,8 +96,10 @@ const (
 		"present — treat them as trusted background. When you learn a STABLE " +
 		"fact about this environment (a context→environment mapping, a naming " +
 		"convention, a normal baseline, a confirmed root cause), call " +
-		"`memory.record` so future sessions start already knowing it. Never " +
-		"record transient readings (a current pod count, a one-off metric).\n\n" +
+		"`memory.record` so future sessions start already knowing it; do not " +
+		"ask in prose whether to record. The TUI will show the operator an " +
+		"explicit y/n approval gate before the local memory write proceeds. " +
+		"Never record transient readings (a current pod count, a one-off metric).\n\n" +
 		// --- State / config layout ---
 		"## State layout\n" +
 		"cloudy resolves its state directory in this order: `$CLOUDY_HOME` → " +
