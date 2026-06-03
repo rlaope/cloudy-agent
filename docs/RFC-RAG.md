@@ -49,6 +49,13 @@ The corpus is a plain directory of files the operator hand-curates (or
 syncs from a wiki). No DB, no service. cloudy never writes to it from
 inside the agent loop (see §9).
 
+The v1 incident-memory layer is a smaller precursor, not the full RAG corpus:
+approved HITL case cards live under
+`~/.cloudy/incident-memory/cards.jsonl` and may be exported or adapted into
+this corpus later. Candidate and rejected cards are not part of the default
+RAG input. The flat `memory.md` file remains separate environment memory
+written by the agent-callable `memory.record` tool.
+
 ```
 ~/.cloudy/knowledge/
 ├── runbooks/

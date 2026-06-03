@@ -1,8 +1,9 @@
-// Package memory provides the memory.record tool — cloudy's single write
-// surface. It does NOT touch any monitored infrastructure: it appends one
-// durable fact to cloudy's local memory file (see internal/memory) so the agent
-// remembers it across sessions. The recorded memory is injected back into the
-// system prompt at the start of every future run.
+// Package memory provides the memory.record tool — cloudy's agent-callable
+// local memory write surface. It does NOT touch any monitored infrastructure:
+// it appends one durable fact to cloudy's local memory file (see
+// internal/memory) so the agent remembers it across sessions. The recorded
+// memory is injected back into the system prompt at the start of every future
+// run.
 package memory
 
 import (
@@ -37,8 +38,8 @@ func newRecordTool() tools.Tool {
 	return tools.Spec[args]{
 		Name: "memory.record",
 		Description: "Save one durable fact about the operator's environment to cloudy's local " +
-			"cross-session memory (memory.md). This is the ONLY tool that writes anything, and it " +
-			"touches no monitored infrastructure — only cloudy's own memory file, which is injected " +
+			"cross-session memory (memory.md). This is the ONLY agent-callable local memory write " +
+			"tool, and it touches no monitored infrastructure — only cloudy's own memory file, which is injected " +
 			"into your context at the start of every future session. Use it when you learn a STABLE " +
 			"fact (topology, naming conventions, baselines, a confirmed root cause) so you need not " +
 			"rediscover it later. Do not record transient observations.",

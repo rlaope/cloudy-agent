@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rlaope/cloudy/internal/incidentmemory"
 )
 
 // TestParseInto pins the parseInto helper that every subcommand uses to
@@ -220,6 +222,85 @@ func TestSkillsCmd_FlagValueNamedShowDoesNotBecomeSubcommand(t *testing.T) {
 	}
 	if len(rows) == 0 {
 		t.Fatal("skills list --json returned no skills")
+	}
+}
+
+func TestMemoryCasesCmd_ListShowApproveRejectJSON(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+	store := incidentmemory.NewDefaultStore()
+	card, err := store.CreateCandidate(incidentmemory.Card{
+		Symptoms:         []string{"latency spike"},
+		AffectedService:  "payments-api",
+		Signals:          []string{"redis errors"},
+		CauseStatus:      incidentmemory.CauseSuspected,
+		Cause:            "possible redis pool exhaustion",
+		FixOrMitigation:  "compare redis client count",
+		WhatWasDifferent: "current deploy state is unknown",
+		Source:           incidentmemory.Source{Type: "postmortem", ID: "INC-142"},
+		Confidence:       0.7,
+	})
+	if err != nil {
+		t.Fatalf("seed candidate: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := (memoryCmd{}).Run(context.Background(), []string{"cases", "list", "--json"}, &out, io.Discard); err != nil {
+		t.Fatalf("memory cases list --json: %v", err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("list output is not JSON: %v\n%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0]["id"] != card.ID {
+		t.Fatalf("list rows = %#v, want seeded card", rows)
+	}
+
+	out.Reset()
+	if err := (memoryCmd{}).Run(context.Background(), []string{"cases", "show", card.ID, "--json"}, &out, io.Discard); err != nil {
+		t.Fatalf("memory cases show --json: %v", err)
+	}
+	var shown map[string]any
+	if err := json.Unmarshal(out.Bytes(), &shown); err != nil {
+		t.Fatalf("show output is not JSON: %v\n%s", err, out.String())
+	}
+	if shown["affected_service"] != "payments-api" {
+		t.Fatalf("show row = %#v", shown)
+	}
+
+	out.Reset()
+	if err := (memoryCmd{}).Run(context.Background(), []string{"cases", "approve", card.ID, "--json"}, &out, io.Discard); err != nil {
+		t.Fatalf("memory cases approve --json: %v", err)
+	}
+	var approved map[string]any
+	if err := json.Unmarshal(out.Bytes(), &approved); err != nil {
+		t.Fatalf("approve output is not JSON: %v\n%s", err, out.String())
+	}
+	if approved["status"] != incidentmemory.StatusApproved {
+		t.Fatalf("approved status = %#v", approved["status"])
+	}
+
+	out.Reset()
+	if err := (memoryCmd{}).Run(context.Background(), []string{"cases", "reject", card.ID, "--json"}, &out, io.Discard); err != nil {
+		t.Fatalf("memory cases reject --json: %v", err)
+	}
+	var rejected map[string]any
+	if err := json.Unmarshal(out.Bytes(), &rejected); err != nil {
+		t.Fatalf("reject output is not JSON: %v\n%s", err, out.String())
+	}
+	if rejected["status"] != incidentmemory.StatusRejected {
+		t.Fatalf("rejected status = %#v", rejected["status"])
+	}
+
+	out.Reset()
+	if err := (memoryCmd{}).Run(context.Background(), []string{"cases", "list", "--json"}, &out, io.Discard); err != nil {
+		t.Fatalf("memory cases list after reject: %v", err)
+	}
+	rows = nil
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("list output is not JSON: %v\n%s", err, out.String())
+	}
+	if len(rows) != 0 {
+		t.Fatalf("rejected card should be hidden by default, got %#v", rows)
 	}
 }
 

@@ -53,6 +53,7 @@ var builtinItems = []paletteItem{
 	{title: "autocompact", usage: "/autocompact  — toggle auto-compaction past 90% context"},
 	{title: "new", usage: "/new          — reset conversation + start a fresh session"},
 	{title: "plan", usage: "/plan         — toggle plan-first investigation (on by default)"},
+	{title: "memory-review", usage: "/memory-review <json> — approve/reject an incident case"},
 	{title: "clear", usage: "/clear        — clear screen output (history kept; use /new to reset)"},
 	{title: "update", usage: "/update       — upgrade cloudy to the latest GitHub release"},
 	{title: "help", usage: "/help         — show help text"},

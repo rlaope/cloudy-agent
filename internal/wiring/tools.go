@@ -156,9 +156,9 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 
 	synthetic.RegisterAll(reg)
 
-	// memory.record is cloudy's only write surface — it persists durable facts
-	// to the local memory file, not to any monitored infrastructure. Needs no
-	// backend config, so it is always registered.
+	// memory.record is cloudy's only agent-callable local memory write tool —
+	// it persists durable facts to the local memory file, not to any monitored
+	// infrastructure. Needs no backend config, so it is always registered.
 	memory.RegisterAll(reg)
 
 	// change.* spans k8s, docker, and cloud control-plane audit logs. Register

@@ -121,6 +121,14 @@ func fullscreenRequested() bool {
 	return true
 }
 
+func loadSimilarIncidentCasesForTUI(input string, profile *permission.Profile) (string, error) {
+	rendered, err := agent.BuildIncidentMemoryPrompt(input, profile)
+	if err != nil {
+		return "", err
+	}
+	return rendered, nil
+}
+
 // makeSwapModel returns a SwapModel closure that resolves modelID to a
 // fresh provider via wiring.BuildProvider, atomically swaps it into the
 // shared providerRef the agent runner reads from, and persists the new
@@ -223,6 +231,11 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps, state
 		planOn := state.plan
 		state.mu.Unlock()
 
+		similarCases, simErr := loadSimilarIncidentCasesForTUI(input, activeProfile)
+		if simErr != nil {
+			logSessionError(sess, "incidentmemory.retrieve", simErr)
+		}
+
 		ag, err := agent.New(agent.Options{
 			Provider: provider,
 			Model:    modelID,
@@ -244,6 +257,7 @@ func makeAgentRunner(rootCtx context.Context, ref *providerRef, deps Deps, state
 			Profile:                  activeProfile,
 			Plan:                     planOn,
 			EnvironmentMemory:        envMemory,
+			SimilarIncidentCases:     similarCases,
 		})
 		if err != nil {
 			logSessionError(sess, "agent.new", err)
