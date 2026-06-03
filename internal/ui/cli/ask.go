@@ -149,6 +149,7 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		History:                  history,
 		Plan:                     opts.plan,
 		EnvironmentMemory:        loadEnvMemory(stderr),
+		SimilarIncidentCases:     loadSimilarIncidentCases(prompt, activeProfile, stderr),
 	})
 	if err != nil {
 		return errf("agent: %w", err)
@@ -182,4 +183,13 @@ func loadEnvMemory(stderr io.Writer) string {
 		return ""
 	}
 	return mem
+}
+
+func loadSimilarIncidentCases(prompt string, profile *permission.Profile, stderr io.Writer) string {
+	rendered, err := agent.BuildIncidentMemoryPrompt(prompt, profile)
+	if err != nil {
+		fmt.Fprintf(stderr, "cloudy: incident memory: %v\n", err)
+		return ""
+	}
+	return rendered
 }

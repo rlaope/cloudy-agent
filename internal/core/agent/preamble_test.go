@@ -232,6 +232,39 @@ func TestSystemPreamble_InjectsEnvironmentMemory(t *testing.T) {
 	}
 }
 
+func TestSystemPreamble_SimilarIncidentCasesDistinct(t *testing.T) {
+	prov := &capturingProvider{}
+	ag, err := agent.New(agent.Options{
+		Provider:          prov,
+		Model:             "test-model",
+		Registry:          tools.New(),
+		EnvironmentMemory: "- (2026-06-01) ctx prod-east is production",
+		SimilarIncidentCases: "## Prior similar incident cases\n" +
+			"These approved local case cards are references only. They are not proof of the current root cause; re-check live signals before diagnosing.\n" +
+			"- case-1\n  service: payments-api",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := ag.Run(context.Background(), "hi", render.NewStream(discardWriter{}, render.NewTheme(true))); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sys := systemMessage(prov.captured)
+	for _, want := range []string{
+		"## Environment memory",
+		"ctx prod-east is production",
+		"## Prior similar incident cases",
+		"not proof of the current root cause",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("system prompt missing %q\n--- prompt ---\n%s\n--- end ---", want, sys)
+		}
+	}
+	if strings.Index(sys, "## Environment memory") > strings.Index(sys, "## Prior similar incident cases") {
+		t.Fatalf("memory sections rendered in unexpected order\n--- prompt ---\n%s\n--- end ---", sys)
+	}
+}
+
 // TestRun_DoesNotReplayStaleSystemFromHistory pins the fix for the stale
 // system-prompt bug: history can carry a system message from a prior turn (the
 // agent returns one at msgs[0]), and some adapters resolve the system block

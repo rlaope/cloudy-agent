@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +128,51 @@ func TestSession_EventTimestampSet(t *testing.T) {
 	ts := r.Events[1].Time
 	if ts.Before(before) || ts.After(after) {
 		t.Errorf("timestamp %v outside window [%v, %v]", ts, before, after)
+	}
+}
+
+func TestIncidentMemorySource_FromSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLOUDY_HOME", home)
+	s, err := session.New("inc-test")
+	if err != nil {
+		t.Fatalf("session.New: %v", err)
+	}
+	defer s.Close()
+
+	src, err := session.IncidentMemorySource("inc-test")
+	if err != nil {
+		t.Fatalf("IncidentMemorySource: %v", err)
+	}
+	if src.Type != "session" || src.ID != "inc-test" {
+		t.Fatalf("source = %+v", src)
+	}
+	if src.Path != filepath.Join(home, "logs", "inc-test.jsonl") {
+		t.Fatalf("source path = %q", src.Path)
+	}
+}
+
+func TestIncidentMemorySource_MissingSession(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+	_, err := session.IncidentMemorySource("missing")
+	if err == nil {
+		t.Fatal("missing session got nil error")
+	}
+	if !strings.Contains(err.Error(), "session missing not found") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestIncidentMemorySource_RejectsPathTraversalID(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+	for _, id := range []string{"../outside", "dir/session", `dir\session`, "..", "."} {
+		_, err := session.IncidentMemorySource(id)
+		if err == nil {
+			t.Fatalf("IncidentMemorySource(%q) got nil error", id)
+		}
+		if !strings.Contains(err.Error(), "invalid id") {
+			t.Fatalf("IncidentMemorySource(%q) error = %v", id, err)
+		}
 	}
 }
 

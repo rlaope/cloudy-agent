@@ -7,6 +7,20 @@ two observation-shaping hooks (log summary, alt-guidance) protect the
 operator from expensive-but-legal calls and steer the LLM toward
 cheaper alternatives.
 
+Local cloudy-owned memory writes are outside the operational mutation surface:
+`memory.record` is the only agent-callable local memory write tool, and it only
+appends redacted environment facts to `memory.md`. HITL-approved incident case
+cards are a separate operator-controlled local store under
+`incident-memory/cards.jsonl`; approving or rejecting them never writes to
+Kubernetes, cloud providers, databases, Prometheus, logs, traces, or other
+monitored backends.
+
+The incident case-card store is intentionally optimized for a modest,
+Cloudy-owned local corpus. Cloudy serializes its own writes and caches reads by
+file metadata, but external writers or much larger corpora should introduce a
+stronger invalidation/indexing layer before relying on it as shared knowledge
+infrastructure.
+
 This document explains each layer, how they compose, and what
 defense-in-depth means in practice.
 

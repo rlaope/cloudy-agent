@@ -207,6 +207,23 @@ tools register only when their prerequisites exist.
 > **No `ruby` group.** rbspy is registered as `perf.rbspy_dump`. If
 > you are looking for Ruby profiling in `/tools`, search `perf`.
 
+### Incident memory cases
+
+`cloudy memory cases` manages a separate local incident case-card store at
+`$CLOUDY_HOME/incident-memory/cards.jsonl` (or `~/.cloudy/...`). These cards
+are operator-reviewed examples for future recall, not facts merged into
+`memory.md`.
+
+- `cloudy memory cases list --json`
+- `cloudy memory cases show <id> --json`
+- `cloudy memory cases approve <id>`
+- `cloudy memory cases reject <id>`
+
+Only approved cards are injected into the agent prompt by default, under a
+labelled prior-incident section that says the case is a reference rather than
+proof of the current root cause. Candidate and rejected cards stay out of
+default retrieval unless an explicit inspection path includes them.
+
 ### Skill playbooks (31 built-in)
 
 Skills are curated multi-step playbooks the agent picks when a

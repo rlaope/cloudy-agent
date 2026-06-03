@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/rlaope/cloudy/internal/core/llm"
 	"github.com/rlaope/cloudy/internal/core/skills"
 	"github.com/rlaope/cloudy/internal/core/tools"
+	"github.com/rlaope/cloudy/internal/incidentmemory"
 	"github.com/rlaope/cloudy/internal/session"
 )
 
@@ -139,6 +141,9 @@ type Model struct {
 	// and the TUI is waiting on a y/n keystroke. Other keys are ignored
 	// while this is set so an operator cannot drift past the decision.
 	pendingApproval *ApprovalRequest
+	// pendingMemoryReview is set when a local incident-memory candidate is
+	// waiting for explicit HITL promotion/rejection.
+	pendingMemoryReview *MemoryReviewRequest
 
 	// Ctrl+C double-tap state.
 	lastCtrlC  time.Time
@@ -485,6 +490,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, prCmd
 		}
 
+		// Memory-review gate has priority over normal key handling: while a
+		// candidate is awaiting a decision, only y/n/Esc/Ctrl+C are honoured.
+		// Other keys are swallowed so an operator cannot accidentally type past
+		// the promotion decision.
+		if m.pendingMemoryReview != nil {
+			switch msg.String() {
+			case "y", "Y":
+				return m, m.finishMemoryReview(true)
+			case "n", "N", "esc":
+				return m, m.finishMemoryReview(false)
+			case "ctrl+c":
+				m.pendingMemoryReview = nil
+			default:
+				return m, nil
+			}
+		}
+
 		// Approval gate has priority over normal key handling: while a
 		// RiskHigh tool is awaiting a decision, only y/n/Esc/Ctrl+C are
 		// honoured. Other keys are swallowed so an operator cannot
@@ -638,6 +660,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if strings.HasPrefix(val, "/scope ") {
 			return m, m.handleScopeCmd(strings.TrimPrefix(val, "/scope "))
+		}
+		if strings.HasPrefix(val, "/memory-review ") {
+			return m, m.handleMemoryReviewCmd(strings.TrimPrefix(val, "/memory-review "))
 		}
 		if val == "/setup" || strings.HasPrefix(val, "/setup ") {
 			return m, m.enterSetup()
@@ -1079,6 +1104,19 @@ func (m Model) View() string {
 		line2 := "  press [y] to approve, [n] or Esc to deny"
 		banner = approvalBannerStyle.Render(line1) + "\n" + approvalHintStyle.Render(line2)
 	}
+	if m.pendingMemoryReview != nil {
+		c := m.pendingMemoryReview.Card
+		line1 := fmt.Sprintf("incident memory review: %s (%s, confidence %.2f)",
+			c.AffectedService, c.CauseStatus, c.Confidence)
+		line2 := fmt.Sprintf("  symptoms: %s | source: %s %s | press [y] to approve, [n] or Esc to reject",
+			strings.Join(c.Symptoms, "; "), c.Source.Type, c.Source.ID)
+		memBanner := approvalBannerStyle.Render(line1) + "\n" + approvalHintStyle.Render(line2)
+		if banner == "" {
+			banner = memBanner
+		} else {
+			banner += "\n" + memBanner
+		}
+	}
 
 	// Queued user chip: pre-rendered echo of the operator's just-
 	// submitted prompt that lives in its own slot directly above the
@@ -1406,6 +1444,53 @@ func (m *Model) applyModelSwap(id string) tea.Cmd {
 	return tea.Batch(hCmd, m.writeStream(fmt.Sprintf("✓ active model: %s\n", id)))
 }
 
+func (m *Model) handleMemoryReviewCmd(raw string) tea.Cmd {
+	m.prompt.SetValue("")
+	if m.running {
+		return m.writeStream("⚠ cannot /memory-review while a turn is in flight; wait for it to finish.\n")
+	}
+	var card incidentmemory.Card
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &card); err != nil {
+		return m.writeStream(agentError("memory-review", err))
+	}
+	store := incidentmemory.NewDefaultStore()
+	card, err := store.CreateCandidate(card)
+	if err != nil {
+		return m.writeStream(agentError("memory-review", err))
+	}
+	reply := make(chan bool, 1)
+	m.pendingMemoryReview = &MemoryReviewRequest{Card: card, Store: store, Reply: reply}
+	return m.writeStream(fmt.Sprintf("incident memory candidate %s queued for review. Press y to approve, n or Esc to reject.\n", card.ID))
+}
+
+func (m *Model) finishMemoryReview(approve bool) tea.Cmd {
+	req := m.pendingMemoryReview
+	if req == nil {
+		return nil
+	}
+	m.pendingMemoryReview = nil
+	select {
+	case req.Reply <- approve:
+	default:
+	}
+	if req.Store == nil {
+		return nil
+	}
+	var (
+		card incidentmemory.Card
+		err  error
+	)
+	if approve {
+		card, err = req.Store.Approve(req.Card.ID)
+	} else {
+		card, err = req.Store.Reject(req.Card.ID)
+	}
+	if err != nil {
+		return m.writeStream(agentError("memory-review", err))
+	}
+	return m.writeStream(fmt.Sprintf("✓ incident memory %s %s\n", card.ID, card.Status))
+}
+
 // buildAllModelsPicker materialises the `/model` (no-arg) picker —
 // one row per curated model across every provider in loginProviders.
 // The hint column shows the provider name + the model's description
@@ -1680,6 +1765,13 @@ func (m *Model) handlePaletteAction(action paletteActionMsg) tea.Cmd {
 	case "help":
 		return m.writeStream(helpText())
 
+	case "memory-review":
+		m.prompt.SetValue("")
+		if action.arg == "" {
+			return m.writeStream("usage: /memory-review <incident-card-json>\n")
+		}
+		return m.handleMemoryReviewCmd(action.arg)
+
 	case "version":
 		return m.writeStream("cloudy " + buildinfo.Version + "\n")
 
@@ -1856,6 +1948,8 @@ commands (type / to open suggestions; arrow keys to pick):
   /scope ns=<csv>     narrow session to namespaces (comma-separated)
   /scope ctx=<csv>    narrow session to contexts (comma-separated)
   /scope reset        drop session scope
+  /memory-review <json>
+                      review a local incident case card for approve/reject
   /tools              list registered tool groups + skip reasons
   /replay <session>   replay session
   /clear              clear the visible screen (scrollback is preserved)

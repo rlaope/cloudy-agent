@@ -10,6 +10,8 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/rlaope/cloudy/internal/incidentmemory"
 )
 
 // AgentEvent is a discriminated union of events emitted by the agent runner.
@@ -28,6 +30,9 @@ type AgentEvent struct {
 	// is awaiting an explicit y/n decision from the operator. The TUI sends
 	// the decision back via Reply; the agent goroutine blocks until then.
 	Approval *ApprovalRequest
+	// MemoryReview is non-nil when a local incident-memory candidate is
+	// awaiting explicit operator promotion or rejection.
+	MemoryReview *MemoryReviewRequest
 }
 
 // ApprovalRequest is the payload of an AgentEvent that asks the operator to
@@ -36,6 +41,13 @@ type AgentEvent struct {
 type ApprovalRequest struct {
 	Tool  string
 	Args  string
+	Reply chan<- bool
+}
+
+// MemoryReviewRequest is the TUI HITL gate for incident-memory candidates.
+type MemoryReviewRequest struct {
+	Card  incidentmemory.Card
+	Store *incidentmemory.Store
 	Reply chan<- bool
 }
 
@@ -257,6 +269,10 @@ func (m *Model) applyAgentEvent(evt AgentEvent) tea.Cmd {
 		// goroutine stays blocked on Reply.
 		m.dismissOpenOverlays()
 		m.pendingApproval = evt.Approval
+	}
+	if evt.MemoryReview != nil {
+		m.dismissOpenOverlays()
+		m.pendingMemoryReview = evt.MemoryReview
 	}
 
 	return tea.Batch(cmds...)

@@ -11,6 +11,7 @@ cloudy skills --json
 cloudy setup --auto --dry-run
 cloudy doctor --json
 cloudy tools --json
+cloudy memory cases list --json
 ```
 
 Expected results:
@@ -19,7 +20,8 @@ Expected results:
 - `skills --json` emits the built-in/user skill inventory;
 - setup dry-run completes without writing files;
 - doctor reports actionable failures instead of panicking;
-- tools JSON includes skipped groups with reasons when no backends are configured.
+- tools JSON includes skipped groups with reasons when no backends are configured;
+- incident memory cases JSON works on a fresh install and returns an empty list.
 
 ## Optional Credentialed Checks
 

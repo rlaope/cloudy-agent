@@ -62,6 +62,8 @@ const (
 		"- `/use`     — switch the active kubeconfig context (e.g. `/use prod-east`).\n" +
 		"- `/tools`   — list the tool groups currently wired plus the reason " +
 		"any skipped group was skipped.\n" +
+		"- `/memory-review` — review a local incident case-card JSON for HITL " +
+		"approval or rejection; writes only cloudy's local incident-memory store.\n" +
 		"- `/clear`   — wipe the visible screen only; the conversation history " +
 		"is kept (Ctrl+L is the shortcut). Use `/new` to also reset memory.\n" +
 		"- `/compact` — summarize the older turns into one note and drop them, " +
@@ -238,6 +240,10 @@ type Options struct {
 	// starts already knowing facts it recorded in earlier sessions. Empty =
 	// nothing injected (fresh install, or the caller did not load memory).
 	EnvironmentMemory string
+	// SimilarIncidentCases is a pre-rendered, approved-only incident memory
+	// reference block. It is deliberately separate from EnvironmentMemory:
+	// prior cases are examples to compare against, not current diagnosis.
+	SimilarIncidentCases string
 	// Plan, when true, appends an investigation-planning directive to the
 	// system prompt: the agent opens any multi-step request with a brief
 	// hypothesis plan (symptom → candidate causes → the read-only probe for
@@ -725,6 +731,10 @@ func (a *Agent) buildSystemPrompt(reg *tools.Registry, skill resolvedSkill) stri
 			"sessions. Treat them as trusted background, but re-verify with tools when a fact may " +
 			"be stale:\n")
 		sb.WriteString(a.opts.EnvironmentMemory)
+	}
+	if a.opts.SimilarIncidentCases != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(a.opts.SimilarIncidentCases)
 	}
 	// Skill catalog (all skills by name + description) is listed ONLY when no
 	// skill is active. Once the operator has switched into a skill — its full
