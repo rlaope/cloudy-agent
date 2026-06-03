@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rlaope/cloudy/internal/core/tools"
 	memstore "github.com/rlaope/cloudy/internal/memory"
 )
 
@@ -67,5 +68,11 @@ func TestRecordTool_EmptyFactRecordsNothing(t *testing.T) {
 	}
 	if stored, _ := memstore.Load(); stored != "" {
 		t.Errorf("empty fact must not write, got %q", stored)
+	}
+}
+
+func TestRecordToolRequiresApproval(t *testing.T) {
+	if got := tools.RiskOf(newRecordTool()); got != tools.RiskHigh {
+		t.Fatalf("memory.record risk = %s, want high so TUI shows y/n HITL before writing local memory", got)
 	}
 }

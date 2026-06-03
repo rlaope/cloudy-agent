@@ -1,12 +1,14 @@
 package tools
 
 // RiskLevel classifies a tool by how much it perturbs the system being
-// observed. Read-only enforcement at the transport / kube-verb layer is
-// necessary but not sufficient — some permitted reads still trigger
-// stop-the-world pauses (jcmd class_histogram on a large heap), attach
-// non-trivial probes (async-profiler, eBPF), or sample for many seconds
-// (perf record). ApprovalHook uses RiskLevel to decide which calls require
-// explicit operator consent before the agent dispatches them.
+// observed OR writes durable local state. Read-only enforcement at the
+// transport / kube-verb layer is necessary but not sufficient — some permitted
+// reads still trigger stop-the-world pauses (jcmd class_histogram on a large
+// heap), attach non-trivial probes (async-profiler, eBPF), or sample for many
+// seconds (perf record). Local side effects such as memory.record also require
+// explicit operator consent because they change future sessions. ApprovalHook
+// uses RiskLevel to decide which calls require explicit operator consent before
+// the agent dispatches them.
 type RiskLevel int
 
 const (
@@ -16,8 +18,9 @@ const (
 	RiskLow
 	// RiskMedium: short profiling windows or wide-scope queries.
 	RiskMedium
-	// RiskHigh: STW pause, long profiling window, attached probe, or a
-	// cluster-wide scan. ApprovalHook gates these behind explicit consent.
+	// RiskHigh: STW pause, long profiling window, attached probe,
+	// cluster-wide scan, or durable local write. ApprovalHook gates these
+	// behind explicit consent.
 	RiskHigh
 )
 
@@ -60,12 +63,14 @@ func RiskOf(t Tool) RiskLevel {
 }
 
 // riskByName is the curated allowlist of tools known to cause STW pauses,
-// require long sampling windows, or attach probes that distort the system.
-// Mirrors the isProfileTool set used by LimitGuardHook plus jvm.jcmd_gc,
-// whose class-histogram pass can stall a large heap.
+// require long sampling windows, attach probes that distort the system, or
+// write durable local state. Mirrors the isProfileTool set used by
+// LimitGuardHook plus jvm.jcmd_gc, whose class-histogram pass can stall a large
+// heap.
 func riskByName(name string) RiskLevel {
 	switch name {
 	case "jvm.async_profile",
+		"memory.record",
 		"jvm.jcmd_gc",
 		"perf.linux_perf_record",
 		"perf.v8_inspector_cpu_profile",

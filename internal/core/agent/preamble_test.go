@@ -80,6 +80,8 @@ func TestSystemPreamble_SelfKnowledge(t *testing.T) {
 		// data — don't present "all-clear" when the diagnostic tools failed.
 		"unverified",
 		"cannot determine",
+		"do not ask in prose whether to record",
+		"y/n approval gate",
 	}
 	for _, want := range required {
 		if !strings.Contains(sys, want) {
