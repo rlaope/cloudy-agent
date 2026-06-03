@@ -72,3 +72,21 @@ func TestStreamModel_TickAfterEndIsNoop(t *testing.T) {
 		t.Error("pendingTool must remain nil after end+late-tick")
 	}
 }
+
+func TestStreamModel_MemoryRecordObservationUsesCallout(t *testing.T) {
+	s := newStreamModel(true)
+	s.vp.Width = 64
+	s2, _ := s.Update(streamToolBeginMsg{name: "memory.record", args: "{}"})
+	s3, _ := s2.Update(streamToolEndMsg{observation: memoryRecordedPrefix + " checkout-api root cause summary is long enough to wrap into a report-style note."})
+	out := stripANSI(s3.content.String())
+
+	if !strings.Contains(out, "╭─ memory") {
+		t.Fatalf("memory.record output should be rendered as a subdued callout; got %q", out)
+	}
+	if strings.Contains(out, "Recorded to cross-session memory:") {
+		t.Fatalf("memory.record implementation prefix should not be shown verbatim; got %q", out)
+	}
+	if !strings.Contains(out, "checkout-api root cause") {
+		t.Fatalf("callout should preserve the recorded fact; got %q", out)
+	}
+}

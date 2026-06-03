@@ -687,7 +687,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// order if a turn happens to be playing back with a non-empty queue.
 		// Slash commands stay live so /cancel, /model, /compact act immediately.
 		if !strings.HasPrefix(val, "/") && (m.running || len(m.queuedInputs) > 0) {
-			echo := userEchoStyle.Render("> " + val)
+			echo := formatUserEcho(val, m.width)
 			m.pendingUserEcho += "\n" + echo + "\n"
 			m.queuedInputs = append(m.queuedInputs, val)
 			return m, nil
@@ -710,7 +710,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// so a second submit while the agent is still working stacks
 		// below the first, matching Claude Code's "you can keep
 		// typing follow-ups while a reply is in flight" behaviour.
-		echo := userEchoStyle.Render("> " + val)
+		echo := formatUserEcho(val, m.width)
 		m.pendingUserEcho += "\n" + echo + "\n"
 
 		// Setup gate: refuse to dispatch when no model has been picked.
