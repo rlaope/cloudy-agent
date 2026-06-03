@@ -42,3 +42,15 @@ func TestPendingUserEcho_StacksMultipleSubmits(t *testing.T) {
 		t.Errorf("chips should be in submission order; first@%d second@%d", firstIdx, secondIdx)
 	}
 }
+
+func TestFormatUserEcho_WrapsLongPrompt(t *testing.T) {
+	long := "checkout-api가 최근 배포 이후로 느려지고 일부 요청이 실패하는 것 같아. kind-cloudy-test 클러스터의 cloudy-shop 네임스페이스를 중심으로 확인해줘."
+	echo := formatUserEcho(long, 56)
+	plain := stripANSI(echo)
+	if !strings.Contains(plain, "checkout-api") {
+		t.Fatalf("echo should keep the submitted prompt text; got %q", plain)
+	}
+	if strings.Count(plain, "\n") == 0 {
+		t.Fatalf("long prompt echo should wrap instead of clipping to one row; got %q", plain)
+	}
+}

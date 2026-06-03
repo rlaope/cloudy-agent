@@ -25,6 +25,8 @@ const tickInterval = time.Second
 // fresh copy of the whole accumulated buffer.
 const streamFlushInterval = 16 * time.Millisecond
 
+const defaultMarkdownWrap = 100
+
 // streamToolTickMsg is delivered once per tickInterval while a tool call is
 // in flight, prompting the stream model to refresh the header's [MM:SS] suffix.
 type streamToolTickMsg struct{}
@@ -76,6 +78,8 @@ type toolBlock struct {
 	err         error
 	folded      bool
 }
+
+const memoryRecordedPrefix = "Recorded to cross-session memory:"
 
 // StreamModel backs the scrollable output area using a bubbles/viewport.
 //
@@ -190,11 +194,31 @@ func newStreamModel(noColor bool) StreamModel {
 		mdBuf:         &strings.Builder{},
 	}
 	if !noColor {
+		s.mdRenderer = newMarkdownRenderer(defaultMarkdownWrap)
 		s.toolStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 		s.obsStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 		s.errStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	}
 	return s
+}
+
+func markdownWrap(width int) int {
+	wrap := width - 2
+	if wrap < 20 {
+		wrap = 20
+	}
+	return wrap
+}
+
+func newMarkdownRenderer(wrap int) *glamour.TermRenderer {
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(wrap),
+	)
+	if err != nil {
+		return nil
+	}
+	return r
 }
 
 // drainPending flushes any batched tokens into the live content buffer
@@ -322,11 +346,35 @@ func (s *StreamModel) renderAssistantTail(raw string) string {
 	if s.noColor || s.mdRenderer == nil {
 		return raw
 	}
-	out, err := s.mdRenderer.Render(raw)
+	out, err := s.mdRenderer.Render(cleanAssistantMarkdown(raw))
 	if err != nil {
 		return raw
 	}
 	return out
+}
+
+func cleanAssistantMarkdown(raw string) string {
+	lines := strings.Split(raw, "\n")
+	inFence := false
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " 	")
+		if strings.HasPrefix(trimmed, "```") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		hashes := 0
+		for hashes < len(trimmed) && hashes < 6 && trimmed[hashes] == '#' {
+			hashes++
+		}
+		if hashes > 0 && hashes < len(trimmed) && (trimmed[hashes] == ' ' || trimmed[hashes] == '	') {
+			indent := line[:len(line)-len(trimmed)]
+			lines[i] = indent + strings.TrimSpace(trimmed[hashes+1:])
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // finalizeAssistantBlock locks in the currently-rendered assistant tail
@@ -374,10 +422,6 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 		// on terminal background. noColor mode keeps the renderer nil so
 		// drainPending writes raw markdown instead.
 		if !s.noColor {
-			wrap := m.Width - 2
-			if wrap < 20 {
-				wrap = 20
-			}
 			// Pin a static style instead of WithAutoStyle: auto-detect
 			// fires an OSC 11 background-color query at the terminal,
 			// and in inline mode (no alt-screen) the terminal's response
@@ -385,11 +429,7 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 			// literal `]11;rgb:….` string. The dark style is the right
 			// default for a developer terminal; light terminals can be
 			// added behind an env var if anyone asks.
-			r, err := glamour.NewTermRenderer(
-				glamour.WithStandardStyle("dark"),
-				glamour.WithWordWrap(wrap),
-			)
-			if err == nil {
+			if r := newMarkdownRenderer(markdownWrap(m.Width)); r != nil {
 				s.mdRenderer = r
 				// If an assistant message is currently in flight,
 				// re-render its committed prefix under the new width
@@ -508,7 +548,9 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 		s.drainPending()
 		s.finalizeAssistantBlock()
 		wasAtBottom := !s.ready || s.vp.AtBottom()
+		toolName := ""
 		if s.pendingTool != nil {
+			toolName = s.pendingTool.name
 			s.pendingTool.observation = m.observation
 			s.pendingTool.err = m.err
 			s.pendingTool = nil
@@ -521,15 +563,19 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 			s.content.WriteString(errLine + "\n")
 		}
 		if m.observation != "" {
-			// Fold first so the rail glyph from indentObs is applied
-			// after the head/tail/marker shape is decided. Otherwise
-			// the "[… hidden …]" marker would land without the leading
-			// indent and visually break the continuation rail.
-			obs := indentObs(foldLongObservation(m.observation))
-			if !s.noColor {
-				obs = s.obsStyle.Render(obs)
+			if callout := s.renderSpecialObservation(toolName, m.observation); callout != "" {
+				s.content.WriteString(callout + "\n")
+			} else {
+				// Fold first so the rail glyph from indentObs is applied
+				// after the head/tail/marker shape is decided. Otherwise
+				// the "[… hidden …]" marker would land without the leading
+				// indent and visually break the continuation rail.
+				obs := indentObs(foldLongObservation(m.observation))
+				if !s.noColor {
+					obs = s.obsStyle.Render(obs)
+				}
+				s.content.WriteString(obs + "\n")
 			}
-			s.content.WriteString(obs + "\n")
 		}
 		if s.ready {
 			s.vp.SetContent(s.content.String())
@@ -564,6 +610,41 @@ func (s StreamModel) View() string {
 		return ""
 	}
 	return s.vp.View()
+}
+
+func (s StreamModel) renderSpecialObservation(toolName, observation string) string {
+	if toolName != "memory.record" || !strings.HasPrefix(observation, memoryRecordedPrefix) {
+		return ""
+	}
+	fact := strings.TrimSpace(strings.TrimPrefix(observation, memoryRecordedPrefix))
+	if fact == "" {
+		fact = strings.TrimSpace(observation)
+	}
+	width := s.vp.Width - 6
+	if width < 36 {
+		width = 36
+	}
+	if s.noColor {
+		body := lipgloss.NewStyle().Width(width - 4).Render(fact)
+		return "   ╭─ memory\n" + prefixLines(body, "   │ ") + "\n   ╰─ saved to cross-session memory"
+	}
+	label := lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true).Render("memory")
+	body := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245")).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("66")).
+		Padding(0, 1).
+		Width(width).
+		Render(label + "  " + fact)
+	return "   " + strings.ReplaceAll(body, "\n", "\n   ")
+}
+
+func prefixLines(text, prefix string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 // SetViewportSize lets the parent Model push an exact body width/height
