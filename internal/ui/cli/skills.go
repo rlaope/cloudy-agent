@@ -77,20 +77,20 @@ func (skillsCmd) Run(_ context.Context, args []string, stdout, stderr io.Writer)
 		return nil
 
 	case "show":
-		if len(rest) < 1 {
-			return errf("usage: cloudy skills show <name>")
-		}
-		s, ok := reg.Get(rest[0])
-		if !ok {
-			return errf("unknown skill: %s", rest[0])
-		}
 		var opts skillsOptions
-		pos, err := parseInto(&opts, "skills show", rest[1:], stderr)
+		pos, err := parseInto(&opts, "skills show", reorderSkillsShowArgs(rest), stderr)
 		if err != nil {
 			return err
 		}
-		if len(pos) > 0 {
-			return errf("unexpected skills show argument: %s", pos[0])
+		if len(pos) < 1 {
+			return errf("usage: cloudy skills show <name>")
+		}
+		if len(pos) > 1 {
+			return errf("unexpected skills show argument: %s", pos[1])
+		}
+		s, ok := reg.Get(pos[0])
+		if !ok {
+			return errf("unknown skill: %s", pos[0])
 		}
 		if opts.base.asJSON {
 			return json.NewEncoder(stdout).Encode(skillToJSON(s))
@@ -126,6 +126,31 @@ func findSkillsSubcommand(args []string) int {
 		}
 	}
 	return -1
+}
+
+func reorderSkillsShowArgs(args []string) []string {
+	flags := make([]string, 0, len(args))
+	pos := make([]string, 0, 1)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--context" || arg == "--kubeconfig":
+			flags = append(flags, arg)
+			if i+1 < len(args) {
+				flags = append(flags, args[i+1])
+				i++
+			}
+		case strings.HasPrefix(arg, "--context=") || strings.HasPrefix(arg, "--kubeconfig="):
+			flags = append(flags, arg)
+		case arg == "--json" || arg == "--no-color":
+			flags = append(flags, arg)
+		case strings.HasPrefix(arg, "-"):
+			flags = append(flags, arg)
+		default:
+			pos = append(pos, arg)
+		}
+	}
+	return append(flags, pos...)
 }
 
 type skillJSON struct {

@@ -156,17 +156,27 @@ func TestSkillsCmd_ListJSON(t *testing.T) {
 func TestSkillsCmd_ShowJSON(t *testing.T) {
 	t.Setenv("CLOUDY_HOME", t.TempDir())
 
-	var out bytes.Buffer
-	if err := (skillsCmd{}).Run(context.Background(), []string{"--json", "show", "cluster-recon"}, &out, io.Discard); err != nil {
-		t.Fatalf("skills show --json: %v", err)
+	cases := [][]string{
+		{"--json", "show", "cluster-recon"},
+		{"show", "--json", "cluster-recon"},
+		{"show", "cluster-recon", "--json"},
 	}
+	for _, args := range cases {
+		args := args
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var out bytes.Buffer
+			if err := (skillsCmd{}).Run(context.Background(), args, &out, io.Discard); err != nil {
+				t.Fatalf("skills show JSON: %v", err)
+			}
 
-	var row map[string]any
-	if err := json.Unmarshal(out.Bytes(), &row); err != nil {
-		t.Fatalf("skills show output is not JSON: %v\n%s", err, out.String())
-	}
-	if row["name"] != "cluster-recon" {
-		t.Fatalf("skill name = %v, want cluster-recon", row["name"])
+			var row map[string]any
+			if err := json.Unmarshal(out.Bytes(), &row); err != nil {
+				t.Fatalf("skills show output is not JSON: %v\n%s", err, out.String())
+			}
+			if row["name"] != "cluster-recon" {
+				t.Fatalf("skill name = %v, want cluster-recon", row["name"])
+			}
+		})
 	}
 }
 
