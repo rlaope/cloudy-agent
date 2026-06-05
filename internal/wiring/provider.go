@@ -9,6 +9,7 @@ import (
 
 	// Register all provider adapters via side-effect imports.
 	_ "github.com/rlaope/cloudy/internal/core/llm/anthropic"
+	_ "github.com/rlaope/cloudy/internal/core/llm/codex"
 	_ "github.com/rlaope/cloudy/internal/core/llm/google"
 	_ "github.com/rlaope/cloudy/internal/core/llm/moonshot"
 	_ "github.com/rlaope/cloudy/internal/core/llm/openai"
@@ -63,6 +64,8 @@ func wellKnownKeyEnv(provider string) string {
 		return "ANTHROPIC_API_KEY"
 	case "openai":
 		return "OPENAI_API_KEY"
+	case "codex":
+		return "CODEX_API_KEY"
 	case "google":
 		return "GOOGLE_API_KEY"
 	case "moonshot":

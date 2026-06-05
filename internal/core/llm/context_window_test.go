@@ -11,6 +11,8 @@ func TestContextWindow(t *testing.T) {
 		{"claude-opus-4-8", 200_000},
 		{"gpt-4o-mini", 128_000},
 		{"gpt-4.1", 1_000_000}, // narrower prefix wins over gpt-
+		{"codex/gpt-4.1", 1_000_000},
+		{"codex/gpt-5.5", 128_000},
 		{"o3-mini", 200_000},
 		{"gemini-1.5-pro", 1_000_000},
 		{"gemini-2.0-flash", 1_000_000},

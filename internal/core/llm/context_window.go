@@ -32,6 +32,9 @@ var contextWindows = []struct {
 // by prefix. Unknown models fall back to defaultContextWindow so callers
 // (e.g. the TUI's context-usage gauge) always get a usable denominator.
 func ContextWindow(model string) int {
+	if strings.HasPrefix(model, "codex/") {
+		return ContextWindow(strings.TrimPrefix(model, "codex/"))
+	}
 	for _, entry := range contextWindows {
 		if strings.HasPrefix(model, entry.prefix) {
 			return entry.window

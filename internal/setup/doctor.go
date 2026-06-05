@@ -150,10 +150,15 @@ func guessProvider(model string) string {
 	switch {
 	case strings.HasPrefix(model, "claude"):
 		return "anthropic"
-	case strings.HasPrefix(model, "gpt") || strings.HasPrefix(model, "o1") || strings.HasPrefix(model, "o3"):
+	case strings.HasPrefix(model, "codex/"):
+		return "codex"
+	case strings.HasPrefix(model, "gpt") || strings.HasPrefix(model, "o1") || strings.HasPrefix(model, "o3") ||
+		strings.HasPrefix(model, "o4"):
 		return "openai"
 	case strings.HasPrefix(model, "gemini"):
 		return "google"
+	case strings.HasPrefix(model, "kimi") || strings.HasPrefix(model, "moonshot"):
+		return "moonshot"
 	default:
 		return "anthropic"
 	}
@@ -166,8 +171,12 @@ func wellKnownEnvVar(provider string) string {
 		return "ANTHROPIC_API_KEY"
 	case "openai":
 		return "OPENAI_API_KEY"
+	case "codex":
+		return "CODEX_API_KEY"
 	case "google":
 		return "GOOGLE_API_KEY"
+	case "moonshot":
+		return "MOONSHOT_API_KEY"
 	default:
 		return ""
 	}

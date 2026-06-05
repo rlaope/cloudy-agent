@@ -51,8 +51,8 @@ const (
 		"Jaeger / Postgres / MySQL / Redis endpoints, lets the operator pick " +
 		"which to enable, then writes `~/.cloudy/config.yaml` plus a " +
 		"`profile.yaml` scan snapshot. Hot-swaps the tool registry — no restart.\n" +
-		"- `/login`   — pick an LLM provider (Anthropic / OpenAI / Google / " +
-		"Moonshot / OpenAI-compatible), paste an API key, choose a model. " +
+		"- `/login`   — pick an LLM provider (Anthropic / OpenAI / Codex / " +
+		"Google / Moonshot / OpenAI-compatible), paste an API key, choose a model. " +
 		"Saves to `~/.cloudy/secrets` (mode 0600).\n" +
 		"- `/model`   — swap the active LLM model mid-session.\n" +
 		"- `/skill`   — switch the active skill playbook (filters tools to " +

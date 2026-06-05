@@ -102,7 +102,7 @@ type Registry struct {
 	llmAliasMu sync.RWMutex
 	// llmAlias maps a sanitized (LLM-safe) tool name back to its original
 	// dotted form. Populated by ToolsFor when a provider's tool-name regex
-	// rejects '.' (Anthropic / OpenAI / Google / Moonshot all do — they
+	// rejects '.' (Anthropic / OpenAI / Codex / Google / Moonshot all do — they
 	// require ^[a-zA-Z0-9_-]{1,64}$). The agent's Get() consults this map
 	// as a fallback so tool_use calls from the model resolve back to the
 	// real tool regardless of which spelling the wire carried.
@@ -267,8 +267,8 @@ func groupOf(name string) string {
 
 // ToolsFor converts the registry contents to llm.Tool descriptors suitable
 // for inclusion in an llm.Request. When the provider requires LLM-safe
-// names (currently all four hosted adapters — anthropic, openai, google,
-// moonshot — enforce ^[a-zA-Z0-9_-]{1,64}$), '.' in the canonical tool
+// names (hosted adapters — anthropic, openai, codex, google, moonshot —
+// enforce ^[a-zA-Z0-9_-]{1,64}$), '.' in the canonical tool
 // name is rewritten to '_' for the wire and a reverse alias is recorded
 // so the agent's Get() resolves the tool_use echo back to the real tool.
 //
@@ -310,12 +310,12 @@ func (r *Registry) ToolsFor(provider string) []llm.Tool {
 }
 
 // providerNeedsSafeNames reports whether the named LLM provider requires
-// tool names to match ^[a-zA-Z0-9_-]+$ (no '.'). All four hosted adapters
-// do; openai_compat passes through to user-controlled backends so we
+// tool names to match ^[a-zA-Z0-9_-]+$ (no '.'). Hosted adapters do;
+// openai_compat passes through to user-controlled backends so we
 // leave names alone there.
 func providerNeedsSafeNames(provider string) bool {
 	switch provider {
-	case "anthropic", "openai", "google", "moonshot":
+	case "anthropic", "openai", "codex", "google", "moonshot":
 		return true
 	default:
 		return false

@@ -15,8 +15,10 @@ import (
 // makeProvider returns a provider pointed at the given test server URL.
 func makeProvider(baseURL, apiKey string) *provider {
 	return &provider{
+		name:    defaultName,
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
+		keyEnv:  defaultKeyEnv,
 		client:  &http.Client{Transport: http.DefaultTransport},
 	}
 }

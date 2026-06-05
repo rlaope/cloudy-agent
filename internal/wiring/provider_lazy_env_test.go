@@ -41,6 +41,7 @@ func TestBuildProvider_PostStartupKey_NotRejectedAsMissing(t *testing.T) {
 		{"anthropic", "claude-3-5-sonnet-20241022", "ANTHROPIC_API_KEY"},
 		{"google", "gemini-2.5-flash", "GOOGLE_API_KEY"},
 		{"openai", "gpt-4o-mini", "OPENAI_API_KEY"},
+		{"codex", "codex/gpt-5.5", "CODEX_API_KEY"},
 		{"moonshot", "kimi-k2-instruct", "MOONSHOT_API_KEY"},
 	}
 

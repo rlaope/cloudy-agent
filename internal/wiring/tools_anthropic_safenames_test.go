@@ -16,7 +16,7 @@ import (
 //	 {"type":"error","error":{"type":"invalid_request_error",
 //	  "message":"tools.0.custom.name: String should match …"}}]
 //
-// Anthropic, OpenAI, Google, and Moonshot all require tool names to
+// Anthropic, OpenAI, Codex, Google, and Moonshot all require tool names to
 // match ^[a-zA-Z0-9_-]{1,64}$ — '.' is not allowed. Every cloudy
 // tool is named with a "<group>.<verb>" pattern, so the previous
 // pass-through ToolsFor sent invalid names on the wire and the
@@ -32,6 +32,7 @@ func TestToolsFor_AnthropicSafeNames(t *testing.T) {
 	// don't actually call the network.
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("CODEX_API_KEY", "test-key")
 	t.Setenv("GOOGLE_API_KEY", "test-key")
 	t.Setenv("MOONSHOT_API_KEY", "test-key")
 
@@ -53,6 +54,7 @@ func TestToolsFor_AnthropicSafeNames(t *testing.T) {
 	}{
 		{"claude-3-5-sonnet-20241022", true},
 		{"gpt-4o-mini", true},
+		{"codex/gpt-5.5", true},
 		{"gemini-2.5-flash", true},
 		{"kimi-k2-instruct", true},
 		{"local/llama3", false}, // openai_compat — pass-through

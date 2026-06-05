@@ -54,6 +54,20 @@ func TestLoginChat_NameSelection(t *testing.T) {
 	}
 }
 
+func TestLoginChat_CodexSelection(t *testing.T) {
+	chat, _ := newLoginChat()
+	res := chat.Step("codex")
+	if res.done {
+		t.Error("step 0 with codex should not be done")
+	}
+	if !strings.Contains(res.out, "CODEX_API_KEY") {
+		t.Errorf("step 0 should advance to codex key prompt, got: %q", res.out)
+	}
+	if chat.provider != "codex" {
+		t.Errorf("provider should be 'codex', got %q", chat.provider)
+	}
+}
+
 // TestLoginChat_BadInput_Retries confirms unknown numbers and names
 // keep the conversation on step 0 with a helpful retry message.
 func TestLoginChat_BadInput_Retries(t *testing.T) {
@@ -191,7 +205,7 @@ func TestLoginProviders_AllHaveModels(t *testing.T) {
 //
 // API roundtrip is not exercised — that's intentional: real LLM calls
 // from CI would burn money and leak the test runner's outbound IP.
-// The wire-format sanitization regression for all four providers is
+// The wire-format sanitization regression for hosted providers is
 // covered separately in internal/wiring/tools_anthropic_safenames_test.go.
 func TestLoginChat_FullFlow_AllProviders(t *testing.T) {
 	t.Setenv("CLOUDY_HOME", t.TempDir())

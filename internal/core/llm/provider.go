@@ -107,6 +107,7 @@ var prefixMap = []struct {
 	prefix   string
 	provider string
 }{
+	{"codex/", "codex"},
 	{"gpt-", "openai"},
 	{"o1-", "openai"},
 	{"o3", "openai"},
@@ -120,7 +121,7 @@ var prefixMap = []struct {
 
 // Resolve picks the correct Provider for the given model string, returning
 // (provider, modelID, error). The returned modelID has any routing prefix
-// (currently only "local/") stripped.
+// ("codex/" or "local/") stripped.
 func Resolve(model string) (Provider, string, error) {
 	for _, entry := range prefixMap {
 		if strings.HasPrefix(model, entry.prefix) {
@@ -129,8 +130,8 @@ func Resolve(model string) (Provider, string, error) {
 				return nil, "", fmt.Errorf("llm: provider %q not registered (did you import its package?)", entry.provider)
 			}
 			modelID := model
-			if entry.prefix == "local/" {
-				modelID = strings.TrimPrefix(model, "local/")
+			if entry.prefix == "codex/" || entry.prefix == "local/" {
+				modelID = strings.TrimPrefix(model, entry.prefix)
 			}
 			return p, modelID, nil
 		}
