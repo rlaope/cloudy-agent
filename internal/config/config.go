@@ -24,7 +24,7 @@ type Config struct {
 	DefaultModel string `yaml:"default_model"`
 
 	// Providers holds per-provider API key and base-URL settings keyed by
-	// provider name (e.g. "anthropic", "openai").
+	// provider name (e.g. "anthropic", "openai", "codex").
 	Providers map[string]ProviderConfig `yaml:"providers"`
 
 	// Prometheus is the list of Prometheus endpoints the agent may query.

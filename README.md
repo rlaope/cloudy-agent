@@ -89,8 +89,8 @@ The TUI opens. Two commands get you to the first question:
    MySQL / Redis / pprof / V8 inspector endpoints, lets you pick which
    to enable inline, then writes `~/.cloudy/config.yaml` plus a
    `profile.yaml` snapshot of the scan. No restart.
-2. **`/login`** — picks an LLM provider (Anthropic / OpenAI / Google /
-   Moonshot) with arrow keys and saves the API key to
+2. **`/login`** — picks an LLM provider (Anthropic / OpenAI / Codex /
+   Google / Moonshot) with arrow keys and saves the API key to
    `~/.cloudy/secrets` (mode `0600`). The chosen model is active
    immediately; `/model <id>` swaps mid-session.
 
@@ -271,6 +271,7 @@ Bring your own key. Picked at `/login`, swappable mid-session with
 | -------------------- | --------------------- | ------------------ |
 | Anthropic            | `ANTHROPIC_API_KEY`   | `claude-*`         |
 | OpenAI               | `OPENAI_API_KEY`      | `gpt-*`, `o1-*`    |
+| Codex                | `CODEX_API_KEY`       | `codex/*`          |
 | Google Gemini        | `GOOGLE_API_KEY`      | `gemini-*`         |
 | Moonshot / Kimi      | `MOONSHOT_API_KEY`    | `kimi-*`           |
 | OpenAI-compatible    | `OPENAI_BASE_URL`     | any                |

@@ -4,6 +4,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/rlaope/cloudy/internal/config"
+	"github.com/rlaope/cloudy/internal/wiring"
 )
 
 // TestLoginChat_KeySave_ReturnsSwapToModel locks in the contract the
@@ -80,6 +83,47 @@ func TestApplyLoginResult_InvokesSwap(t *testing.T) {
 	if m.deps.Model != "gemini-2.5-flash" {
 		t.Errorf("deps.Model = %q, want %q (post-swap update)",
 			m.deps.Model, "gemini-2.5-flash")
+	}
+}
+
+func TestMakeSwapModel_PersistsRoutingModelForCodex(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+	t.Setenv("CODEX_API_KEY", "test-key")
+
+	ref := &providerRef{}
+	swap := makeSwapModel(ref, "")
+	if err := swap("codex/gpt-5.5"); err != nil {
+		t.Fatalf("swap codex model: %v", err)
+	}
+
+	provider, runtimeModel := ref.get()
+	if provider == nil {
+		t.Fatal("providerRef provider is nil after swap")
+	}
+	if provider.Name() != "codex" {
+		t.Errorf("providerRef provider = %q, want codex", provider.Name())
+	}
+	if runtimeModel != "gpt-5.5" {
+		t.Errorf("runtime wire model = %q, want stripped gpt-5.5", runtimeModel)
+	}
+
+	cfg, err := config.Load(config.Path())
+	if err != nil {
+		t.Fatalf("load persisted config: %v", err)
+	}
+	if cfg.DefaultModel != "codex/gpt-5.5" {
+		t.Fatalf("DefaultModel = %q, want codex/gpt-5.5", cfg.DefaultModel)
+	}
+
+	resolvedProvider, resolvedModel, err := wiring.BuildProvider(cfg.DefaultModel)
+	if err != nil {
+		t.Fatalf("BuildProvider persisted model: %v", err)
+	}
+	if resolvedProvider.Name() != "codex" {
+		t.Errorf("persisted model provider = %q, want codex", resolvedProvider.Name())
+	}
+	if resolvedModel != "gpt-5.5" {
+		t.Errorf("persisted model wire id = %q, want gpt-5.5", resolvedModel)
 	}
 }
 

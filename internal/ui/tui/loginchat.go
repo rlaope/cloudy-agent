@@ -9,7 +9,7 @@ import (
 )
 
 // lookupLoginProvider resolves either a 1-based index ("1", "2", …)
-// or a canonical provider name ("anthropic", "openai", …) into the
+// or a canonical provider name ("anthropic", "openai", "codex", …) into the
 // matching loginProviders entry. Returns ok=false on any miss.
 func lookupLoginProvider(input string) (loginProvider, bool) {
 	input = strings.ToLower(strings.TrimSpace(input))
@@ -30,7 +30,7 @@ func lookupLoginProvider(input string) (loginProvider, bool) {
 // loginChat is a three-step conversation that walks the operator
 // through connecting an LLM:
 //
-//  1. provider     — pick anthropic / openai / google / moonshot (arrow picker)
+//  1. provider     — pick anthropic / openai / codex / google / moonshot (arrow picker)
 //  2. key          — paste the API key (text input, saved to ~/.cloudy/secrets)
 //  3. model        — pick the specific model id from a curated, current
 //     lineup for the chosen provider (arrow picker)
@@ -40,7 +40,7 @@ func lookupLoginProvider(input string) (loginProvider, bool) {
 // the parent uses to activate the new provider.
 type loginChat struct {
 	step     int
-	provider string // one of: anthropic, openai, google, moonshot
+	provider string // one of: anthropic, openai, codex, google, moonshot
 }
 
 // Named steps for loginChat.step. Matches setupChat's naming style so
@@ -97,6 +97,17 @@ var loginProviders = []loginProvider{
 			{"gpt-5.4", "GPT-5.4 — more affordable flagship"},
 			{"gpt-5.4-mini", "GPT-5.4 mini — fast & cheap"},
 			{"o3", "o3 — reasoning"},
+		},
+	},
+	{
+		key:    "codex",
+		envVar: "CODEX_API_KEY",
+		hint:   "Codex — GPT coding models",
+		models: []loginModel{
+			{"codex/gpt-5.5", "Codex GPT-5.5 — most capable"},
+			{"codex/gpt-5.4", "Codex GPT-5.4 — balanced"},
+			{"codex/gpt-5.4-mini", "Codex GPT-5.4 mini — fast & cheap"},
+			{"codex/gpt-5.3-codex-spark", "Codex Spark — fastest"},
 		},
 	},
 	{
@@ -195,7 +206,7 @@ func (l *loginChat) Step(input string) loginResult {
 		if !ok {
 			return loginResult{
 				out: fmt.Sprintf("unknown provider %q. Type a number 1-%d, a name "+
-					"(anthropic / openai / google / moonshot), or 'cancel':\n",
+					"(anthropic / openai / codex / google / moonshot), or 'cancel':\n",
 					input, len(loginProviders)),
 			}
 		}

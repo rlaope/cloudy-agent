@@ -97,6 +97,19 @@ func TestRegistry_ToolsFor(t *testing.T) {
 		}
 	})
 
+	t.Run("codex sanitizes dots to underscores", func(t *testing.T) {
+		r := tools.New()
+		r.MustRegister(stubTool{name: "k8s.list_pods"})
+
+		llmTools := r.ToolsFor("codex")
+		if llmTools[0].Name != "k8s_list_pods" {
+			t.Errorf("codex uses hosted function-calling names; got %q", llmTools[0].Name)
+		}
+		if _, ok := r.Get("k8s_list_pods"); !ok {
+			t.Error("Get must resolve the LLM-safe alias back to the registered tool")
+		}
+	})
+
 	t.Run("openai_compat leaves dots intact", func(t *testing.T) {
 		r := tools.New()
 		r.MustRegister(stubTool{name: "k8s.list_pods"})
@@ -196,8 +209,8 @@ func TestRegistry_FilterPreservesSkipped(t *testing.T) {
 // Pre-fix, Filter() built a fresh sub-registry with an empty llmAlias
 // map, so a Get("k8s_list_pods") on the filtered side returned (nil,
 // false) and the agent saw "tool is not available" — silently breaking
-// every skill-narrowed turn against the four providers that demand
-// sanitized names (anthropic / openai / google / moonshot).
+// every skill-narrowed turn against hosted providers that demand
+// sanitized names (anthropic / openai / codex / google / moonshot).
 func TestRegistry_FilterCarriesLLMAlias(t *testing.T) {
 	t.Parallel()
 	r := tools.New()

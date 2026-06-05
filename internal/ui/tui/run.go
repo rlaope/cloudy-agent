@@ -131,8 +131,8 @@ func loadSimilarIncidentCasesForTUI(input string, profile *permission.Profile) (
 
 // makeSwapModel returns a SwapModel closure that resolves modelID to a
 // fresh provider via wiring.BuildProvider, atomically swaps it into the
-// shared providerRef the agent runner reads from, and persists the new
-// DefaultModel into config.yaml so the next launch picks it up.
+// shared providerRef the agent runner reads from, and persists the chosen
+// routing model into config.yaml so the next launch picks the same provider.
 //
 // On any error (unknown model, missing env var, save failure) the ref
 // is left untouched and the error is returned to the caller for
@@ -157,7 +157,7 @@ func makeSwapModel(ref *providerRef, initialModel string) func(string) error {
 			// persistence on this one error path.
 			cfg = config.Default()
 		}
-		cfg.DefaultModel = resolvedID
+		cfg.DefaultModel = modelID
 		if err := config.Save(cfgPath, cfg); err != nil {
 			return fmt.Errorf("swap: persist DefaultModel: %w", err)
 		}

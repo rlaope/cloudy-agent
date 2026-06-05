@@ -8,6 +8,7 @@ import (
 
 	// Register all adapters so Resolve can find them.
 	_ "github.com/rlaope/cloudy/internal/core/llm/anthropic"
+	_ "github.com/rlaope/cloudy/internal/core/llm/codex"
 	_ "github.com/rlaope/cloudy/internal/core/llm/google"
 	_ "github.com/rlaope/cloudy/internal/core/llm/moonshot"
 	_ "github.com/rlaope/cloudy/internal/core/llm/openai"
@@ -21,6 +22,8 @@ func TestResolve(t *testing.T) {
 		wantModelID  string
 	}{
 		{"gpt-4o", "openai", "gpt-4o"},
+		{"codex/gpt-5.5", "codex", "gpt-5.5"},
+		{"codex/gpt-5.3-codex-spark", "codex", "gpt-5.3-codex-spark"},
 		{"gpt-4-turbo", "openai", "gpt-4-turbo"},
 		{"o1-preview", "openai", "o1-preview"},
 		{"claude-3-5-sonnet-20241022", "anthropic", "claude-3-5-sonnet-20241022"},

@@ -33,12 +33,29 @@ import (
 // It is deliberately separate from cloudy's read-only infrastructure transport.
 var llmTransport http.RoundTripper = http.DefaultTransport
 
-const defaultBaseURL = "https://api.openai.com"
+const (
+	defaultBaseURL = "https://api.openai.com"
+	defaultName    = "openai"
+	defaultKeyEnv  = "OPENAI_API_KEY"
+	defaultBaseEnv = "OPENAI_BASE_URL"
+)
+
+// Options configures an OpenAI Chat Completions-compatible provider.
+// It is exported so sibling providers such as Codex can reuse the same
+// streaming/function-calling wire implementation with their own env vars.
+type Options struct {
+	Name           string
+	APIKeyEnv      string
+	BaseURLEnv     string
+	DefaultBaseURL string
+}
 
 // provider implements llm.Provider for OpenAI.
 type provider struct {
+	name    string
 	baseURL string
 	apiKey  string
+	keyEnv  string
 	client  *http.Client
 }
 
@@ -53,18 +70,47 @@ func init() {
 // captured because it's a deployment override the operator sets via shell
 // env, not via /login.
 func New() llm.Provider {
-	base := os.Getenv("OPENAI_BASE_URL")
+	return NewWithOptions(Options{
+		Name:           defaultName,
+		APIKeyEnv:      defaultKeyEnv,
+		BaseURLEnv:     defaultBaseEnv,
+		DefaultBaseURL: defaultBaseURL,
+	})
+}
+
+// NewWithOptions returns an OpenAI-compatible provider using the supplied
+// provider name and environment-variable contract.
+func NewWithOptions(opts Options) llm.Provider {
+	name := opts.Name
+	if name == "" {
+		name = defaultName
+	}
+	keyEnv := opts.APIKeyEnv
+	if keyEnv == "" {
+		keyEnv = defaultKeyEnv
+	}
+	baseEnv := opts.BaseURLEnv
+	if baseEnv == "" {
+		baseEnv = defaultBaseEnv
+	}
+	defaultBase := opts.DefaultBaseURL
+	if defaultBase == "" {
+		defaultBase = defaultBaseURL
+	}
+	base := os.Getenv(baseEnv)
 	if base == "" {
-		base = defaultBaseURL
+		base = defaultBase
 	}
 	return &provider{
+		name:    name,
 		baseURL: strings.TrimRight(base, "/"),
+		keyEnv:  keyEnv,
 		client:  &http.Client{Transport: llmTransport},
 	}
 }
 
 // Name implements llm.Provider.
-func (p *provider) Name() string { return "openai" }
+func (p *provider) Name() string { return p.name }
 
 // resolveKey returns the API key for this call. Test-injection field wins;
 // production leaves it empty and falls through to the env var.
@@ -72,25 +118,25 @@ func (p *provider) resolveKey() string {
 	if p.apiKey != "" {
 		return p.apiKey
 	}
-	return os.Getenv("OPENAI_API_KEY")
+	return os.Getenv(p.keyEnv)
 }
 
 // Stream implements llm.Provider using OpenAI's SSE streaming completions.
 func (p *provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Chunk, error) {
 	apiKey := p.resolveKey()
 	if apiKey == "" {
-		return nil, fmt.Errorf("%w: OPENAI_API_KEY not set", llm.ErrMissingAPIKey)
+		return nil, fmt.Errorf("%w: %s not set", llm.ErrMissingAPIKey, p.keyEnv)
 	}
 
 	body, err := buildRequest(req)
 	if err != nil {
-		return nil, fmt.Errorf("openai: build request: %w", err)
+		return nil, fmt.Errorf("%s: build request: %w", p.name, err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		p.baseURL+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("openai: new request: %w", err)
+		return nil, fmt.Errorf("%s: new request: %w", p.name, err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
@@ -98,19 +144,19 @@ func (p *provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Chun
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("openai: http: %w", err)
+		return nil, fmt.Errorf("%s: http: %w", p.name, err)
 	}
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("openai: API error %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		return nil, fmt.Errorf("%s: API error %d: %s", p.name, resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 
 	ch := make(chan llm.Chunk, 16)
 	go func() {
 		defer close(ch)
 		defer resp.Body.Close()
-		parseSSE(ctx, resp.Body, ch)
+		parseSSE(ctx, resp.Body, ch, p.name)
 	}()
 	return ch, nil
 }
@@ -250,7 +296,7 @@ func buildRequest(req llm.Request) ([]byte, error) {
 	})
 }
 
-func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
+func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk, providerName string) {
 	scanner := bufio.NewScanner(r)
 	// accumulate tool call deltas: index → ToolCall
 	toolAccum := map[int]*llm.ToolCall{}
@@ -283,7 +329,7 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 
 		var event sseChunk
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			ch <- llm.Chunk{Err: fmt.Errorf("openai: parse SSE: %w", err)}
+			ch <- llm.Chunk{Err: fmt.Errorf("%s: parse SSE: %w", providerName, err)}
 			return
 		}
 
@@ -332,7 +378,7 @@ func parseSSE(ctx context.Context, r io.Reader, ch chan<- llm.Chunk) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		ch <- llm.Chunk{Err: fmt.Errorf("openai: read stream: %w", err)}
+		ch <- llm.Chunk{Err: fmt.Errorf("%s: read stream: %w", providerName, err)}
 		return
 	}
 	// Flush any accumulated tool calls if stream ended without [DONE].

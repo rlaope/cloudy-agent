@@ -183,3 +183,35 @@ func TestDoctor_MissingAPIKey(t *testing.T) {
 		t.Error("missing 'default model has API key in env' check")
 	}
 }
+
+func TestGuessProvider_CodexAndMoonshot(t *testing.T) {
+	cases := []struct {
+		model string
+		want  string
+	}{
+		{"codex/gpt-5.5", "codex"},
+		{"codex/gpt-5.3-codex-spark", "codex"},
+		{"kimi-k2.6", "moonshot"},
+		{"moonshot-v1-128k", "moonshot"},
+	}
+	for _, tc := range cases {
+		if got := guessProvider(tc.model); got != tc.want {
+			t.Errorf("guessProvider(%q) = %q, want %q", tc.model, got, tc.want)
+		}
+	}
+}
+
+func TestWellKnownEnvVar_CodexAndMoonshot(t *testing.T) {
+	cases := []struct {
+		provider string
+		want     string
+	}{
+		{"codex", "CODEX_API_KEY"},
+		{"moonshot", "MOONSHOT_API_KEY"},
+	}
+	for _, tc := range cases {
+		if got := wellKnownEnvVar(tc.provider); got != tc.want {
+			t.Errorf("wellKnownEnvVar(%q) = %q, want %q", tc.provider, got, tc.want)
+		}
+	}
+}
