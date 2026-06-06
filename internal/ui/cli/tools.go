@@ -40,8 +40,9 @@ func (toolsCmd) Run(_ context.Context, args []string, stdout, stderr io.Writer) 
 	// ask` runs. Hand-building Options here previously drifted (it omitted
 	// DockerHosts/ArgoCD/Alertmanager), making the report under-count tools.
 	reg, warn := wiring.Rebuild(cfg, wiring.RebuildOpts{
-		KubeconfigPath: opts.base.kubeconfig,
-		ContextName:    opts.base.context,
+		KubeconfigPath:   opts.base.kubeconfig,
+		ContextName:      opts.base.context,
+		UseActiveProfile: true,
 	})
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)

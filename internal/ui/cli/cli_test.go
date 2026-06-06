@@ -221,7 +221,7 @@ func TestAll_IsSortedAndIncludesProductionCommands(t *testing.T) {
 	}
 	// Production commands present. Listed inline so a future deletion or
 	// rename of any of these is caught here, not at the first user report.
-	required := []string{"ask", "contexts", "doctor", "profile", "session", "setup", "skills", "tools", "update"}
+	required := []string{"ask", "chatops", "contexts", "doctor", "profile", "session", "setup", "skills", "tools", "update"}
 	have := make(map[string]bool, len(names))
 	for _, n := range names {
 		have[n] = true

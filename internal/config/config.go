@@ -107,6 +107,11 @@ type Config struct {
 
 	// Routing controls the cheap-vs-strong model routing heuristics.
 	Routing RoutingConfig `yaml:"routing"`
+
+	// ChatOps controls optional Slack, Discord, Telegram, and future chat
+	// ingress surfaces. Secret values live in ~/.cloudy/secrets or env vars;
+	// this config stores only env var names and routing policy.
+	ChatOps ChatOpsConfig `yaml:"chatops"`
 }
 
 // ProviderConfig holds connection settings for a single LLM provider.
@@ -384,6 +389,182 @@ type RoutingConfig struct {
 	StrongModel string `yaml:"strong_model"`
 }
 
+// ChatOpsConfig contains the local server, queue, platform, and routing
+// policy for chat platform connectors.
+type ChatOpsConfig struct {
+	Enabled           bool                 `yaml:"enabled"`
+	Listen            string               `yaml:"listen"`
+	PublicURL         string               `yaml:"public_url,omitempty"`
+	MaxConcurrentRuns int                  `yaml:"max_concurrent_runs"`
+	DefaultVisibility string               `yaml:"default_visibility"`
+	DefaultProfile    string               `yaml:"default_profile,omitempty"`
+	Platforms         ChatOpsPlatforms     `yaml:"platforms"`
+	Routes            []ChatOpsRoute       `yaml:"routes,omitempty"`
+	RateLimit         ChatOpsRateLimit     `yaml:"rate_limit,omitempty"`
+	Queue             ChatOpsQueueConfig   `yaml:"queue,omitempty"`
+	Session           ChatOpsSessionConfig `yaml:"session,omitempty"`
+}
+
+// ChatOpsPlatforms groups per-platform connector settings.
+type ChatOpsPlatforms struct {
+	Slack    SlackChatOpsConfig    `yaml:"slack"`
+	Discord  DiscordChatOpsConfig  `yaml:"discord"`
+	Telegram TelegramChatOpsConfig `yaml:"telegram"`
+}
+
+// SlackChatOpsConfig stores Slack connector policy and secret env references.
+type SlackChatOpsConfig struct {
+	Enabled           bool     `yaml:"enabled"`
+	Mode              string   `yaml:"mode"`
+	SigningSecretEnv  string   `yaml:"signing_secret_env"`
+	BotTokenEnv       string   `yaml:"bot_token_env"`
+	AllowedTeamIDs    []string `yaml:"allowed_team_ids,omitempty"`
+	AllowedChannelIDs []string `yaml:"allowed_channel_ids,omitempty"`
+	AllowedUserIDs    []string `yaml:"allowed_user_ids,omitempty"`
+}
+
+// DiscordChatOpsConfig stores Discord connector policy and secret env references.
+type DiscordChatOpsConfig struct {
+	Enabled           bool     `yaml:"enabled"`
+	ApplicationID     string   `yaml:"application_id,omitempty"`
+	PublicKeyEnv      string   `yaml:"public_key_env"`
+	AllowedGuildIDs   []string `yaml:"allowed_guild_ids,omitempty"`
+	AllowedChannelIDs []string `yaml:"allowed_channel_ids,omitempty"`
+	AllowedUserIDs    []string `yaml:"allowed_user_ids,omitempty"`
+}
+
+// TelegramChatOpsConfig stores Telegram connector policy and secret env references.
+type TelegramChatOpsConfig struct {
+	Enabled          bool     `yaml:"enabled"`
+	Mode             string   `yaml:"mode"`
+	BotTokenEnv      string   `yaml:"bot_token_env"`
+	WebhookSecretEnv string   `yaml:"webhook_secret_env,omitempty"`
+	AllowedChatIDs   []string `yaml:"allowed_chat_ids,omitempty"`
+	AllowedUserIDs   []string `yaml:"allowed_user_ids,omitempty"`
+}
+
+// ChatOpsRoute maps an authorized chat source to a cloudy profile, skill, and
+// visibility override.
+type ChatOpsRoute struct {
+	Platform    string `yaml:"platform"`
+	WorkspaceID string `yaml:"workspace_id,omitempty"`
+	GuildID     string `yaml:"guild_id,omitempty"`
+	ChatID      string `yaml:"chat_id,omitempty"`
+	ChannelID   string `yaml:"channel_id,omitempty"`
+	UserID      string `yaml:"user_id,omitempty"`
+	Profile     string `yaml:"profile,omitempty"`
+	Skill       string `yaml:"skill,omitempty"`
+	Visibility  string `yaml:"visibility,omitempty"`
+}
+
+// ChatOpsRateLimit controls coarse per-source admission before an LLM run.
+type ChatOpsRateLimit struct {
+	PerSourcePerMinute int `yaml:"per_source_per_minute,omitempty"`
+}
+
+// ChatOpsQueueConfig controls bounded asynchronous worker behavior.
+type ChatOpsQueueConfig struct {
+	MaxDepth               int `yaml:"max_depth,omitempty"`
+	DefaultTimeoutSeconds  int `yaml:"default_timeout_seconds,omitempty"`
+	DiscordTimeoutSeconds  int `yaml:"discord_timeout_seconds,omitempty"`
+	DeliveryTimeoutSeconds int `yaml:"delivery_timeout_seconds,omitempty"`
+}
+
+// ChatOpsSessionConfig controls platform conversation to cloudy session mapping.
+type ChatOpsSessionConfig struct {
+	Path string `yaml:"path,omitempty"`
+}
+
+// ValidateChatOps validates cross-field constraints that YAML cannot express.
+func ValidateChatOps(cfg ChatOpsConfig) error {
+	envRefs := []struct {
+		label string
+		value string
+	}{
+		{"slack signing_secret_env", cfg.Platforms.Slack.SigningSecretEnv},
+		{"slack bot_token_env", cfg.Platforms.Slack.BotTokenEnv},
+		{"discord public_key_env", cfg.Platforms.Discord.PublicKeyEnv},
+		{"telegram bot_token_env", cfg.Platforms.Telegram.BotTokenEnv},
+		{"telegram webhook_secret_env", cfg.Platforms.Telegram.WebhookSecretEnv},
+	}
+	for _, ref := range envRefs {
+		if err := validateEnvRef(ref.label, ref.value); err != nil {
+			return err
+		}
+	}
+	if !cfg.Enabled {
+		return nil
+	}
+	if cfg.Platforms.Telegram.Enabled && cfg.Platforms.Telegram.Mode != "" && cfg.Platforms.Telegram.Mode != "webhook" && cfg.Platforms.Telegram.Mode != "polling" {
+		return fmt.Errorf("chatops: telegram mode must be webhook or polling")
+	}
+	if cfg.Platforms.Slack.Enabled && cfg.Platforms.Slack.Mode != "" && cfg.Platforms.Slack.Mode != "http" {
+		return fmt.Errorf("chatops: slack mode must be http")
+	}
+	if cfg.Platforms.Slack.Enabled {
+		slack := cfg.Platforms.Slack
+		if slack.SigningSecretEnv == "" {
+			return fmt.Errorf("chatops: slack signing_secret_env is required")
+		}
+		if slack.BotTokenEnv == "" {
+			return fmt.Errorf("chatops: slack bot_token_env is required")
+		}
+		if len(slack.AllowedTeamIDs) == 0 || (len(slack.AllowedChannelIDs) == 0 && len(slack.AllowedUserIDs) == 0) {
+			return fmt.Errorf("chatops: slack requires allowed_team_ids and at least one allowed_channel_ids or allowed_user_ids entry")
+		}
+	}
+	if cfg.Platforms.Discord.Enabled {
+		discord := cfg.Platforms.Discord
+		if discord.PublicKeyEnv == "" {
+			return fmt.Errorf("chatops: discord public_key_env is required")
+		}
+		if len(discord.AllowedGuildIDs) == 0 || (len(discord.AllowedChannelIDs) == 0 && len(discord.AllowedUserIDs) == 0) {
+			return fmt.Errorf("chatops: discord requires allowed_guild_ids and at least one allowed_channel_ids or allowed_user_ids entry")
+		}
+	}
+	if cfg.Platforms.Telegram.Enabled {
+		telegram := cfg.Platforms.Telegram
+		if telegram.BotTokenEnv == "" {
+			return fmt.Errorf("chatops: telegram bot_token_env is required")
+		}
+		if telegram.Mode != "polling" && telegram.WebhookSecretEnv == "" {
+			return fmt.Errorf("chatops: telegram webhook_secret_env is required in webhook mode")
+		}
+		if len(telegram.AllowedChatIDs) == 0 {
+			return fmt.Errorf("chatops: telegram requires allowed_chat_ids")
+		}
+	}
+	return nil
+}
+
+func validateEnvRef(label, value string) error {
+	if value == "" {
+		return nil
+	}
+	if !isEnvVarName(value) {
+		return fmt.Errorf("chatops: %s must be an environment variable name", label)
+	}
+	return nil
+}
+
+func isEnvVarName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i, r := range value {
+		if i == 0 {
+			if r != '_' && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') {
+				return false
+			}
+			continue
+		}
+		if r != '_' && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
+}
+
 // Default returns a Config populated with conservative, ready-to-use defaults.
 // DefaultModel is intentionally empty: hard-coding a specific model id here
 // has bitten us before — model ids deprecate (claude-3-5-sonnet-20241022 now
@@ -406,6 +587,36 @@ func Default() Config {
 			MaxLogResponseBytes: 64 * 1024,
 		},
 		Routing: RoutingConfig{},
+		ChatOps: ChatOpsConfig{
+			Enabled:           false,
+			Listen:            "127.0.0.1:8787",
+			MaxConcurrentRuns: 1,
+			DefaultVisibility: "private",
+			Platforms: ChatOpsPlatforms{
+				Slack: SlackChatOpsConfig{
+					Enabled:          false,
+					Mode:             "http",
+					SigningSecretEnv: "CLOUDY_SLACK_SIGNING_SECRET",
+					BotTokenEnv:      "CLOUDY_SLACK_BOT_TOKEN",
+				},
+				Discord: DiscordChatOpsConfig{
+					Enabled:      false,
+					PublicKeyEnv: "CLOUDY_DISCORD_PUBLIC_KEY",
+				},
+				Telegram: TelegramChatOpsConfig{
+					Enabled:          false,
+					Mode:             "webhook",
+					BotTokenEnv:      "CLOUDY_TELEGRAM_BOT_TOKEN",
+					WebhookSecretEnv: "CLOUDY_TELEGRAM_WEBHOOK_SECRET",
+				},
+			},
+			Queue: ChatOpsQueueConfig{
+				MaxDepth:               64,
+				DefaultTimeoutSeconds:  300,
+				DiscordTimeoutSeconds:  840,
+				DeliveryTimeoutSeconds: 30,
+			},
+		},
 	}
 }
 
@@ -424,6 +635,9 @@ func Load(path string) (Config, error) {
 	}
 
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return cfg, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+	if err := ValidateChatOps(cfg.ChatOps); err != nil {
 		return cfg, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 	return cfg, nil

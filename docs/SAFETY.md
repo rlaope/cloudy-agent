@@ -13,7 +13,21 @@ appends redacted environment facts to `memory.md`. HITL-approved incident case
 cards are a separate operator-controlled local store under
 `incident-memory/cards.jsonl`; approving or rejecting them never writes to
 Kubernetes, cloud providers, databases, Prometheus, logs, traces, or other
-monitored backends.
+monitored backends. ChatOps also keeps a local conversation-to-session map at
+`chatops.session.path` (default `~/.cloudy/chatops/sessions.json`) so follow-up
+chat messages can resume the right Cloudy session. That file stores chat
+conversation keys and Cloudy session IDs only; it is written with `0600`
+permissions and can be deleted to force fresh ChatOps sessions.
+
+Chat platform delivery is also outside the monitored-infrastructure mutation
+surface. Slack `response_url` posts, Discord interaction followups, and
+Telegram `sendMessage` calls are user-facing delivery egress used to answer the
+operator in chat. They must stay in `internal/chatops` delivery clients and must
+not use `internal/clients/httpapi`, whose transport contract is reserved for
+read-only monitored backends. ChatOps ingress verifies platform signatures or
+webhook secrets before emitting an authenticated event, enforces allowlists
+before any LLM/tool work starts, and uses `agent.DenyApprover()` so RiskHigh
+tools cannot be approved from remote chat in the MVP.
 
 The incident case-card store is intentionally optimized for a modest,
 Cloudy-owned local corpus. Cloudy serializes its own writes and caches reads by
@@ -37,6 +51,8 @@ defense-in-depth means in practice.
 | Expensive read calls need consent        | `agent.ApprovalHook` (RiskHigh) | Agent         |
 | Oversize log responses get summarized    | `agent.LogSummaryHook`         | Agent          |
 | Blocked calls produce a useful hint      | `transport.readOnlyAlternative`| Agent ↔ LLM   |
+| Chat replies may POST to chat platforms  | `internal/chatops` delivery only | User egress  |
+| Chat follow-ups may resume local sessions| `~/.cloudy/chatops/sessions.json` | Local state |
 
 K8s traffic is covered by the same `ReadOnlyRoundTripper` row: the K8s
 client's `rest.Config.WrapTransport` is set to `transport.Wrap` in
@@ -48,9 +64,9 @@ in the bundled `ClusterRole` for enforcement at the cluster boundary.
 
 The first three guards are the **read-only contract**: removing any one
 of them does not make mutation possible, because the others remain. The
-remaining four are **defense-in-depth and ergonomics**: they bound cost,
-shape what the LLM sees, and make rejections informative rather than
-opaque.
+remaining rows are **defense-in-depth, ergonomics, or user-facing egress/local
+state**: they bound cost, shape what the LLM sees, make rejections informative,
+and keep ChatOps side effects outside monitored backends.
 
 ---
 
@@ -81,6 +97,12 @@ This guard applies to:
 - pprof / V8 Inspector capture
 - The apiserver `services/proxy` reachability path (so the
   whitelist applies end-to-end for in-cluster HTTP backends too)
+
+It does not apply to LLM provider APIs or ChatOps delivery APIs. Those calls are
+not monitored-backend probes; they are the user-facing control and response
+surface. ChatOps delivery clients are deliberately separate from
+`internal/clients/httpapi` so future contributors do not accidentally weaken the
+read-only wrapper for infrastructure clients.
 
 The websocket dialer used by `perf.v8_inspector_cpu_profile` reuses
 `ReadOnlyRoundTripper.DialContext`, so CDP traffic shares the same

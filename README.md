@@ -110,6 +110,73 @@ cloudy profile use payments-sre             # activate a permission profile
 cloudy profile cluster                      # show RBAC for current context
 ```
 
+## ChatOps connectors
+
+cloudy can expose the same read-only agent through Slack, Discord, and
+Telegram:
+
+```sh
+cloudy chatops verify-config
+cloudy chatops serve --addr 127.0.0.1:8787
+cloudy chatops telegram-poll
+cloudy chatops telegram-set-webhook --url https://cloudy.example.com/chatops/telegram/webhook
+# or set chatops.public_url to https://cloudy.example.com and omit --url
+```
+
+The server registers:
+
+- Slack: `/chatops/slack/commands` and `/chatops/slack/events`
+- Discord: `/chatops/discord/interactions`
+- Telegram: `/chatops/telegram/webhook`
+
+Minimal config shape:
+
+```yaml
+chatops:
+  enabled: true
+  listen: "127.0.0.1:8787"
+  public_url: "https://cloudy.example.com"
+  max_concurrent_runs: 1
+  default_visibility: private
+  platforms:
+    slack:
+      enabled: true
+      mode: http
+      signing_secret_env: CLOUDY_SLACK_SIGNING_SECRET
+      bot_token_env: CLOUDY_SLACK_BOT_TOKEN
+      allowed_team_ids: ["T123"]
+      allowed_channel_ids: ["C123"]
+    discord:
+      enabled: true
+      application_id: "1234567890"
+      public_key_env: CLOUDY_DISCORD_PUBLIC_KEY
+      allowed_guild_ids: ["987654321"]
+      allowed_channel_ids: ["111111111"]
+    telegram:
+      enabled: true
+      mode: webhook
+      bot_token_env: CLOUDY_TELEGRAM_BOT_TOKEN
+      webhook_secret_env: CLOUDY_TELEGRAM_WEBHOOK_SECRET
+      allowed_chat_ids: ["42"]
+  routes:
+    - platform: slack
+      workspace_id: T123
+      channel_id: C123
+      profile: payments-sre
+      skill: incident-context
+      visibility: private
+```
+
+Secrets stay in `~/.cloudy/secrets` or environment variables; config stores
+only env var names and allowlists. When both channel/chat and user allowlists
+are configured, an event must match both; leave the user list empty to allow
+any user in the allowed channel. ChatOps denies RiskHigh tools by default, so
+expensive profilers and eBPF probes still require the interactive TUI path.
+Telegram webhook and polling are separate modes for the same bot; use polling
+for local development when you do not have a public HTTPS endpoint.
+`chatops.public_url` is a public base URL; `telegram-set-webhook` appends
+`/chatops/telegram/webhook` when `--url` is omitted.
+
 ## Read-only by design
 
 Three independent enforcement layers plus boot-time and runtime

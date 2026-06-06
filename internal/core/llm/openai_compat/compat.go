@@ -64,8 +64,16 @@ func (p *provider) Name() string { return "openai_compat" }
 // The model prefix "local/" has already been stripped by llm.Resolve before
 // req.Model reaches this method.
 func (p *provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Chunk, error) {
-	if p.baseURL == "" {
+	baseURL := p.baseURL
+	if baseURL == "" {
+		baseURL = strings.TrimRight(os.Getenv("CLOUDY_OPENAI_COMPAT_BASE_URL"), "/")
+	}
+	if baseURL == "" {
 		return nil, fmt.Errorf("openai_compat: CLOUDY_OPENAI_COMPAT_BASE_URL not set")
+	}
+	apiKey := p.apiKey
+	if apiKey == "" {
+		apiKey = os.Getenv("CLOUDY_OPENAI_COMPAT_API_KEY")
 	}
 
 	body, err := buildRequest(req)
@@ -74,13 +82,13 @@ func (p *provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Chun
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.baseURL+"/chat/completions", bytes.NewReader(body))
+		baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("openai_compat: new request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	httpReq.Header.Set("Accept", "text/event-stream")
 
