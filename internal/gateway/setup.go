@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/rlaope/cloudy/internal/chatops"
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/secrets"
 )
@@ -159,7 +160,7 @@ func (w setupWizard) setupDiscord(cfg *config.Config) error {
 	if discord.ApplicationID == "" {
 		return fmt.Errorf("gateway setup: Discord application ID is required")
 	}
-	if err := w.ensureSecret(discord.PublicKeyEnv, "Discord public key", w.opts.PublicKey, false); err != nil {
+	if err := w.ensureDiscordPublicKey(discord.PublicKeyEnv, w.opts.PublicKey); err != nil {
 		return err
 	}
 	discord.AllowedGuildIDs = w.chooseListPrompt(w.opts.GuildIDs, "Allowed Discord guild IDs", discord.AllowedGuildIDs)
@@ -241,6 +242,33 @@ func (w setupWizard) ensureSecret(envName, label, value string, allowGenerated b
 			return nil
 		}
 		return fmt.Errorf("gateway setup: %s is required", label)
+	}
+	if err := secrets.Add(envName, value); err != nil {
+		return fmt.Errorf("gateway setup: save %s: %w", envName, err)
+	}
+	return nil
+}
+
+func (w setupWizard) ensureDiscordPublicKey(envName, value string) error {
+	const label = "Discord public key"
+	if envName == "" {
+		return fmt.Errorf("gateway setup: env var name for %s is empty", label)
+	}
+	if value == "" && os.Getenv(envName) == "" {
+		value = w.promptSecret(label)
+	}
+	if value == "" && os.Getenv(envName) != "" {
+		if _, err := chatops.ParseDiscordPublicKey(os.Getenv(envName)); err != nil {
+			return fmt.Errorf("gateway setup: %s: %w", envName, err)
+		}
+		fmt.Fprintf(w.out, "Using existing %s from %s.\n", label, envName)
+		return nil
+	}
+	if value == "" {
+		return fmt.Errorf("gateway setup: %s is required", label)
+	}
+	if _, err := chatops.ParseDiscordPublicKey(value); err != nil {
+		return fmt.Errorf("gateway setup: %s: %w", envName, err)
 	}
 	if err := secrets.Add(envName, value); err != nil {
 		return fmt.Errorf("gateway setup: save %s: %w", envName, err)

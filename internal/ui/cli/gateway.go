@@ -109,7 +109,9 @@ func (gatewayCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writ
 		return err
 
 	case "status":
-		_ = secrets.Load()
+		if err := secrets.Load(); err != nil {
+			return fmt.Errorf("gateway status: %w", err)
+		}
 		cfg, err := config.Load(config.Path())
 		if err != nil {
 			return err

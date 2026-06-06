@@ -269,6 +269,20 @@ func TestGatewayStatusJSON(t *testing.T) {
 	}
 }
 
+func TestGatewayStatusReportsSecretsLoadError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLOUDY_HOME", home)
+	if err := os.Mkdir(filepath.Join(home, "secrets"), 0o700); err != nil {
+		t.Fatalf("Mkdir secrets dir: %v", err)
+	}
+
+	var out bytes.Buffer
+	err := (gatewayCmd{}).Run(context.Background(), []string{"status", "--json"}, &out, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "gateway status: secrets:") {
+		t.Fatalf("gateway status error = %v, want secrets load error", err)
+	}
+}
+
 func TestGatewaySetupTelegramPollingFlags(t *testing.T) {
 	t.Setenv("CLOUDY_HOME", t.TempDir())
 	os.Unsetenv("CLOUDY_TELEGRAM_BOT_TOKEN")

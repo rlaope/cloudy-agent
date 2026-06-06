@@ -67,7 +67,7 @@ func TestRunSetupWithFlagsDoesNotPromptForProvidedValues(t *testing.T) {
 		DefaultVisibility: "channel",
 		DefaultProfile:    "prod",
 		ApplicationID:     "123",
-		PublicKey:         "abcd",
+		PublicKey:         validDiscordPublicKey(),
 		GuildIDs:          []string{"G1"},
 		ChannelIDs:        []string{"C1"},
 		UserIDs:           []string{"U1"},
@@ -86,8 +86,32 @@ func TestRunSetupWithFlagsDoesNotPromptForProvidedValues(t *testing.T) {
 	}
 }
 
+func TestRunSetupDiscordRejectsInvalidPublicKey(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLOUDY_HOME", home)
+	os.Unsetenv("CLOUDY_DISCORD_PUBLIC_KEY")
+
+	var out bytes.Buffer
+	_, err := RunSetup(t.Context(), SetupOptions{
+		Out:           &out,
+		ConfigPath:    config.Path(),
+		AssumeYes:     true,
+		Platform:      PlatformDiscord,
+		ApplicationID: "123",
+		PublicKey:     "abcd",
+		GuildIDs:      []string{"G1"},
+		ChannelIDs:    []string{"C1"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid public key length") {
+		t.Fatalf("RunSetup error = %v, want invalid public key length", err)
+	}
+	if got := os.Getenv("CLOUDY_DISCORD_PUBLIC_KEY"); got != "" {
+		t.Fatalf("invalid Discord public key was exported: %q", got)
+	}
+}
+
 func TestStatusDiscordDoesNotRequireBotToken(t *testing.T) {
-	t.Setenv("CLOUDY_DISCORD_PUBLIC_KEY", "abcd")
+	t.Setenv("CLOUDY_DISCORD_PUBLIC_KEY", validDiscordPublicKey())
 	cfg := config.Default()
 	cfg.ChatOps.Enabled = true
 	cfg.ChatOps.Platforms.Discord.Enabled = true
@@ -117,6 +141,29 @@ func TestStatusDiscordDoesNotRequireBotToken(t *testing.T) {
 	}
 }
 
+func TestStatusDiscordRejectsInvalidPublicKey(t *testing.T) {
+	t.Setenv("CLOUDY_DISCORD_PUBLIC_KEY", "abcd")
+	cfg := config.Default()
+	cfg.ChatOps.Enabled = true
+	cfg.ChatOps.Platforms.Discord.Enabled = true
+	cfg.ChatOps.Platforms.Discord.ApplicationID = "123"
+	cfg.ChatOps.Platforms.Discord.PublicKeyEnv = "CLOUDY_DISCORD_PUBLIC_KEY"
+	cfg.ChatOps.Platforms.Discord.AllowedGuildIDs = []string{"G1"}
+	cfg.ChatOps.Platforms.Discord.AllowedChannelIDs = []string{"C1"}
+
+	rep := Status(cfg)
+	if rep.Ready {
+		t.Fatalf("gateway should not be ready with invalid Discord public key:\n%s", FormatText(rep))
+	}
+	text := FormatText(rep)
+	if !strings.Contains(text, "invalid public key length") {
+		t.Fatalf("status did not surface invalid Discord public key:\n%s", text)
+	}
+	if strings.Contains(text, "abcd") {
+		t.Fatalf("status leaked Discord public key value:\n%s", text)
+	}
+}
+
 func TestStatusTelegramWebhookNeedsPublicURL(t *testing.T) {
 	t.Setenv("CLOUDY_TELEGRAM_BOT_TOKEN", "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123")
 	t.Setenv("CLOUDY_TELEGRAM_WEBHOOK_SECRET", "secret")
@@ -133,4 +180,8 @@ func TestStatusTelegramWebhookNeedsPublicURL(t *testing.T) {
 	if !strings.Contains(FormatText(rep), "public_url: missing") {
 		t.Fatalf("status did not surface missing public_url:\n%s", FormatText(rep))
 	}
+}
+
+func validDiscordPublicKey() string {
+	return strings.Repeat("a", 64)
 }

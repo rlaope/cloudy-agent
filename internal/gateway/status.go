@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rlaope/cloudy/internal/chatops"
 	"github.com/rlaope/cloudy/internal/config"
 )
 
@@ -119,7 +120,7 @@ func discordReport(cfg config.ChatOpsConfig) PlatformReport {
 	}
 	rep.Requirements = []Requirement{
 		valueRequirement("application_id", "application ID", discord.ApplicationID, discord.Enabled, "used for Discord followup webhook URLs"),
-		envRequirement("public_key_env", "public key env value", discord.PublicKeyEnv, discord.Enabled, "verifies Discord interaction signatures"),
+		discordPublicKeyRequirement(discord.PublicKeyEnv, discord.Enabled),
 		listRequirement("allowed_guild_ids", "allowed guild IDs", discord.AllowedGuildIDs, discord.Enabled, "at least one Discord server"),
 		anyListRequirement("allowed_channel_or_user_ids", "allowed channel or user IDs", discord.Enabled, "at least one Discord channel or user", discord.AllowedChannelIDs, discord.AllowedUserIDs),
 	}
@@ -158,6 +159,18 @@ func envRequirement(key, label, envName string, required bool, detail string) Re
 		detail = strings.TrimSpace(detail + fmt.Sprintf("; %s is not set", envName))
 	}
 	return Requirement{Key: key, Label: label, Required: required, Set: !required || set, Detail: detail}
+}
+
+func discordPublicKeyRequirement(envName string, required bool) Requirement {
+	req := envRequirement("public_key_env", "public key env value", envName, required, "verifies Discord interaction signatures")
+	if !required || !req.Set {
+		return req
+	}
+	if _, err := chatops.ParseDiscordPublicKey(os.Getenv(envName)); err != nil {
+		req.Set = false
+		req.Detail = strings.TrimSpace(req.Detail + fmt.Sprintf("; %s is invalid: %v", envName, err))
+	}
+	return req
 }
 
 func valueRequirement(key, label, value string, required bool, detail string) Requirement {

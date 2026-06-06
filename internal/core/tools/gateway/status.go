@@ -20,7 +20,9 @@ func newStatusTool() tools.Tool {
 		Description: "Report the local ChatOps gateway setup status: enabled platforms, required Discord/Slack/Telegram inputs, missing env-backed secrets, public URL, listen address, and session-map path. Read-only; no network calls.",
 		Schema:      schema,
 		Run: func(context.Context, struct{}) (tools.Observation, error) {
-			_ = secrets.Load()
+			if err := secrets.Load(); err != nil {
+				return tools.Observation{}, fmt.Errorf("gateway.status: %w", err)
+			}
 			cfg, err := config.Load(config.Path())
 			if err != nil {
 				return tools.Observation{}, fmt.Errorf("gateway.status: config: %w", err)

@@ -263,6 +263,23 @@ func TestDiscordVerifySignatureAndPing(t *testing.T) {
 	}
 }
 
+func TestParseDiscordPublicKey(t *testing.T) {
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	parsed, err := ParseDiscordPublicKey(hex.EncodeToString(pub))
+	if err != nil {
+		t.Fatalf("ParseDiscordPublicKey valid key: %v", err)
+	}
+	if !bytes.Equal(parsed, pub) {
+		t.Fatal("ParseDiscordPublicKey returned different key bytes")
+	}
+	if _, err := ParseDiscordPublicKey("abcd"); err == nil || !strings.Contains(err.Error(), "invalid public key length") {
+		t.Fatalf("ParseDiscordPublicKey short key error = %v, want invalid length", err)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

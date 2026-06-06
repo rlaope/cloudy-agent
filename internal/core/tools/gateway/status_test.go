@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,7 +21,7 @@ func TestStatusToolReportsGatewayState(t *testing.T) {
 	cfg.ChatOps.Platforms.Discord.PublicKeyEnv = "CLOUDY_DISCORD_PUBLIC_KEY"
 	cfg.ChatOps.Platforms.Discord.AllowedGuildIDs = []string{"G1"}
 	cfg.ChatOps.Platforms.Discord.AllowedChannelIDs = []string{"C1"}
-	t.Setenv("CLOUDY_DISCORD_PUBLIC_KEY", "abcd")
+	t.Setenv("CLOUDY_DISCORD_PUBLIC_KEY", strings.Repeat("a", 64))
 	if err := config.Save(config.Path(), cfg); err != nil {
 		t.Fatalf("Save config: %v", err)
 	}
@@ -59,5 +60,18 @@ func TestStatusToolReloadsPersistedSecrets(t *testing.T) {
 	}
 	if !strings.Contains(obs.Text, "telegram enabled=true ready=true") {
 		t.Fatalf("status text did not use persisted secret:\n%s", obs.Text)
+	}
+}
+
+func TestStatusToolReportsPersistedSecretLoadError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLOUDY_HOME", home)
+	if err := os.Mkdir(filepath.Join(home, "secrets"), 0o700); err != nil {
+		t.Fatalf("Mkdir secrets dir: %v", err)
+	}
+
+	_, err := newStatusTool().Run(context.Background(), json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "gateway.status: secrets:") {
+		t.Fatalf("gateway.status error = %v, want secrets load error", err)
 	}
 }
