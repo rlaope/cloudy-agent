@@ -249,6 +249,57 @@ func TestChatOpsCmd_VerifyConfigJSON(t *testing.T) {
 	}
 }
 
+func TestGatewayStatusJSON(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+
+	var out bytes.Buffer
+	if err := (gatewayCmd{}).Run(context.Background(), []string{"status", "--json"}, &out, io.Discard); err != nil {
+		t.Fatalf("gateway status --json: %v", err)
+	}
+
+	var row map[string]any
+	if err := json.Unmarshal(out.Bytes(), &row); err != nil {
+		t.Fatalf("gateway status output is not JSON: %v\n%s", err, out.String())
+	}
+	if row["enabled"] != false {
+		t.Fatalf("enabled = %v, want false", row["enabled"])
+	}
+	if row["listen"] != "127.0.0.1:8787" {
+		t.Fatalf("listen = %v, want default", row["listen"])
+	}
+}
+
+func TestGatewaySetupTelegramPollingFlags(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+	os.Unsetenv("CLOUDY_TELEGRAM_BOT_TOKEN")
+
+	var out bytes.Buffer
+	err := (gatewayCmd{}).Run(context.Background(), []string{
+		"setup",
+		"--yes",
+		"--platform", "telegram",
+		"--mode", "polling",
+		"--bot-token", "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123",
+		"--chat-id", "42",
+	}, &out, io.Discard)
+	if err != nil {
+		t.Fatalf("gateway setup: %v", err)
+	}
+	cfg, err := config.Load(config.Path())
+	if err != nil {
+		t.Fatalf("Load config: %v", err)
+	}
+	if !cfg.ChatOps.Enabled || !cfg.ChatOps.Platforms.Telegram.Enabled {
+		t.Fatalf("telegram gateway not enabled: %#v", cfg.ChatOps)
+	}
+	if got := os.Getenv("CLOUDY_TELEGRAM_BOT_TOKEN"); got == "" {
+		t.Fatal("telegram bot token env was not set")
+	}
+	if !strings.Contains(out.String(), "Gateway setup saved.") {
+		t.Fatalf("gateway setup output missing success:\n%s", out.String())
+	}
+}
+
 func TestChatOpsBuildMuxRequiresTelegramWebhookSecret(t *testing.T) {
 	t.Setenv("CLOUDY_HOME", t.TempDir())
 	t.Setenv("CLOUDY_TELEGRAM_BOT_TOKEN", "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123")

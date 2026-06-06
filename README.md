@@ -116,12 +116,35 @@ cloudy can expose the same read-only agent through Slack, Discord, and
 Telegram:
 
 ```sh
+cloudy gateway setup
+cloudy gateway status
 cloudy chatops verify-config
 cloudy chatops serve --addr 127.0.0.1:8787
 cloudy chatops telegram-poll
 cloudy chatops telegram-set-webhook --url https://cloudy.example.com/chatops/telegram/webhook
 # or set chatops.public_url to https://cloudy.example.com and omit --url
 ```
+
+`cloudy gateway setup` is the operator-friendly path. It asks which platform to
+configure, explains the platform-specific requirements, stores secret values in
+`~/.cloudy/secrets`, writes only env-var names and allowlists to config, and
+prints the resulting readiness report. For scripted setup, pass the inputs as
+flags:
+
+```sh
+cloudy gateway setup --yes --platform telegram --mode polling \
+  --bot-token "$TELEGRAM_BOT_TOKEN" --chat-id 42
+
+cloudy gateway setup --yes --platform discord \
+  --application-id 1234567890 \
+  --public-key "$DISCORD_PUBLIC_KEY" \
+  --guild-id 987654321 --channel-id 111111111
+```
+
+Discord uses interaction webhooks in this gateway mode, so it needs the
+application ID, public key, guild ID, and channel/user allowlist; it does not
+need a Discord bot token. `cloudy gateway status` and the TUI's
+`gateway.status` tool report which required inputs are present or missing.
 
 The server registers:
 
