@@ -29,6 +29,7 @@ import (
 	"github.com/rlaope/cloudy/internal/core/tools/db"
 	"github.com/rlaope/cloudy/internal/core/tools/dockerlog"
 	"github.com/rlaope/cloudy/internal/core/tools/ebpf"
+	gatewaytools "github.com/rlaope/cloudy/internal/core/tools/gateway"
 	"github.com/rlaope/cloudy/internal/core/tools/gitops"
 	"github.com/rlaope/cloudy/internal/core/tools/gpu"
 	"github.com/rlaope/cloudy/internal/core/tools/jvm"
@@ -155,6 +156,7 @@ func BuildRegistry(opts Options) (*tools.Registry, error) {
 	ebpf.RegisterAll(reg)
 
 	synthetic.RegisterAll(reg)
+	gatewaytools.RegisterAll(reg)
 
 	// memory.record is cloudy's only agent-callable local memory write tool —
 	// it persists durable facts to the local memory file, not to any monitored

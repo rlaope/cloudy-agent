@@ -3,8 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -267,7 +265,7 @@ func buildChatOpsMux(cfg config.Config, service *chatops.Service) (*http.ServeMu
 	}
 	discord := cfg.ChatOps.Platforms.Discord
 	if discord.Enabled {
-		key, err := discordPublicKey(os.Getenv(discord.PublicKeyEnv))
+		key, err := chatops.ParseDiscordPublicKey(os.Getenv(discord.PublicKeyEnv))
 		if err != nil {
 			return nil, errf("chatops: %s: %w", discord.PublicKeyEnv, err)
 		}
@@ -287,20 +285,6 @@ func buildChatOpsMux(cfg config.Config, service *chatops.Service) (*http.ServeMu
 		mux.Handle("/chatops/telegram/webhook", adapter.WebhookHandler())
 	}
 	return mux, nil
-}
-
-func discordPublicKey(hexValue string) (ed25519.PublicKey, error) {
-	if hexValue == "" {
-		return nil, fmt.Errorf("empty public key")
-	}
-	b, err := hex.DecodeString(strings.TrimSpace(hexValue))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("invalid public key length %d", len(b))
-	}
-	return ed25519.PublicKey(b), nil
 }
 
 func setTelegramWebhook(ctx context.Context, cfg config.Config, publicURL string) error {

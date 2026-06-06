@@ -24,6 +24,22 @@ const (
 	discordResponseDeferredMessage       = 5
 )
 
+// ParseDiscordPublicKey decodes the hex Ed25519 public key Discord uses to
+// sign interaction requests.
+func ParseDiscordPublicKey(hexValue string) (ed25519.PublicKey, error) {
+	if hexValue == "" {
+		return nil, fmt.Errorf("empty public key")
+	}
+	b, err := hex.DecodeString(strings.TrimSpace(hexValue))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("invalid public key length %d", len(b))
+	}
+	return ed25519.PublicKey(b), nil
+}
+
 // DiscordHTTPAdapter handles Discord interaction webhooks.
 type DiscordHTTPAdapter struct {
 	PublicKey     ed25519.PublicKey
