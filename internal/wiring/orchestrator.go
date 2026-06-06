@@ -12,8 +12,10 @@ import (
 // — cmd/main.go (boot), internal/setup/wizard.go (post-/setup save), and
 // internal/tui/setupchat.go (in-TUI /setup) — cannot diverge.
 type RebuildOpts struct {
-	KubeconfigPath string
-	ContextName    string
+	KubeconfigPath   string
+	ContextName      string
+	Profile          *permission.Profile
+	UseActiveProfile bool
 }
 
 // Rebuild is the single owner of "build a tools.Registry from cfg, install
@@ -34,7 +36,10 @@ type RebuildOpts struct {
 // it by value. The returned registry is installed as the package-global
 // active registry via Replace(). Callers do not call Replace themselves.
 func Rebuild(cfg config.Config, opts RebuildOpts) (*tools.Registry, error) {
-	activeProfile, _ := permission.LoadActive()
+	activeProfile := opts.Profile
+	if activeProfile == nil && opts.UseActiveProfile {
+		activeProfile, _ = permission.LoadActive()
+	}
 
 	reg, warn := BuildRegistry(Options{
 		KubeconfigPath: opts.KubeconfigPath,

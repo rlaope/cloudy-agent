@@ -2,6 +2,9 @@ package wiring
 
 import (
 	"testing"
+
+	"github.com/rlaope/cloudy/internal/config"
+	"github.com/rlaope/cloudy/internal/permission"
 )
 
 // TestBuildRegistry_NoKube verifies that BuildRegistry returns a usable
@@ -72,5 +75,51 @@ func TestBuildRegistry_K8sToolsAbsentWithoutKube(t *testing.T) {
 		if _, ok := reg.Get(name); ok {
 			t.Errorf("registry should NOT contain %q when kube client fails", name)
 		}
+	}
+}
+
+func TestRebuildUsesExplicitProfile(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+
+	reg, _ := Rebuild(config.Default(), RebuildOpts{
+		KubeconfigPath: "/nonexistent/kubeconfig",
+		Profile: &permission.Profile{
+			Name: "chatops-route",
+			Tools: permission.Tools{
+				Allow: []string{"memory.record"},
+			},
+		},
+	})
+	if _, ok := reg.Get("memory.record"); !ok {
+		t.Fatal("expected memory.record to survive explicit profile filter")
+	}
+	if _, ok := reg.Get("jvm.jstat_gc"); ok {
+		t.Fatal("explicit profile was not applied; jvm.jstat_gc should be filtered out")
+	}
+}
+
+func TestRebuildDoesNotLoadActiveProfileUnlessRequested(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+	profile := &permission.Profile{
+		Name: "active-narrow",
+		Tools: permission.Tools{
+			Allow: []string{"memory.record"},
+		},
+	}
+	if err := permission.Save(profile); err != nil {
+		t.Fatalf("Save profile: %v", err)
+	}
+	if err := permission.SetActive(profile.Name); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+
+	reg, _ := Rebuild(config.Default(), RebuildOpts{KubeconfigPath: "/nonexistent/kubeconfig"})
+	if _, ok := reg.Get("jvm.jstat_gc"); !ok {
+		t.Fatal("active profile was applied despite UseActiveProfile=false")
+	}
+
+	reg, _ = Rebuild(config.Default(), RebuildOpts{KubeconfigPath: "/nonexistent/kubeconfig", UseActiveProfile: true})
+	if _, ok := reg.Get("jvm.jstat_gc"); ok {
+		t.Fatal("active profile was not applied when UseActiveProfile=true")
 	}
 }

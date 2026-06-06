@@ -99,6 +99,7 @@ func TestStream_ToolCallNormalization(t *testing.T) {
 }
 
 func TestStream_MissingBaseURL(t *testing.T) {
+	t.Setenv("CLOUDY_OPENAI_COMPAT_BASE_URL", "")
 	p := makeProvider("", "")
 	_, err := p.Stream(context.Background(), llm.Request{Model: "llama3"})
 	if err == nil {
@@ -106,6 +107,32 @@ func TestStream_MissingBaseURL(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "CLOUDY_OPENAI_COMPAT_BASE_URL") {
 		t.Errorf("error should mention CLOUDY_OPENAI_COMPAT_BASE_URL, got: %v", err)
+	}
+}
+
+func TestLazyEnvRead_PostConstructionSetenv(t *testing.T) {
+	t.Setenv("CLOUDY_OPENAI_COMPAT_BASE_URL", "")
+	p := New().(*provider)
+	if p.baseURL != "" {
+		t.Fatalf("test setup expected empty baseURL, got %q", p.baseURL)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"},"finish_reason":null}]}`)
+		fmt.Fprintln(w, `data: [DONE]`)
+	}))
+	defer srv.Close()
+	t.Setenv("CLOUDY_OPENAI_COMPAT_BASE_URL", srv.URL)
+
+	ch, err := p.Stream(context.Background(), llm.Request{
+		Model:    "llama3",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream should read base URL from env at call time: %v", err)
+	}
+	for range ch {
 	}
 }
 

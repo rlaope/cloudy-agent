@@ -9,15 +9,9 @@ import (
 
 	"github.com/mattn/go-isatty"
 
-	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/core/agent"
-	"github.com/rlaope/cloudy/internal/core/llm"
-	"github.com/rlaope/cloudy/internal/core/skills"
-	"github.com/rlaope/cloudy/internal/memory"
-	"github.com/rlaope/cloudy/internal/permission"
+	"github.com/rlaope/cloudy/internal/core/runner"
 	"github.com/rlaope/cloudy/internal/render"
-	"github.com/rlaope/cloudy/internal/session"
-	"github.com/rlaope/cloudy/internal/wiring"
 )
 
 func init() { Register(&askCmd{}) }
@@ -65,131 +59,26 @@ func (askCmd) Run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return errf(`ask requires a prompt: cloudy ask "<prompt>"  or  echo … | cloudy ask`)
 	}
 
-	cfg, err := config.Load(config.Path())
-	if err != nil {
-		return errf("config: %w", err)
-	}
-	model := opts.model
-	if model == "" {
-		model = cfg.DefaultModel
-	}
-	if model == "" {
-		return errf("no model set; use --model or run `cloudy setup`")
-	}
-
-	provider, modelID, err := wiring.BuildProvider(model)
-	if err != nil {
-		return err
-	}
-
-	skillReg, err := wiring.BuildSkillRegistry()
-	if err != nil {
-		return errf("skills: %w", err)
-	}
-
-	toolReg, warn := wiring.Rebuild(cfg, wiring.RebuildOpts{
-		KubeconfigPath: opts.base.kubeconfig,
-		ContextName:    opts.base.context,
-	})
-	if warn != nil {
-		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
-	}
-	activeProfile, _ := permission.LoadActive()
-	if activeProfile != nil {
-		fmt.Fprintf(stderr, "cloudy: profile=%s\n", activeProfile.Name)
-	}
-
-	var activeSkill skills.SkillProvider
-	if opts.skill != "" {
-		s, ok := skillReg.Get(opts.skill)
-		if !ok {
-			return errf("unknown skill: %s", opts.skill)
-		}
-		activeSkill = skills.NewStaticSkill(s)
-		toolReg = toolReg.Filter(s.AllowedTools)
-	}
-
-	// --resume loads a past conversation and continues it. Sharing the id
-	// space (session.New(opts.resume)) appends to the same audit log and
-	// keeps one resume snapshot per conversation.
-	var history []llm.Message
-	resumeID := ""
-	if opts.resume != "" {
-		h, _, lerr := session.LoadHistory(opts.resume)
-		if lerr != nil {
-			return errf("resume: %w", lerr)
-		}
-		history = h
-		resumeID = opts.resume
-	}
-
-	sess, err := session.New(resumeID)
-	if err != nil {
-		return errf("session: %w", err)
-	}
-	defer func() { _ = sess.Close() }()
-
 	theme := render.NewTheme(opts.base.noColor)
 	stream := render.NewStream(stdout, theme)
 
-	ag, err := agent.New(agent.Options{
-		Provider:                 provider,
-		Model:                    modelID,
-		Registry:                 toolReg,
-		Skill:                    activeSkill,
-		Skills:                   skillReg,
-		MaxTokensPerSession:      cfg.Safety.MaxTokensPerSession,
-		MaxUSDPerDay:             cfg.Safety.MaxUSDPerDay,
-		MaxConversationSeconds:   cfg.Safety.MaxConversationSeconds,
-		MaxLogLinesPerCall:       permission.EffectiveLogLines(activeProfile, cfg.Safety.MaxLogLines),
-		MaxProfileSecondsPerCall: permission.EffectiveProfileSeconds(activeProfile, cfg.Safety.MaxProfileSeconds),
-		MaxLogResponseBytes:      cfg.Safety.MaxLogResponseBytes,
-		Approver:                 agent.DenyApprover(),
-		Profile:                  activeProfile,
-		History:                  history,
-		Plan:                     opts.plan,
-		EnvironmentMemory:        loadEnvMemory(stderr),
-		SimilarIncidentCases:     loadSimilarIncidentCases(prompt, activeProfile, stderr),
+	result, err := runner.Run(ctx, runner.Request{
+		Prompt:           prompt,
+		ModelOverride:    opts.model,
+		SkillName:        opts.skill,
+		ResumeID:         opts.resume,
+		KubeconfigPath:   opts.base.kubeconfig,
+		ContextName:      opts.base.context,
+		Plan:             opts.plan,
+		Sink:             stream,
+		Stderr:           stderr,
+		Approver:         agent.DenyApprover(),
+		UseActiveProfile: true,
 	})
 	if err != nil {
-		return errf("agent: %w", err)
-	}
-
-	newMsgs, runErr := ag.Run(ctx, prompt, stream)
-	if runErr != nil {
-		return errf("run: %w", runErr)
-	}
-	// Persist a masked resume snapshot so `cloudy ask --resume <id>` can chain
-	// follow-up queries. MaskHistory is mandatory — the history carries the
-	// raw prompt and unmasked prose that must never hit disk unredacted.
-	if len(newMsgs) > 0 {
-		masked := permission.MaskHistory(activeProfile, newMsgs)
-		if serr := session.SaveHistory(sess.ID, modelID, masked); serr != nil {
-			fmt.Fprintf(stderr, "cloudy: resume save: %v\n", serr)
-		}
+		return err
 	}
 	fmt.Fprintln(stdout)
-	fmt.Fprintf(stdout, "— model=%s session=%s\n", modelID, sess.ID)
+	fmt.Fprintf(stdout, "— model=%s session=%s\n", result.Model, result.SessionID)
 	return nil
-}
-
-// loadEnvMemory returns cloudy's durable cross-session memory for system-prompt
-// injection. A read failure is non-fatal — the agent simply starts without
-// recalled facts — so the error is reported to stderr and "" returned.
-func loadEnvMemory(stderr io.Writer) string {
-	mem, err := memory.Load()
-	if err != nil {
-		fmt.Fprintf(stderr, "cloudy: memory: %v\n", err)
-		return ""
-	}
-	return mem
-}
-
-func loadSimilarIncidentCases(prompt string, profile *permission.Profile, stderr io.Writer) string {
-	rendered, err := agent.BuildIncidentMemoryPrompt(prompt, profile)
-	if err != nil {
-		fmt.Fprintf(stderr, "cloudy: incident memory: %v\n", err)
-		return ""
-	}
-	return rendered
 }

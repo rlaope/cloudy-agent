@@ -371,7 +371,8 @@ func (s *setupChat) persistAndSwap() (string, error) {
 	}
 
 	_, _ = wiring.Rebuild(cfg, wiring.RebuildOpts{
-		KubeconfigPath: s.kubeconfig,
+		KubeconfigPath:   s.kubeconfig,
+		UseActiveProfile: true,
 	})
 
 	enabled := len(pickedFindings)

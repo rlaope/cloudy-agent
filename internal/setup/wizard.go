@@ -1071,7 +1071,8 @@ func (m *WizardModel) persistConfig() error {
 	// Orchestrator owns the BuildRegistry + Replace sequence so this site,
 	// cmd/main.go, and tui/setupchat.go cannot drift apart.
 	_, _ = wiring.Rebuild(cfg, wiring.RebuildOpts{
-		KubeconfigPath: m.opts.KubeconfigPath,
+		KubeconfigPath:   m.opts.KubeconfigPath,
+		UseActiveProfile: true,
 	})
 	return nil
 }

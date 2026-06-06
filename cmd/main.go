@@ -72,7 +72,7 @@ func bootTUI(stdout, stderr io.Writer) error {
 		// Non-fatal: continue without user skills.
 	}
 
-	toolReg, warn := wiring.Rebuild(cfg, wiring.RebuildOpts{})
+	toolReg, warn := wiring.Rebuild(cfg, wiring.RebuildOpts{UseActiveProfile: true})
 	if warn != nil {
 		fmt.Fprintf(stderr, "cloudy: %v\n", warn)
 	}

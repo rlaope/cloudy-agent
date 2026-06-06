@@ -170,16 +170,18 @@ func DefaultMaskingPatterns() Masking {
 			"auth",
 		},
 		ValueRegex: []string{
-			"AKIA[0-9A-Z]{16}",              // AWS access key id
-			"ASIA[0-9A-Z]{16}",              // AWS STS access key
-			`eyJ[A-Za-z0-9_=-]{20,}\.`,      // JWT prefix
-			`gh[opsur]_[A-Za-z0-9]{36,}`,    // GitHub token family (ghp_/gho_/ghu_/ghs_/ghr_)
-			`github_pat_[A-Za-z0-9_]{22,}`,  // GitHub fine-grained PAT
-			`glpat-[A-Za-z0-9_-]{20,}`,      // GitLab PAT
-			`sk-[A-Za-z0-9_-]{20,}`,         // OpenAI/Anthropic keys (sk-ant-…, sk-proj-…)
-			"AIza[0-9A-Za-z_-]{35}",         // Google API key
-			`xox[baprse]-[0-9A-Za-z-]{10,}`, // Slack bot/user/app tokens
-			`xapp-[0-9]-[0-9A-Za-z-]{10,}`,  // Slack app-level token
+			"AKIA[0-9A-Z]{16}",                                   // AWS access key id
+			"ASIA[0-9A-Z]{16}",                                   // AWS STS access key
+			`eyJ[A-Za-z0-9_=-]{20,}\.`,                           // JWT prefix
+			`gh[opsur]_[A-Za-z0-9]{36,}`,                         // GitHub token family (ghp_/gho_/ghu_/ghs_/ghr_)
+			`github_pat_[A-Za-z0-9_]{22,}`,                       // GitHub fine-grained PAT
+			`glpat-[A-Za-z0-9_-]{20,}`,                           // GitLab PAT
+			`sk-[A-Za-z0-9_-]{20,}`,                              // OpenAI/Anthropic keys (sk-ant-…, sk-proj-…)
+			"AIza[0-9A-Za-z_-]{35}",                              // Google API key
+			`xox[baprse]-[0-9A-Za-z-]{10,}`,                      // Slack bot/user/app tokens
+			`xapp-[0-9]-[0-9A-Za-z-]{10,}`,                       // Slack app-level token
+			`[0-9]{17,20}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{20,}`, // Discord bot token shape
+			`[0-9]{6,}:[A-Za-z0-9_-]{20,}`,                       // Telegram bot token shape
 			`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----`, // full PEM private key block (body included)
 			`(?i)bearer\s+[0-9A-Za-z._~+/=-]{10,}`,                                            // generic Bearer auth header
 			`(?i)[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@`,                                     // credentials in a URI userinfo (DSNs/conn strings)

@@ -5,12 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/incidentmemory"
 )
 
@@ -225,6 +229,183 @@ func TestSkillsCmd_FlagValueNamedShowDoesNotBecomeSubcommand(t *testing.T) {
 	}
 }
 
+func TestChatOpsCmd_VerifyConfigJSON(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+
+	var out bytes.Buffer
+	if err := (chatopsCmd{}).Run(context.Background(), []string{"verify-config", "--json"}, &out, io.Discard); err != nil {
+		t.Fatalf("chatops verify-config --json: %v", err)
+	}
+
+	var row map[string]any
+	if err := json.Unmarshal(out.Bytes(), &row); err != nil {
+		t.Fatalf("chatops verify-config output is not JSON: %v\n%s", err, out.String())
+	}
+	if row["ok"] != true {
+		t.Fatalf("ok = %v, want true", row["ok"])
+	}
+	if row["listen"] != "127.0.0.1:8787" {
+		t.Fatalf("listen = %v", row["listen"])
+	}
+}
+
+func TestChatOpsBuildMuxRequiresTelegramWebhookSecret(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+	t.Setenv("CLOUDY_TELEGRAM_BOT_TOKEN", "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123")
+	cfg := config.Default()
+	cfg.ChatOps.Platforms.Telegram.Enabled = true
+	cfg.ChatOps.Platforms.Telegram.Mode = "webhook"
+	cfg.ChatOps.Platforms.Telegram.WebhookSecretEnv = "CLOUDY_TELEGRAM_WEBHOOK_SECRET"
+	cfg.ChatOps.Platforms.Telegram.AllowedChatIDs = []string{"42"}
+
+	service, err := buildChatOpsService(cfg, io.Discard, "", "")
+	if err != nil {
+		t.Fatalf("buildChatOpsService: %v", err)
+	}
+	_, err = buildChatOpsMux(cfg, service)
+	if err == nil || !strings.Contains(err.Error(), "CLOUDY_TELEGRAM_WEBHOOK_SECRET") {
+		t.Fatalf("buildChatOpsMux error = %v, want missing webhook secret", err)
+	}
+}
+
+func TestChatOpsBuildServiceRequiresSlackBotToken(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+	cfg := config.Default()
+	cfg.ChatOps.Platforms.Slack.Enabled = true
+	cfg.ChatOps.Platforms.Slack.BotTokenEnv = "CLOUDY_SLACK_BOT_TOKEN"
+	cfg.ChatOps.Platforms.Slack.AllowedTeamIDs = []string{"T1"}
+	cfg.ChatOps.Platforms.Slack.AllowedChannelIDs = []string{"C1"}
+
+	_, err := buildChatOpsService(cfg, io.Discard, "", "")
+	if err == nil || !strings.Contains(err.Error(), "CLOUDY_SLACK_BOT_TOKEN") {
+		t.Fatalf("buildChatOpsService error = %v, want missing Slack bot token", err)
+	}
+}
+
+func TestChatOpsServeRequiresEnabled(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+	cfg := config.Default()
+	cfg.ChatOps.Enabled = false
+	cfg.ChatOps.Platforms.Telegram.Enabled = true
+	cfg.ChatOps.Platforms.Telegram.Mode = "polling"
+	cfg.ChatOps.Platforms.Telegram.AllowedChatIDs = []string{"42"}
+	if err := config.Save(config.Path(), cfg); err != nil {
+		t.Fatalf("Save config: %v", err)
+	}
+
+	err := (chatopsCmd{}).Run(context.Background(), []string{"telegram-poll"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "chatops: disabled") {
+		t.Fatalf("telegram-poll error = %v, want disabled gate", err)
+	}
+}
+
+func TestTelegramSetWebhookSanitizesBotTokenNetworkError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLOUDY_HOME", home)
+	token := "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123"
+	t.Setenv("CLOUDY_TELEGRAM_BOT_TOKEN", token)
+	t.Setenv("CLOUDY_TELEGRAM_WEBHOOK_SECRET", "webhook-secret")
+	oldClient := telegramWebhookHTTPClient
+	telegramWebhookHTTPClient = &http.Client{Transport: cliRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("dial failed for %s", req.URL.String())
+	})}
+	t.Cleanup(func() { telegramWebhookHTTPClient = oldClient })
+
+	cfg := config.Default()
+	cfg.ChatOps.Enabled = true
+	cfg.ChatOps.Platforms.Telegram.Enabled = true
+	cfg.ChatOps.Platforms.Telegram.Mode = "webhook"
+	cfg.ChatOps.Platforms.Telegram.AllowedChatIDs = []string{"42"}
+	if err := config.Save(config.Path(), cfg); err != nil {
+		t.Fatalf("Save config: %v", err)
+	}
+
+	err := (chatopsCmd{}).Run(context.Background(), []string{"telegram-set-webhook", "--url", "https://cloudy.example/chatops/telegram/webhook"}, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("telegram-set-webhook returned nil error")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("telegram-set-webhook error leaked bot token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "request failed") {
+		t.Fatalf("telegram-set-webhook error = %v, want sanitized request failure", err)
+	}
+}
+
+func TestTelegramSetWebhookRequiresWebhookSecretValue(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+	t.Setenv("CLOUDY_TELEGRAM_BOT_TOKEN", "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123")
+	cfg := config.Default()
+	cfg.ChatOps.Enabled = true
+	cfg.ChatOps.Platforms.Telegram.Enabled = true
+	cfg.ChatOps.Platforms.Telegram.Mode = "webhook"
+	cfg.ChatOps.Platforms.Telegram.AllowedChatIDs = []string{"42"}
+	if err := config.Save(config.Path(), cfg); err != nil {
+		t.Fatalf("Save config: %v", err)
+	}
+
+	err := (chatopsCmd{}).Run(context.Background(), []string{"telegram-set-webhook", "--url", "https://cloudy.example/chatops/telegram/webhook"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "CLOUDY_TELEGRAM_WEBHOOK_SECRET") {
+		t.Fatalf("telegram-set-webhook error = %v, want missing webhook secret", err)
+	}
+}
+
+func TestMaskChatTextUsesDefaultMasking(t *testing.T) {
+	t.Setenv("CLOUDY_HOME", t.TempDir())
+	got := maskChatText(nil, "token xoxb-1234567890-abcdef and bearer Bearer abcdefghij123")
+	if strings.Contains(got, "xoxb-") || strings.Contains(strings.ToLower(got), "bearer abc") {
+		t.Fatalf("maskChatText leaked token-shaped text: %q", got)
+	}
+}
+
+type commandMasker struct{}
+
+func (commandMasker) MaskString(s string) string {
+	return strings.ReplaceAll(s, "CORPSECRET-4242", "[PROFILE-REDACTED]")
+}
+
+func TestMaskChatTextUsesRunnerMasker(t *testing.T) {
+	got := maskChatText(commandMasker{}, "answer contains CORPSECRET-4242")
+	if strings.Contains(got, "CORPSECRET-4242") {
+		t.Fatalf("maskChatText ignored runner masker: %q", got)
+	}
+	if !strings.Contains(got, "[PROFILE-REDACTED]") {
+		t.Fatalf("maskChatText did not apply runner masker: %q", got)
+	}
+}
+
+func TestAskCmd_UsesRunnerWithLocalProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLOUDY_HOME", home)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %s, want /chat/completions", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"runner ok"},"finish_reason":null}]}`)
+		fmt.Fprintln(w, `data: [DONE]`)
+	}))
+	defer srv.Close()
+	t.Setenv("CLOUDY_OPENAI_COMPAT_BASE_URL", srv.URL)
+
+	cfg := config.Default()
+	cfg.DefaultModel = "local/test-model"
+	if err := config.Save(config.Path(), cfg); err != nil {
+		t.Fatalf("Save config: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := (askCmd{}).Run(context.Background(), []string{"hello"}, &out, io.Discard); err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if !strings.Contains(out.String(), "runner ok") {
+		t.Fatalf("ask output missing model text:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "— model=test-model session=") {
+		t.Fatalf("ask output missing footer:\n%s", out.String())
+	}
+}
+
 func TestMemoryCasesCmd_ListShowApproveRejectJSON(t *testing.T) {
 	t.Setenv("CLOUDY_HOME", t.TempDir())
 	store := incidentmemory.NewDefaultStore()
@@ -436,3 +617,9 @@ func equalStrings(a, b []string) bool {
 
 // guard unused imports if a future refactor removes test cases.
 var _ = flag.ContinueOnError
+
+type cliRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f cliRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
