@@ -1,6 +1,10 @@
 # Changelog
 
-## v0.5.0 — Unreleased
+## Unreleased
+
+_No changes yet._
+
+## v0.6.0 — 2026-06-08
 
 ### Added — Operator skill workflows
 - **`service-health` broad triage skill** — maps vague service/user-impact
@@ -21,8 +25,8 @@
   pods and Ingress hosts, then recommends this skill only when a reachable web
   surface also has Prometheus or OpenTelemetry evidence.
 
-### Added — Tool surface (45 → 112, 10 → 16 groups)
-- **Cloud observability group (`cloud`, 24 tools)** — read-only AWS + Azure + GCP
+### Added — Tool surface (45 → 121, 10 → 21 groups)
+- **Cloud observability group (`cloud`, 25 tools)** — read-only AWS + Azure + GCP
   telemetry via the operator's already-configured `aws` / `az` / `gcloud` CLIs.
   cloudy stores no cloud secrets; credentials resolve from the CLI's own chain.
   Read-only is re-established for the shell-out path (which bypasses the HTTP
@@ -52,6 +56,9 @@
     functions, and managed-Kubernetes inventory across all three providers via
     read-only Describe/List verbs. GCP inventory list commands are first-class
     read-only `gcloud` verbs (unlike its absent metric/trace reads).
+  - **Queues / managed backlogs** — `cloud.aws_sqs_queue_depth` reads SQS queue
+    depth through the operator's ambient AWS CLI credentials so broad service
+    health triage can include cloud-hosted backlog evidence.
   - **FinOps / cost (Phase 5)** — `cloud.aws_ce_cost_and_usage` (Cost Explorer
     `get-cost-and-usage`: date window, granularity, metrics, optional group-by
     dimension); `cloud.azure_consumption_usage` (`az consumption usage list`:
@@ -239,7 +246,7 @@
 - **`SkillProvider` interface scaffold** — `*skills.Skill` becomes
   `StaticSkill` behind an interface so future `RAGSkill` / `RunbookSkill`
   implementations slot in without changing every agent call site.
-  Zero behaviour change today. (#63, opens path to v0.6 RAG layer.)
+  Zero behaviour change today. (#63, opens path to a future RAG layer.)
 
 ### Added — Tests
 - **`internal/cli/` 0 → 18 tests** covering dispatcher, `parseInto`,
@@ -253,16 +260,17 @@
   `SkillProvider` round-trip (#63), and Tempo metrics-generator
   service-graph + RED tools (#64).
 
-### Added — Tool surface from this PR set (open, not yet merged at time of writing)
+### Added — Trace metrics-generator tools
 - **`trace.service_graph` + `trace.route_red`** via Tempo's
   metrics-generator (`traces_service_graph_*`, `traces_spanmetrics_*`).
   Service topology + per-route RED metrics without adding a new
   backend. (#64)
 
 ### Added — Docs
-- **`docs/RFC-RAG.md`** — pre-implementation PRD for the v0.6 RAG /
-  knowledge-base layer (`~/.cloudy/knowledge/`). Phased rollout
-  v0.6.0 → v0.7.0. (#60)
+- **`docs/RFC-RAG.md`** — pre-implementation PRD for the future RAG /
+  knowledge-base layer (`~/.cloudy/knowledge/`). The v0.6.0 release ships the
+  `SkillProvider` interface foundation; corpus indexing and RAG integration stay
+  deferred. (#60)
 - **`docs/SAFETY.md` honesty pass** — corrected the "4 enforcement
   layers" claim to actual 3 enforcement + 2 hardening guards.
   Removed `transport.CheckVerb` dead code referenced as a fictional

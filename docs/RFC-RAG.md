@@ -1,9 +1,9 @@
 # RFC: Knowledge / RAG Layer for cloudy
 
-- **Status**: Draft (pre-implementation)
-- **Target**: v0.6.0 → v0.7.0
+- **Status**: Draft after v0.6.0 foundation; corpus/indexing deferred
+- **Target**: v0.7.0+ (phased)
 - **Owner**: TBD
-- **Last updated**: 2026-05-24
+- **Last updated**: 2026-06-08
 
 > TL;DR — Today cloudy is a smart, read-only multi-cluster SRE CLI: it knows
 > *how* to investigate a cluster but nothing about *your* cluster — your
@@ -17,10 +17,11 @@
 
 ## 1. Problem statement
 
-cloudy v0.5 ships 13 skill playbooks and 65 tools, all generic. The
+cloudy v0.6 ships 34 skill playbooks and 121 tools, all generic. The
 `incident-context` skill can already cross-reference firing alerts with
-Argo CD syncs and pod restarts — but it has zero memory of *your*
-organisation.
+Argo CD syncs and pod restarts, and the incident-memory case-card store can
+inject approved prior examples — but cloudy still has no first-class corpus
+for *your* runbooks, service ownership, alert ontology, or postmortems.
 
 ### Now answerable
 
@@ -36,7 +37,7 @@ organisation.
 - **Live cluster state.** Real-time pod status, logs, traces still
   flow through the existing tools. RAG is static org context, not a
   substitute for `k8s.list_pods`.
-- **Brand-new clusters.** Empty corpus = exactly v0.5 behaviour;
+- **Brand-new clusters.** Empty corpus = exactly v0.6 behaviour;
   opt-in by file presence.
 - **Knowledge not written down.** RAG retrieves what is in the corpus,
   period.
@@ -171,13 +172,13 @@ question → embed → cosine top-K (K=5) → render + cite
          → inject as system-prompt section → existing ReAct loop
 ```
 
-No LLM-graded reranker in v0.6. Per the architect invariant, the LLM
+No LLM-graded reranker in the first implementation. Per the architect invariant, the LLM
 eats all K=5 chunks and decides what is useful.
 
 ### Re-indexing
 
 Explicit only — `cloudy knowledge refresh`. No filesystem watcher in
-v0.6 (silent mid-session context swaps surprise operators).
+the first implementation (silent mid-session context swaps surprise operators).
 
 ---
 
@@ -320,13 +321,15 @@ The difference is not a different LLM. It is the corpus.
 
 | Version    | Scope                                                                                                                            | User-visible behaviour change |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| **v0.6.0** | Corpus directory shape; `SkillProvider` interface + `StaticSkill` refactor; `cloudy knowledge {add,list,stat}` (no embeddings).  | None — pure refactor + filesystem layout.  |
-| **v0.6.1** | Embedding pipeline: chunker, sentence-transformers backend, `cloudy knowledge refresh`, `cloudy knowledge ask` dry-run.          | New subcommands; agent loop unchanged.   |
-| **v0.6.2** | `RAGSkill` provider; agent loop integration (system-prompt injection via `Resolve`).                                             | Agent answers using corpus context when present.   |
-| **v0.7.0** | Citation rendering in agent output (`Sources: …` block); `text-embedding-3-small` opt-in backend; `knowledge` subcommand in TUI. | First-class citations + cloud embedding option. |
+| **v0.6.0** | Shipped `SkillProvider` interface + `StaticSkill` refactor only. Corpus CLI, indexing, and RAG integration deferred. | None — pure refactor. |
+| **v0.7.0** | Corpus directory shape plus `cloudy knowledge {add,list,stat}` (no embeddings). | New subcommands; agent loop unchanged. |
+| **v0.7.1** | Embedding pipeline: chunker, sentence-transformers backend, `cloudy knowledge refresh`, `cloudy knowledge ask` dry-run. | Operator-visible retrieval debug surface. |
+| **v0.7.2** | `RAGSkill` provider; agent loop integration (system-prompt injection via `Resolve`). | Agent answers using corpus context when present. |
+| **v0.8.0** | Citation rendering in agent output (`Sources: …` block); `text-embedding-3-small` opt-in backend; `knowledge` subcommand in TUI. | First-class citations + cloud embedding option. |
 
-Each milestone is independently shippable. v0.6.0 alone is valuable —
-it unblocks any future provider, not just RAG.
+Each milestone is independently shippable. v0.6.0 already carved the provider
+seam; the next milestone should make the corpus inspectable before retrieval
+quality is debated.
 
 ---
 

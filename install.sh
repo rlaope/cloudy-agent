@@ -2,17 +2,17 @@
 # cloudy installer
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy/master/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy-agent/master/install.sh | sh
 #
 # Or, with custom install dir:
-#   curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy/master/install.sh | CLOUDY_INSTALL_DIR=/usr/local/bin sh
+#   curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy-agent/master/install.sh | CLOUDY_INSTALL_DIR=/usr/local/bin sh
 #
 # Re-run the same one-liner anytime to upgrade — the script always pulls
 # whatever GitHub marks as the "latest" release.
 
 set -eu
 
-REPO="rlaope/cloudy"
+REPO="rlaope/cloudy-agent"
 BIN_NAME="cloudy"
 INSTALL_DIR="${CLOUDY_INSTALL_DIR:-$HOME/.local/bin}"
 

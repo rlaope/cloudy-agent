@@ -11,7 +11,7 @@ name: release
 #   git push origin v0.4.1
 #
 # Within ~3 minutes the new binaries are live at
-# https://github.com/rlaope/cloudy/releases/latest and the curl
+# https://github.com/rlaope/cloudy-agent/releases/latest and the curl
 # installer one-liner picks them up automatically.
 
 on:
@@ -43,7 +43,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           cache: true
 
       - name: build

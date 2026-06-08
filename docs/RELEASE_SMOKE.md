@@ -8,19 +8,26 @@ Run this after building or installing `cloudy` from a release branch.
 cloudy --help
 cloudy --version
 cloudy skills --json
+cloudy skills show service-health
+cloudy skills show app-runtime-health
+cloudy skills show frontend-web-health
 cloudy setup --auto --dry-run
 cloudy doctor --json
 cloudy tools --json
+cloudy gateway status
 cloudy memory cases list --json
 ```
 
 Expected results:
 
 - help and version print without requiring a kubeconfig or model key;
-- `skills --json` emits the built-in/user skill inventory;
+- `skills --json` emits the built-in/user skill inventory and the release-critical
+  service/app/frontend health skills render individually;
 - setup dry-run completes without writing files;
 - doctor reports actionable failures instead of panicking;
 - tools JSON includes skipped groups with reasons when no backends are configured;
+- `gateway status` reports ChatOps readiness and missing platform inputs without
+  requiring Slack, Discord, or Telegram credentials;
 - incident memory cases JSON works on a fresh install and returns an empty list.
 
 ## Optional Credentialed Checks

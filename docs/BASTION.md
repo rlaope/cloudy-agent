@@ -24,7 +24,7 @@ cloudy --version
 If you build from source on the bastion itself:
 
 ```sh
-git clone https://github.com/rlaope/cloudy.git /opt/cloudy
+git clone https://github.com/rlaope/cloudy-agent.git /opt/cloudy
 cd /opt/cloudy
 make build
 sudo install -m 0755 cloudy /usr/local/bin/cloudy

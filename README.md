@@ -43,7 +43,7 @@ perf, eBPF — based on the question, not on a fixed script.
 **One-liner (macOS, Linux — amd64 + arm64):**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy-agent/master/install.sh | sh
 ```
 
 Drops the latest GitHub release into `~/.local/bin/cloudy`, sets the
@@ -57,7 +57,7 @@ pulls whatever GitHub marks as `latest`.
 Override the install location with `CLOUDY_INSTALL_DIR`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy/master/install.sh \
+curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy-agent/master/install.sh \
   | CLOUDY_INSTALL_DIR=/usr/local/bin sh
 ```
 
@@ -65,7 +65,7 @@ curl -fsSL https://raw.githubusercontent.com/rlaope/cloudy/master/install.sh \
 release matrix):
 
 ```sh
-git clone https://github.com/rlaope/cloudy.git
+git clone https://github.com/rlaope/cloudy-agent.git
 cd cloudy
 make build         # produces ./cloudy in the repo root
 ./cloudy --version # quick smoke test from the build dir
@@ -314,7 +314,7 @@ labelled prior-incident section that says the case is a reference rather than
 proof of the current root cause. Candidate and rejected cards stay out of
 default retrieval unless an explicit inspection path includes them.
 
-### Skill playbooks (31 built-in)
+### Skill playbooks (34 built-in)
 
 Skills are curated multi-step playbooks the agent picks when a
 question matches their triggers. They live in
@@ -328,10 +328,18 @@ Run `cloudy skills --json` for the code-derived skill inventory.
 | Skill | When it fires |
 | ----- | ------------- |
 | `triage-orchestrator` | "Just got paged — where do I start?" Breadth-first scan, ranks a hypothesis, hands off to the deep skill. |
+| `service-health` | Broad service/user-impact triage across latency, traffic, errors, saturation, reachability, queues, cloud signals, and recent changes. |
+| `app-runtime-health` | Application-layer p95/p99 triage across framework, language runtime, traces, logs, Kubernetes state, and deep runtime handoff. |
+| `frontend-web-health` | Webpage and web-app UX triage across Core Web Vitals, browser errors, asset delivery, CDN/cache, SSR/API, and backend p95/p99. |
+| `incident-triage` | Proposes SEV1-SEV4 from alerts, burn rate, workload correlation, and recent changes for operator confirmation. |
 | `cluster-recon` | "What's running in my cluster right now?" topology dump. |
+| `cloud-recon` | Multi-cloud situational summary across AWS / Azure / GCP telemetry, managed inventory, cost, queues, and provider hints. |
 | `incident-context` | "What's burning right now?" — cross-references firing alerts with recent Argo CD syncs and pod restarts. |
+| `incident-journal` | Persists stable cross-session incident facts into local cloudy memory after an operator-reviewed investigation. |
+| `synthetic-probe` | HTTP/HTTPS reachability, latency, correctness, and TLS certificate health from cloudy's current vantage point. |
 | `deploy-regression` | "Did the last deploy break it?" Aligns Argo sync timestamps with error/latency onset and names the revision to roll back to. |
 | `k8s-incident` | First-pass triage for CrashLoopBackOff / Pending / OOMKilled / Eviction. |
+| `docker-incident` | Docker-hosted container triage for slowness, restarts, resource saturation, dependency errors, and logs. |
 | `crashloop-deep-dive` | Beyond exit codes — previous-container logs, probe audit, init-container ordering, traces. |
 | `oom-killed-triage` | Container-limit vs. node-level OOM, sawtooth-vs-plateau working-set pattern, JVM heap flag check. |
 | `capacity-scheduling` | Why pods stay Pending — capacity vs. taints/affinity vs. stuck autoscaler / HPA-maxed / PDB block. |
@@ -339,6 +347,7 @@ Run `cloudy skills --json` for the code-derived skill inventory.
 | `slo-burn` | SLO error-budget burn — multi-window multi-burn-rate, time-to-exhaustion, page-now vs. ticket. |
 | `log-spike-correlation` | Joins a Loki / ES error spike to Prom anomalies and pod events. |
 | `trace-error-pivot` | Walk a p99 / error-rate regression down to the slow span in Tempo or Jaeger and back to the pod. |
+| `consumer-lag-triage` | RabbitMQ/Kafka backlog triage: no consumer vs. consumers falling behind, then correlate lag onset with restarts/deploys. |
 | `db-latency-hunt` | PostgreSQL / MySQL / Redis read-only forensics for slow upstream DB calls. |
 | `prom-explorer` | Interactive PromQL composition without prior knowledge of the metric schema. |
 | `go-runtime` | Go runtime — goroutine leaks, GC pacing (GOGC), scheduler latency, pprof CPU hot paths. |
@@ -349,6 +358,7 @@ Run `cloudy skills --json` for the code-derived skill inventory.
 | `ruby-runtime` | Ruby / Rails — GVL contention, generational GC pressure, YJIT, rbspy stack sampling. |
 | `dotnet-runtime` | .NET / CLR — gen0/1/2 + LOH GC, Server-vs-Workstation mode, ThreadPool starvation, tiered JIT. |
 | `native-perf` | C / C++ / Rust — Linux perf hot paths, cache misses, branch mispredict, lock contention, missed codegen. |
+| `kernel-trace` | Kernel-level latency when app/runtime metrics are inconclusive: block I/O, TCP, syscalls, off-CPU, and process spawns via eBPF/BCC. |
 | `gpu-saturation` | GPU OOM, low utilization, thermal throttling. |
 | `ai-inference` | LLM/ML serving — TTFT / inter-token latency, throughput, KV-cache & batch saturation, GPU util (vLLM / Triton / TGI / TorchServe). |
 

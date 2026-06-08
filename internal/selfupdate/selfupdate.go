@@ -43,7 +43,7 @@ import (
 const (
 	// owner/repo where releases live. Promoted to a const so tests
 	// can swap it without parsing the full URL string.
-	releaseRepo = "rlaope/cloudy"
+	releaseRepo = "rlaope/cloudy-agent"
 
 	// requestTimeout caps a single HTTP fetch (release lookup or
 	// binary download). Long enough for a 50 MB binary on a slow
