@@ -2,6 +2,14 @@
 
 ## v0.5.0 — Unreleased
 
+### Added — Operator skill workflows
+- **`service-health` broad triage skill** — maps vague service/user-impact
+  symptoms onto golden signals, telemetry correlation, runtime state, recent
+  changes, queues, synthetic probes, and managed-cloud evidence, then routes to
+  the one deep read-only specialist. `triage-orchestrator` now hands broad
+  health cases to this skill and is recommended only when setup finds a
+  reachable Kubernetes context.
+
 ### Added — Tool surface (45 → 112, 10 → 16 groups)
 - **Cloud observability group (`cloud`, 24 tools)** — read-only AWS + Azure + GCP
   telemetry via the operator's already-configured `aws` / `az` / `gcloud` CLIs.
