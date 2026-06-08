@@ -30,9 +30,13 @@ func (a TelegramHTTPAdapter) WebhookHandler() http.Handler {
 			http.Error(w, "invalid secret", http.StatusUnauthorized)
 			return
 		}
-		body, err := io.ReadAll(io.LimitReader(r.Body, maxTelegramBodyBytes))
+		body, tooLarge, err := readBoundedBody(r.Body, maxTelegramBodyBytes)
 		if err != nil {
 			http.Error(w, "read body", http.StatusBadRequest)
+			return
+		}
+		if tooLarge {
+			http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
 			return
 		}
 		var update TelegramUpdate

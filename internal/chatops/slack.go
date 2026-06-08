@@ -122,9 +122,13 @@ func (a SlackHTTPAdapter) EventsHandler() http.Handler {
 }
 
 func (a SlackHTTPAdapter) readAndVerify(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxSlackBodyBytes))
+	body, tooLarge, err := readBoundedBody(r.Body, maxSlackBodyBytes)
 	if err != nil {
 		http.Error(w, "read body", http.StatusBadRequest)
+		return nil, false
+	}
+	if tooLarge {
+		http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
 		return nil, false
 	}
 	if !VerifySlackSignature(a.SigningSecret, r.Header.Get("X-Slack-Request-Timestamp"), body, r.Header.Get("X-Slack-Signature"), a.now()) {

@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -94,9 +93,13 @@ func (a DiscordHTTPAdapter) InteractionsHandler() http.Handler {
 }
 
 func (a DiscordHTTPAdapter) readAndVerify(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxDiscordBodyBytes))
+	body, tooLarge, err := readBoundedBody(r.Body, maxDiscordBodyBytes)
 	if err != nil {
 		http.Error(w, "read body", http.StatusBadRequest)
+		return nil, false
+	}
+	if tooLarge {
+		http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
 		return nil, false
 	}
 	timestamp := r.Header.Get("X-Signature-Timestamp")
