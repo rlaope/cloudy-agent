@@ -81,6 +81,36 @@ type toolBlock struct {
 
 const memoryRecordedPrefix = "Recorded to cross-session memory:"
 
+type markdownTailState struct {
+	buf           *strings.Builder
+	committed     int
+	rendered      int
+	renderedBytes int
+}
+
+func newMarkdownTailState() markdownTailState {
+	return markdownTailState{buf: &strings.Builder{}}
+}
+
+func (m *markdownTailState) write(s string) {
+	m.buf.WriteString(s)
+}
+
+func (m *markdownTailState) raw() string {
+	return m.buf.String()
+}
+
+func (m *markdownTailState) len() int {
+	return m.buf.Len()
+}
+
+func (m *markdownTailState) reset() {
+	m.buf.Reset()
+	m.committed = 0
+	m.rendered = 0
+	m.renderedBytes = 0
+}
+
 // StreamModel backs the scrollable output area using a bubbles/viewport.
 //
 // content is a *strings.Builder, not a value, on purpose: the bubbletea
@@ -102,21 +132,19 @@ type StreamModel struct {
 	pendingTokens  *strings.Builder
 	flushScheduled bool
 
-	// mdBuf accumulates the raw markdown text of the CURRENT assistant
-	// message. drainPending re-renders mdBuf[:mdCommitted] via glamour
-	// (the full prefix up to the last sentence boundary) and replaces
-	// the last mdTailLen bytes of `content` with the new output. The
-	// buffer is reset by finalizeMarkdown on tool / chrome / clear
+	// mdTail accumulates the raw markdown text of the CURRENT assistant
+	// message. drainPending renders only the newly committed slice during
+	// steady-state streaming, while resize/finalize can re-render the full
+	// committed prefix when exact wrapping or final markdown context matters.
+	// The buffer is reset by finalizeAssistantBlock on tool / chrome / clear
 	// boundaries so the next assistant message starts a fresh block.
 	//
-	// mdCommitted advances only at sentence-terminator + whitespace
+	// mdTail.committed advances only at sentence-terminator + whitespace
 	// boundaries (or paragraph newlines). That keeps the output stream
 	// feeling like sentence-by-sentence prose rather than token-by-token
 	// jitter — tokens still arrive at SSE speed but the visible commit
 	// happens in coherent chunks.
-	mdBuf       *strings.Builder
-	mdCommitted int
-	mdTailLen   int
+	mdTail markdownTailState
 
 	// mdRenderer is reconstructed on every WindowSizeMsg so word-wrap
 	// matches the current viewport width. noColor mode leaves it nil and
@@ -191,7 +219,7 @@ func newStreamModel(noColor bool) StreamModel {
 		noColor:       noColor,
 		content:       &strings.Builder{},
 		pendingTokens: &strings.Builder{},
-		mdBuf:         &strings.Builder{},
+		mdTail:        newMarkdownTailState(),
 	}
 	if !noColor {
 		s.mdRenderer = newMarkdownRenderer(defaultMarkdownWrap)
@@ -235,11 +263,11 @@ func (s *StreamModel) drainPending() bool {
 	}
 	// Sentence-batched commit: only advance the visible content when a
 	// new sentence terminator has landed past the previous commit point.
-	// Partial-sentence tokens stay in mdBuf silently — the operator sees
+	// Partial-sentence tokens stay in mdTail silently — the operator sees
 	// completed clauses appear in coherent chunks instead of a flicker
 	// of partial words being re-rendered every 16 ms.
-	raw := s.mdBuf.String()
-	bound := lastSentenceEnd(raw, s.mdCommitted)
+	raw := s.mdTail.raw()
+	bound := lastSentenceEnd(raw, s.mdTail.committed)
 	if bound < 0 {
 		// No new sentence yet — drop the pending-flush signal so we do
 		// not re-trigger on the same buffer state. The next streamToken
@@ -249,36 +277,57 @@ func (s *StreamModel) drainPending() bool {
 	}
 	wasAtBottom := !s.ready || s.vp.AtBottom()
 	s.pendingTokens.Reset()
-	s.mdCommitted = bound + 1
-	s.applyMarkdownTail()
+	s.mdTail.committed = bound + 1
+	s.appendMarkdownTail(raw)
 	if s.ready && wasAtBottom {
 		s.vp.GotoBottom()
 	}
 	return true
 }
 
-// applyMarkdownTail renders mdBuf[:mdCommitted] via glamour and
-// replaces the last mdTailLen bytes of `content` with the new output.
-// Shared by drainPending (after advancing mdCommitted), the resize
-// re-render in WindowSizeMsg, and finalizeAssistantBlock (which forces
-// the committed boundary all the way to mdBuf.Len()).
-func (s *StreamModel) applyMarkdownTail() {
-	raw := s.mdBuf.String()
-	if s.mdCommitted > len(raw) {
-		s.mdCommitted = len(raw)
+// appendMarkdownTail renders only the newly committed raw slice and
+// appends it to content. The old implementation re-rendered the whole
+// assistant prefix on every sentence boundary; for long streamed markdown
+// that made glamour work grow quadratically with response length.
+func (s *StreamModel) appendMarkdownTail(raw string) {
+	if s.mdTail.committed > len(raw) {
+		s.mdTail.committed = len(raw)
 	}
-	if s.mdCommitted == 0 {
+	if s.mdTail.rendered > s.mdTail.committed {
+		s.mdTail.rendered = s.mdTail.committed
+	}
+	if s.mdTail.committed <= s.mdTail.rendered {
 		return
 	}
-	rendered := s.renderAssistantTail(raw[:s.mdCommitted])
+	rendered := s.renderAssistantTail(raw[s.mdTail.rendered:s.mdTail.committed])
+	s.content.WriteString(rendered)
+	s.mdTail.renderedBytes += len(rendered)
+	s.mdTail.rendered = s.mdTail.committed
+	if s.ready {
+		s.vp.SetContent(s.content.String())
+	}
+}
+
+// rerenderMarkdownTail replaces the current assistant tail with a render of
+// the full committed prefix. Resize and finalize use this slower exact path;
+// steady-state streaming uses appendMarkdownTail.
+func (s *StreamModel) rerenderMarkdownTail(raw string) {
+	if s.mdTail.committed > len(raw) {
+		s.mdTail.committed = len(raw)
+	}
+	if s.mdTail.committed == 0 {
+		return
+	}
+	rendered := s.renderAssistantTail(raw[:s.mdTail.committed])
 	cur := s.content.String()
-	if s.mdTailLen > 0 && len(cur) >= s.mdTailLen {
-		cur = cur[:len(cur)-s.mdTailLen]
+	if s.mdTail.renderedBytes > 0 && len(cur) >= s.mdTail.renderedBytes {
+		cur = cur[:len(cur)-s.mdTail.renderedBytes]
 	}
 	s.content.Reset()
 	s.content.WriteString(cur)
 	s.content.WriteString(rendered)
-	s.mdTailLen = len(rendered)
+	s.mdTail.renderedBytes = len(rendered)
+	s.mdTail.rendered = s.mdTail.committed
 	if s.ready {
 		s.vp.SetContent(s.content.String())
 	}
@@ -354,6 +403,9 @@ func (s *StreamModel) renderAssistantTail(raw string) string {
 }
 
 func cleanAssistantMarkdown(raw string) string {
+	if !strings.Contains(raw, "#") {
+		return raw
+	}
 	lines := strings.Split(raw, "\n")
 	inFence := false
 	for i, line := range lines {
@@ -382,19 +434,18 @@ func cleanAssistantMarkdown(raw string) string {
 // assistant message starts a fresh block instead of overwriting this
 // one's tail. Called at tool / chrome / clear boundaries.
 //
-// If sentence-batched commit left any tokens past mdCommitted (the
+// If sentence-batched commit left any tokens past mdTail.committed (the
 // message ended mid-sentence, e.g. an LLM that omits final punctuation
 // or got cut off), force the commit boundary all the way to the end
-// of mdBuf and apply one last render so the operator doesn't lose the
+// of mdTail and apply one last render so the operator doesn't lose the
 // trailing clause.
 func (s *StreamModel) finalizeAssistantBlock() {
-	if s.mdBuf.Len() > s.mdCommitted {
-		s.mdCommitted = s.mdBuf.Len()
-		s.applyMarkdownTail()
+	if s.mdTail.len() > 0 {
+		raw := s.mdTail.raw()
+		s.mdTail.committed = s.mdTail.len()
+		s.rerenderMarkdownTail(raw)
 	}
-	s.mdBuf.Reset()
-	s.mdCommitted = 0
-	s.mdTailLen = 0
+	s.mdTail.reset()
 }
 
 func (s StreamModel) Init() tea.Cmd { return nil }
@@ -435,11 +486,11 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 				// re-render its committed prefix under the new width
 				// immediately so the visible wrap matches the new
 				// viewport. Uncommitted (mid-sentence) tail stays
-				// hidden — applyMarkdownTail only re-renders up to
-				// mdCommitted, matching the sentence-batched commit
+				// hidden — rerenderMarkdownTail only re-renders up to
+				// mdTail.committed, matching the sentence-batched commit
 				// model in drainPending.
-				if s.mdCommitted > 0 {
-					s.applyMarkdownTail()
+				if s.mdTail.committed > 0 {
+					s.rerenderMarkdownTail(s.mdTail.raw())
 				}
 			}
 		}
@@ -449,9 +500,9 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 		// so a burst of SSE chunks coalesces into one render. Schedule
 		// the tick exactly once until the flush handler runs. Tokens
 		// land in BOTH pendingTokens (the flush-trigger signal) and
-		// mdBuf (the rolling source for glamour re-renders).
+		// mdTail (the rolling source for glamour re-renders).
 		s.pendingTokens.WriteString(string(m))
-		s.mdBuf.WriteString(string(m))
+		s.mdTail.write(string(m))
 		if !s.flushScheduled {
 			s.flushScheduled = true
 			cmds = append(cmds, streamFlushTickCmd())
@@ -587,9 +638,7 @@ func (s StreamModel) Update(msg tea.Msg) (StreamModel, tea.Cmd) {
 	case streamClearMsg:
 		s.content.Reset()
 		s.pendingTokens.Reset()
-		s.mdBuf.Reset()
-		s.mdCommitted = 0
-		s.mdTailLen = 0
+		s.mdTail.reset()
 		s.flushScheduled = false
 		s.pendingTool = nil
 		if s.ready {
@@ -709,9 +758,7 @@ func (s *StreamModel) Commit() string {
 	out := s.content.String()
 	s.content.Reset()
 	s.pendingTokens.Reset()
-	s.mdBuf.Reset()
-	s.mdCommitted = 0
-	s.mdTailLen = 0
+	s.mdTail.reset()
 	s.flushScheduled = false
 	s.pendingTool = nil
 	if s.ready {

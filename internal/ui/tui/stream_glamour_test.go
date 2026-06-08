@@ -8,15 +8,15 @@ import (
 )
 
 // TestStreamModel_GlamourRendersAssistantMarkdown pins the new behaviour
-// where assistant tokens accumulate in mdBuf and the rolling tail is
-// re-rendered via glamour on every flush. The operator sees a polished
+// where assistant tokens accumulate in mdTail and the rolling tail is
+// rendered via glamour on every flush. The operator sees a polished
 // rendering instead of the raw stream.
 //
 // Glamour's WithAutoStyle falls back to plain text when stdout isn't a
 // TTY (always true under `go test`), so the bold markers DO survive the
 // render in tests. We assert the structural invariants that hold in
-// every style: the renderer was called (mdTailLen reflects the rendered
-// length, which differs from the raw input because glamour wraps with
+// every style: the renderer was called (mdTail.renderedBytes reflects the
+// rendered length, which differs from the raw input because glamour wraps with
 // margins) and the original content is preserved.
 func TestStreamModel_GlamourRendersAssistantMarkdown(t *testing.T) {
 	s := newStreamModel(false) // color mode → glamour active
@@ -43,11 +43,11 @@ func TestStreamModel_GlamourRendersAssistantMarkdown(t *testing.T) {
 	}
 	// Renderer was called → tail length is set and differs from the raw
 	// input length (glamour adds at least a leading and trailing margin).
-	if s.mdTailLen == 0 {
-		t.Errorf("mdTailLen should be set after drainPending (renderer was not invoked)")
+	if s.mdTail.renderedBytes == 0 {
+		t.Errorf("mdTail.renderedBytes should be set after drainPending (renderer was not invoked)")
 	}
-	if s.mdTailLen == len(raw) {
-		t.Errorf("mdTailLen == len(raw) means glamour was a no-op; expected wrapped output")
+	if s.mdTail.renderedBytes == len(raw) {
+		t.Errorf("mdTail.renderedBytes == len(raw) means glamour was a no-op; expected wrapped output")
 	}
 }
 
@@ -106,7 +106,7 @@ func TestStreamModel_NoColor_StaysRaw(t *testing.T) {
 
 // TestStreamModel_SentenceBatchedCommit pins the new streaming model:
 // drainPending only advances the visible content when a sentence
-// terminator + whitespace boundary lands in mdBuf past mdCommitted.
+// terminator + whitespace boundary lands in mdTail past mdTail.committed.
 // Tokens that land mid-sentence accumulate silently — they don't paint
 // half-words to the viewport every 16 ms like the old re-render-every-
 // flush behaviour did.
@@ -121,8 +121,8 @@ func TestStreamModel_SentenceBatchedCommit(t *testing.T) {
 	if s.drainPending() {
 		t.Errorf("drainPending should return false for a mid-sentence buffer")
 	}
-	if s.mdCommitted != 0 {
-		t.Errorf("mdCommitted should stay 0 before the first sentence ends; got %d", s.mdCommitted)
+	if s.mdTail.committed != 0 {
+		t.Errorf("mdTail.committed should stay 0 before the first sentence ends; got %d", s.mdTail.committed)
 	}
 
 	// Token 2: completes the sentence + adds a space → COMMIT.
@@ -131,10 +131,10 @@ func TestStreamModel_SentenceBatchedCommit(t *testing.T) {
 	if !s.drainPending() {
 		t.Fatal("drainPending should commit once `.` + ` ` is in the buffer")
 	}
-	if s.mdCommitted == 0 {
-		t.Errorf("mdCommitted should advance past the committed sentence")
+	if s.mdTail.committed == 0 {
+		t.Errorf("mdTail.committed should advance past the committed sentence")
 	}
-	committedAfterFirst := s.mdCommitted
+	committedAfterFirst := s.mdTail.committed
 
 	// Token 3: starts the next sentence — uncommitted until its
 	// terminator arrives.
@@ -143,8 +143,8 @@ func TestStreamModel_SentenceBatchedCommit(t *testing.T) {
 	if s.drainPending() {
 		t.Errorf("drainPending should not advance on a partial second sentence")
 	}
-	if s.mdCommitted != committedAfterFirst {
-		t.Errorf("mdCommitted should stay at %d while the second sentence is partial; got %d", committedAfterFirst, s.mdCommitted)
+	if s.mdTail.committed != committedAfterFirst {
+		t.Errorf("mdTail.committed should stay at %d while the second sentence is partial; got %d", committedAfterFirst, s.mdTail.committed)
 	}
 
 	// Token 4: terminator + space → commit.
@@ -153,8 +153,8 @@ func TestStreamModel_SentenceBatchedCommit(t *testing.T) {
 	if !s.drainPending() {
 		t.Fatal("drainPending should commit once the second sentence terminates")
 	}
-	if s.mdCommitted <= committedAfterFirst {
-		t.Errorf("mdCommitted should have advanced past the second sentence; was %d, now %d", committedAfterFirst, s.mdCommitted)
+	if s.mdTail.committed <= committedAfterFirst {
+		t.Errorf("mdTail.committed should have advanced past the second sentence; was %d, now %d", committedAfterFirst, s.mdTail.committed)
 	}
 }
 
@@ -177,9 +177,9 @@ func TestStreamModel_ClauseBoundaryCommits(t *testing.T) {
 	if !s.drainPending() {
 		t.Fatal("comma + space should commit just like a sentence terminator")
 	}
-	committedAfterComma := s.mdCommitted
+	committedAfterComma := s.mdTail.committed
 	if committedAfterComma == 0 {
-		t.Errorf("mdCommitted should advance after `, `; got 0")
+		t.Errorf("mdTail.committed should advance after `, `; got 0")
 	}
 
 	// Semicolon also counts.
@@ -188,13 +188,13 @@ func TestStreamModel_ClauseBoundaryCommits(t *testing.T) {
 	if !s.drainPending() {
 		t.Fatal("semicolon + space should commit")
 	}
-	if s.mdCommitted <= committedAfterComma {
-		t.Errorf("mdCommitted should advance past `; `; was %d still %d", committedAfterComma, s.mdCommitted)
+	if s.mdTail.committed <= committedAfterComma {
+		t.Errorf("mdTail.committed should advance past `; `; was %d still %d", committedAfterComma, s.mdTail.committed)
 	}
 }
 
 // TestStreamModel_FinalizeForcesUncommittedTail pins the rule that a
-// tool / chrome boundary force-commits whatever's left in mdBuf, even
+// tool / chrome boundary force-commits whatever's left in mdTail, even
 // if the message ended mid-sentence. Without this, an LLM that omits
 // the final terminator (or that gets cut off) would silently lose its
 // trailing clause.
@@ -207,8 +207,8 @@ func TestStreamModel_FinalizeForcesUncommittedTail(t *testing.T) {
 	s = updated
 	s.drainPending() // no-op — no boundary
 
-	if s.mdCommitted != 0 {
-		t.Fatalf("precondition: nothing should be committed yet; got %d", s.mdCommitted)
+	if s.mdTail.committed != 0 {
+		t.Fatalf("precondition: nothing should be committed yet; got %d", s.mdTail.committed)
 	}
 	beforeContent := s.content.String()
 
@@ -217,14 +217,39 @@ func TestStreamModel_FinalizeForcesUncommittedTail(t *testing.T) {
 	if s.content.String() == beforeContent {
 		t.Errorf("finalize should have force-committed the uncommitted tail; content unchanged")
 	}
-	if s.mdBuf.Len() != 0 || s.mdCommitted != 0 {
-		t.Errorf("finalize should reset the buffer and committed offset; got mdBuf=%d mdCommitted=%d", s.mdBuf.Len(), s.mdCommitted)
+	if s.mdTail.len() != 0 || s.mdTail.committed != 0 {
+		t.Errorf("finalize should reset the buffer and committed offset; got mdTail=%d committed=%d", s.mdTail.len(), s.mdTail.committed)
+	}
+}
+
+func TestStreamModel_FinalizeRerendersStructuredMarkdownAcrossBoundaries(t *testing.T) {
+	s := newStreamModel(false)
+	updated, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = updated
+
+	for _, chunk := range []string{
+		"| Check | Result |\n",
+		"|---|---|\n",
+		"| API | ok |\n",
+	} {
+		updated, _ = s.Update(streamTokenMsg(chunk))
+		s = updated
+		s.drainPending()
+	}
+
+	s.finalizeAssistantBlock()
+	out := stripANSI(s.content.String())
+	if strings.Contains(out, "|---|") {
+		t.Fatalf("finalize should re-render the full table instead of leaving streamed table syntax:\n%s", out)
+	}
+	if strings.Count(out, "API") != 1 || strings.Count(out, "ok") != 1 {
+		t.Fatalf("finalized table should preserve one rendered row; got:\n%s", out)
 	}
 }
 
 // TestStreamModel_GlamourRerendersOnResize pins the new behaviour where a
 // WindowSizeMsg arriving AFTER the assistant tokens have stopped
-// streaming re-renders the in-flight mdBuf at the new width — otherwise
+// streaming re-renders the in-flight mdTail at the new width — otherwise
 // the visible wrap stayed at the old viewport's width until the next
 // token or chrome event triggered drainPending. Without this the
 // operator who resizes their terminal mid-conversation sees a
@@ -235,23 +260,23 @@ func TestStreamModel_GlamourRerendersOnResize(t *testing.T) {
 	s = updated
 
 	// Trailing newline so sentence-batched drainPending advances
-	// mdCommitted and produces a non-zero mdTailLen on the first flush.
+	// mdTail.committed and produces a non-zero rendered tail on the first flush.
 	updated, _ = s.Update(streamTokenMsg("Some assistant prose for the resize check.\n"))
 	s = updated
 	s.drainPending()
-	originalTail := s.mdTailLen
+	originalTail := s.mdTail.renderedBytes
 	if originalTail == 0 {
-		t.Fatal("expected mdTailLen to be set after the first flush")
+		t.Fatal("expected rendered tail length to be set after the first flush")
 	}
 
 	// Tokens have stopped (no further streamTokenMsg). Now resize.
 	updated, _ = s.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
 	s = updated
 
-	if s.mdTailLen == 0 {
-		t.Fatal("resize while mdBuf is non-empty should leave a fresh rendered tail")
+	if s.mdTail.renderedBytes == 0 {
+		t.Fatal("resize while mdTail is non-empty should leave a fresh rendered tail")
 	}
-	if s.mdTailLen == originalTail {
-		t.Errorf("expected tail length to change at the new wrap width (was %d, still %d)", originalTail, s.mdTailLen)
+	if s.mdTail.renderedBytes == originalTail {
+		t.Errorf("expected tail length to change at the new wrap width (was %d, still %d)", originalTail, s.mdTail.renderedBytes)
 	}
 }

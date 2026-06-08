@@ -1,8 +1,6 @@
 package render
 
-import (
-	"github.com/charmbracelet/glamour"
-)
+import "github.com/charmbracelet/glamour"
 
 // RenderMarkdown renders markdown-formatted text to an ANSI-escaped string
 // suitable for terminal display.
@@ -13,9 +11,9 @@ import (
 // The width parameter constrains the rendered line length; pass 0 for
 // glamour's default (80 columns).
 func RenderMarkdown(md string, theme Theme, width int) (string, error) {
-	style := glamour.WithStylePath("dark")
+	style := glamour.WithStandardStyle("dark")
 	if theme.NoColor() {
-		style = glamour.WithStylePath("notty")
+		style = glamour.WithStandardStyle("notty")
 	}
 
 	opts := []glamour.TermRendererOption{style}
