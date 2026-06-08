@@ -23,6 +23,7 @@ func TestProfile_SaveAndLoad_RoundTrip(t *testing.T) {
 				NodeCount:                 10,
 				GPUNodeCount:              2,
 				Namespaces:                []string{"default", "kube-system"},
+				PodSampleScanned:          true,
 				PodSampleCount:            2000,
 				PodSampleIncomplete:       true,
 				PodSampleIncompleteReason: "cap",
@@ -59,6 +60,9 @@ func TestProfile_SaveAndLoad_RoundTrip(t *testing.T) {
 	}
 	if loaded.Contexts[0].K8sVersion != "v1.28.5" {
 		t.Errorf("K8sVersion: got %q, want v1.28.5", loaded.Contexts[0].K8sVersion)
+	}
+	if !loaded.Contexts[0].PodSampleScanned {
+		t.Error("PodSampleScanned: got false, want true")
 	}
 	if loaded.Contexts[0].PodSampleCount != 2000 {
 		t.Errorf("PodSampleCount: got %d, want 2000", loaded.Contexts[0].PodSampleCount)

@@ -579,6 +579,7 @@ func TestProfileCluster_PrintsRuntimeSummary(t *testing.T) {
 			Reachable:                 true,
 			NodeCount:                 3,
 			HasPrometheus:             true,
+			PodSampleScanned:          true,
 			PodSampleCount:            2000,
 			PodSampleIncomplete:       true,
 			PodSampleIncompleteReason: "cap",
@@ -603,6 +604,31 @@ func TestProfileCluster_PrintsRuntimeSummary(t *testing.T) {
 	}
 	if strings.Contains(got, "jvm_pods=") || strings.Contains(got, "py_pods=") {
 		t.Fatalf("profile cluster output should use generic runtime summary:\n%s", got)
+	}
+}
+
+func TestProfileCluster_PrintsZeroPodSampleWhenScanCompleted(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLOUDY_HOME", dir)
+
+	profile := config.Profile{
+		SchemaVersion: config.CurrentSchemaVersion,
+		Contexts: []config.ContextProfile{{
+			Name:             "empty",
+			Reachable:        true,
+			PodSampleScanned: true,
+		}},
+	}
+	if err := config.SaveProfile(config.ProfilePath(), profile); err != nil {
+		t.Fatalf("SaveProfile: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := (profileCmd{}).Run(context.Background(), []string{"cluster"}, &out, io.Discard); err != nil {
+		t.Fatalf("profile cluster: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "pod_sample=0") {
+		t.Fatalf("profile cluster output should show completed zero pod sample:\n%s", got)
 	}
 }
 

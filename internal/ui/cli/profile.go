@@ -161,7 +161,7 @@ func profileCluster(stdout io.Writer) error {
 }
 
 func formatPodSample(c config.ContextProfile) string {
-	if c.PodSampleCount == 0 && !c.PodSampleIncomplete {
+	if !c.PodSampleScanned && c.PodSampleCount == 0 && !c.PodSampleIncomplete {
 		return "-"
 	}
 	if c.PodSampleIncomplete {

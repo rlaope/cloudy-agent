@@ -262,6 +262,7 @@ func ScanContext(ctx context.Context, kubeconfigPath, contextName string) (Conte
 	// Sample pods across namespaces with pagination, capped to keep setup fast
 	// on very large clusters while avoiding first-page-only bias.
 	podSample := listPodsForSetup(ctx, core)
+	result.PodSampleScanned = true
 	result.PodSampleCount = len(podSample.Items)
 	result.PodSampleIncomplete = podSample.Incomplete
 	result.PodSampleIncompleteReason = podSample.IncompleteReason

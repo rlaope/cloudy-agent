@@ -53,6 +53,9 @@ type ContextProfile struct {
 	// Namespaces is the list of namespaces visible to the probe credentials.
 	Namespaces []string `yaml:"namespaces,omitempty"`
 
+	// PodSampleScanned is true when setup attempted to inspect pods for hints.
+	PodSampleScanned bool `yaml:"pod_sample_scanned,omitempty"`
+
 	// PodSampleCount is the number of pods inspected for setup hints.
 	PodSampleCount int `yaml:"pod_sample_count,omitempty"`
 
