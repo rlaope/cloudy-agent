@@ -12,8 +12,6 @@ triggers:
   - user impact
   - latency spike
   - latency regression
-  - p95 latency
-  - p99 latency
   - error rate
   - 5xx
   - traffic drop
@@ -108,7 +106,7 @@ Run the cheapest wired path first:
 
 1. `alert.list_active` and `alert.list_rules` when available. Current firing alerts and their labels often provide the exact service/window/runbook vocabulary.
 2. `prom.query_range` for:
-   - latency: p95/p99 or the service's existing latency recording rule.
+   - latency: p95/p99 from service-layer HTTP histograms or the service's existing latency recording rule. If the app uses OpenTelemetry HTTP metrics, discover `http.server.request.duration` or its Prometheus-converted native/classic histogram series first; for classic histograms, keep `le` in the aggregation and use `histogram_quantile(0.95|0.99, sum by (le, service, route) (rate(<duration>_bucket[5m])))`.
    - traffic: request rate / throughput.
    - errors: 5xx or explicit failed-event ratio.
    - saturation: CPU, memory, disk, connection pool, queue depth, or another constrained resource.
@@ -119,7 +117,7 @@ Run the cheapest wired path first:
 
 Pick one dominant signal and deepen only there:
 
-- **Latency/errors**: use `trace.route_red` if wired; otherwise search Tempo or Jaeger for the service and worst route/operation. Fetch only the top traces needed to identify a repeated bottleneck. Cross-check with `log.loki_query_range` for the same minutes.
+- **Latency/errors**: if service-layer p95/p99 is the headline and the framework/runtime owner is not known, hand off to `app-runtime-health`. If the path itself needs span detail, use `trace.route_red`; otherwise search Tempo or Jaeger for the service and worst route/operation. Fetch only the top traces needed to identify a repeated bottleneck. Cross-check with `log.loki_query_range` for the same minutes.
 - **Traffic drop or external failure**: run `synthetic.http_check` when an endpoint URL is known, then compare to blackbox Prometheus history if present.
 - **Saturation**: use `k8s.top_pods`, `k8s.top_nodes`, `k8s.list_nodes`, and `k8s.describe_pod` to identify the constrained pod/node. If the constraint is DB/runtime-specific, hand off instead of profiling here.
 - **Queue backlog**: use `queue.rabbitmq_queues`, `queue.kafka_consumer_lag`, or `cloud.aws_sqs_queue_depth` to classify "no consumer" vs. "consumers falling behind."
@@ -138,6 +136,7 @@ Do not solve every subsystem in this skill. Route to the deep skill that matches
 | Dominant evidence | Hand off to |
 |---|---|
 | Recent deploy aligns with onset | `deploy-regression` |
+| Service-layer p95/p99, framework, or language-runtime lead | `app-runtime-health` |
 | Error/latency path needs span detail | `trace-error-pivot` |
 | Log volume or top error pattern leads | `log-spike-correlation` |
 | SLO budget or page-vs-ticket decision | `slo-burn` |
@@ -147,7 +146,7 @@ Do not solve every subsystem in this skill. Route to the deep skill that matches
 | DB lock/query/replication/Redis signal | `db-latency-hunt` |
 | Cloud account or managed provider surface | `cloud-recon` |
 | External URL/cert/blackbox issue | `synthetic-probe` |
-| Runtime CPU/profile hotspot | `go-runtime`, `node-runtime`, `py-perf`, `jvm-gc`, or `native-perf` |
+| Runtime CPU/profile hotspot | `go-runtime`, `node-runtime`, `py-perf`, `jvm-gc`, `jvm-thread`, `dotnet-runtime`, `ruby-runtime`, or `native-perf` |
 
 ## Output shape
 

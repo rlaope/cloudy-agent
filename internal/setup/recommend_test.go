@@ -12,6 +12,7 @@ import (
 func allTestSkills() []*skills.Skill {
 	names := []string{
 		"service-health",
+		"app-runtime-health",
 		"triage-orchestrator",
 		"k8s-incident",
 		"prom-explorer",
@@ -68,6 +69,39 @@ func TestRecommend_TriageOrchestratorRequiresReachableK8s(t *testing.T) {
 	}
 	if !hasRec(recs, "service-health") {
 		t.Error("expected service-health to remain the broad default without Kubernetes")
+	}
+}
+
+func TestRecommend_AppRuntimeHealthRequiresPrometheusAndReachableK8s(t *testing.T) {
+	p := config.Profile{
+		SchemaVersion: config.CurrentSchemaVersion,
+		Contexts:      []config.ContextProfile{{Name: "ctx", Reachable: true, HasPrometheus: true}},
+	}
+	recs := Recommend(p, allTestSkills())
+	if !hasRec(recs, "app-runtime-health") {
+		t.Error("expected app-runtime-health when Prometheus is discovered")
+	}
+}
+
+func TestRecommend_AppRuntimeHealthAbsentWithoutReachableK8s(t *testing.T) {
+	p := config.Profile{
+		SchemaVersion: config.CurrentSchemaVersion,
+		Contexts:      []config.ContextProfile{{Name: "ctx", Reachable: false, HasPrometheus: true}},
+	}
+	recs := Recommend(p, allTestSkills())
+	if hasRec(recs, "app-runtime-health") {
+		t.Error("did not expect app-runtime-health without a reachable Kubernetes context")
+	}
+}
+
+func TestRecommend_AppRuntimeHealthAbsentWithoutPrometheus(t *testing.T) {
+	p := config.Profile{
+		SchemaVersion: config.CurrentSchemaVersion,
+		Contexts:      []config.ContextProfile{{Name: "ctx", Reachable: true, HasPrometheus: false}},
+	}
+	recs := Recommend(p, allTestSkills())
+	if hasRec(recs, "app-runtime-health") {
+		t.Error("did not expect app-runtime-health without Prometheus")
 	}
 }
 

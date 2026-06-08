@@ -247,6 +247,32 @@ func TestRegistry_Suggest_NaturalLanguageContainsTrigger(t *testing.T) {
 	}
 }
 
+func TestRegistry_Suggest_ServiceLayerRuntimeSymptom(t *testing.T) {
+	ss, err := skills.LoadBuiltin()
+	if err != nil {
+		t.Fatalf("LoadBuiltin: %v", err)
+	}
+	r := skills.New(ss)
+
+	results := r.Suggest("spring boot service p99 latency regression")
+	if len(results) == 0 {
+		t.Fatal("Suggest returned no results")
+	}
+	if results[0].Name != "app-runtime-health" {
+		t.Fatalf("Suggest app-runtime symptom first result = %q, want app-runtime-health; got %v", results[0].Name, skillNames(results))
+	}
+
+	frameworkResults := r.Suggest("framework latency")
+	if len(frameworkResults) != 1 || frameworkResults[0].Name != "app-runtime-health" {
+		t.Fatalf("Suggest framework-specific symptom = %v, want only app-runtime-health", skillNames(frameworkResults))
+	}
+
+	tailResults := r.Suggest("p99 latency")
+	if len(tailResults) == 0 || tailResults[0].Name != "app-runtime-health" {
+		t.Fatalf("Suggest p99 latency = %v, want app-runtime-health first", skillNames(tailResults))
+	}
+}
+
 func TestRegistry_Suggest_ShortTriggerNeedsBoundary(t *testing.T) {
 	ss := []*skills.Skill{
 		{Name: "cloud-recon", Triggers: []string{"gcp status"}},
@@ -276,6 +302,46 @@ func TestRegistry_Suggest_TokenTriggerDoesNotMatchInsideWord(t *testing.T) {
 	}
 	if results := r.Suggest("payments is oomkilled"); len(results) != 1 || results[0].Name != "oom-killed-triage" {
 		t.Fatalf("Suggest did not match oom prefix in oomkilled: %v", skillNames(results))
+	}
+}
+
+func TestLoadBuiltin_AppRuntimeHealthCoversFrameworkMetricsTools(t *testing.T) {
+	ss, err := skills.LoadBuiltin()
+	if err != nil {
+		t.Fatalf("LoadBuiltin: %v", err)
+	}
+	r := skills.New(ss)
+	s, ok := r.Get("app-runtime-health")
+	if !ok {
+		t.Fatal("LoadBuiltin missing app-runtime-health")
+	}
+	want := []string{
+		"prom.query_range",
+		"prom.series",
+		"trace.route_red",
+		"log.loki_query_range",
+		"k8s.describe_pod",
+		"perf.go_pprof_cpu",
+		"perf.v8_inspector_cpu_profile",
+		"perf.rbspy_dump",
+		"perf.linux_perf_record",
+		"jvm.jcmd_thread_dump",
+		"py.spy_top_snapshot",
+	}
+	have := make(map[string]bool, len(s.AllowedTools))
+	for _, tool := range s.AllowedTools {
+		have[tool] = true
+	}
+	for _, tool := range want {
+		if !have[tool] {
+			t.Errorf("app-runtime-health allowed_tools missing %q", tool)
+		}
+	}
+	if !strings.Contains(s.SystemPrompt, "p95") || !strings.Contains(s.SystemPrompt, "p99") {
+		t.Error("app-runtime-health prompt should explicitly cover p95 and p99")
+	}
+	if !strings.Contains(s.SystemPrompt, "http.server.request.duration") {
+		t.Error("app-runtime-health prompt should reference OTel HTTP server duration metrics")
 	}
 }
 
