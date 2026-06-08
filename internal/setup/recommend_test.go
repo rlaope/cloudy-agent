@@ -11,6 +11,8 @@ import (
 // Recommend may emit, so none are silently dropped.
 func allTestSkills() []*skills.Skill {
 	names := []string{
+		"service-health",
+		"triage-orchestrator",
 		"k8s-incident",
 		"prom-explorer",
 		"cluster-recon",
@@ -44,14 +46,28 @@ func hasRec(recs []Recommendation, name string) bool {
 func TestRecommend_AlwaysOn(t *testing.T) {
 	p := config.Profile{
 		SchemaVersion: config.CurrentSchemaVersion,
-		Contexts:      []config.ContextProfile{{Name: "ctx"}},
+		Contexts:      []config.ContextProfile{{Name: "ctx", Reachable: true}},
 	}
 	recs := Recommend(p, allTestSkills())
 
-	for _, name := range []string{"k8s-incident", "prom-explorer", "cluster-recon"} {
+	for _, name := range []string{"service-health", "triage-orchestrator", "k8s-incident", "prom-explorer", "cluster-recon"} {
 		if !hasRec(recs, name) {
 			t.Errorf("expected always-on skill %q in recommendations", name)
 		}
+	}
+}
+
+func TestRecommend_TriageOrchestratorRequiresReachableK8s(t *testing.T) {
+	p := config.Profile{
+		SchemaVersion: config.CurrentSchemaVersion,
+		Contexts:      []config.ContextProfile{{Name: "ctx", Reachable: false}},
+	}
+	recs := Recommend(p, allTestSkills())
+	if hasRec(recs, "triage-orchestrator") {
+		t.Error("did not expect triage-orchestrator without a reachable Kubernetes context")
+	}
+	if !hasRec(recs, "service-health") {
+		t.Error("expected service-health to remain the broad default without Kubernetes")
 	}
 }
 

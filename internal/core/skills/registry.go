@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/rlaope/cloudy/internal/registry"
 )
@@ -34,18 +36,20 @@ func (r *Registry) Get(name string) (*Skill, bool) { return r.items.Get(name) }
 func (r *Registry) List() []*Skill { return r.items.All() }
 
 // Suggest returns up to 3 skills whose Triggers match input
-// (case-insensitive), ranked so that an exact trigger match outranks a mere
-// substring match, with alphabetical name order as a stable tiebreaker. The
-// ranking keeps a specific keyword like "gc" surfacing the skill whose trigger
-// is exactly "gc" ahead of skills that only contain it as a substring (e.g. a
-// "gcp" trigger), instead of letting the alphabetically-first three matches
-// crowd it out of the cap.
+// (case-insensitive), ranked so that an exact trigger match outranks a natural
+// language sentence that contains a trigger, which outranks picker-style
+// partial matching against trigger text. The ranking keeps a specific keyword
+// like "gc" surfacing the skill whose trigger is exactly "gc" without letting
+// it match unrelated words such as "gcp".
 func (r *Registry) Suggest(input string) []*Skill {
-	lower := strings.ToLower(input)
+	lower := strings.TrimSpace(strings.ToLower(input))
+	if lower == "" {
+		return nil
+	}
 
 	type scored struct {
 		skill *Skill
-		score int // 2 = exact trigger match, 1 = substring match
+		score int // 3 = exact trigger match, 2 = input contains trigger, 1 = trigger contains input
 	}
 	// r.items.All() is alphabetical and stable, so SliceStable below preserves
 	// alphabetical order within a score tier.
@@ -53,9 +57,14 @@ func (r *Registry) Suggest(input string) []*Skill {
 	for _, s := range r.items.All() {
 		best := 0
 		for _, t := range s.Triggers {
-			lt := strings.ToLower(t)
+			lt := strings.TrimSpace(strings.ToLower(t))
+			if lt == "" {
+				continue
+			}
 			switch {
 			case lt == lower:
+				best = 3
+			case best < 2 && containsTrigger(lower, lt):
 				best = 2
 			case best < 1 && strings.Contains(lt, lower):
 				best = 1
@@ -77,6 +86,57 @@ func (r *Registry) Suggest(input string) []*Skill {
 		matches = append(matches, sc.skill)
 	}
 	return matches
+}
+
+func containsTrigger(input, trigger string) bool {
+	if hasTriggerSeparator(trigger) {
+		return strings.Contains(input, trigger)
+	}
+	// Atomic triggers are intentionally stricter than phrase triggers. We
+	// match "oom" in "oomkilled" because operators use the compound form, but
+	// avoid matching it inside unrelated words like "boom".
+	idx := strings.Index(input, trigger)
+	for idx >= 0 {
+		beforeOK := idx == 0 || isTriggerBoundary(runeBefore(input, idx))
+		after := idx + len(trigger)
+		afterOK := after == len(input) || len([]rune(trigger)) > 2 || isTriggerBoundary(runeAfter(input, after))
+		if beforeOK && afterOK {
+			return true
+		}
+		next := idx + len(trigger)
+		if next >= len(input) {
+			break
+		}
+		rel := strings.Index(input[next:], trigger)
+		if rel < 0 {
+			break
+		}
+		idx = next + rel
+	}
+	return false
+}
+
+func runeBefore(s string, byteIdx int) rune {
+	r, _ := utf8.DecodeLastRuneInString(s[:byteIdx])
+	return r
+}
+
+func runeAfter(s string, byteIdx int) rune {
+	r, _ := utf8.DecodeRuneInString(s[byteIdx:])
+	return r
+}
+
+func hasTriggerSeparator(s string) bool {
+	for _, r := range s {
+		if isTriggerBoundary(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func isTriggerBoundary(r rune) bool {
+	return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 }
 
 // Validate checks that every tool name referenced in any skill's AllowedTools

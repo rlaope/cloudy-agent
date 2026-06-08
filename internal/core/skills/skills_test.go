@@ -231,6 +231,94 @@ func TestRegistry_Suggest_TopThree(t *testing.T) {
 	}
 }
 
+func TestRegistry_Suggest_NaturalLanguageContainsTrigger(t *testing.T) {
+	ss := []*skills.Skill{
+		{Name: "service-health", Triggers: []string{"service health", "p99 latency", "5xx"}},
+		{Name: "trace-error-pivot", Triggers: []string{"latency regression"}},
+	}
+	r := skills.New(ss)
+
+	results := r.Suggest("checkout has a p99 latency spike and 5xx errors")
+	if len(results) == 0 {
+		t.Fatal("Suggest returned no results")
+	}
+	if results[0].Name != "service-health" {
+		t.Fatalf("Suggest natural-language symptom first result = %q, want service-health", results[0].Name)
+	}
+}
+
+func TestRegistry_Suggest_ShortTriggerNeedsBoundary(t *testing.T) {
+	ss := []*skills.Skill{
+		{Name: "cloud-recon", Triggers: []string{"gcp status"}},
+		{Name: "jvm-gc", Triggers: []string{"gc"}},
+	}
+	r := skills.New(ss)
+
+	results := r.Suggest("gcp status")
+	for _, s := range results {
+		if s.Name == "jvm-gc" {
+			t.Fatalf("Suggest matched short trigger gc inside gcp: %v", skillNames(results))
+		}
+	}
+	if len(results) == 0 || results[0].Name != "cloud-recon" {
+		t.Fatalf("Suggest(\"gcp status\") = %v, want cloud-recon first", skillNames(results))
+	}
+}
+
+func TestRegistry_Suggest_TokenTriggerDoesNotMatchInsideWord(t *testing.T) {
+	ss := []*skills.Skill{
+		{Name: "oom-killed-triage", Triggers: []string{"oom"}},
+	}
+	r := skills.New(ss)
+
+	if results := r.Suggest("payments emits boom errors"); len(results) != 0 {
+		t.Fatalf("Suggest matched oom inside boom: %v", skillNames(results))
+	}
+	if results := r.Suggest("payments is oomkilled"); len(results) != 1 || results[0].Name != "oom-killed-triage" {
+		t.Fatalf("Suggest did not match oom prefix in oomkilled: %v", skillNames(results))
+	}
+}
+
+func TestLoadBuiltin_ServiceHealthCoversCoreObservabilityTools(t *testing.T) {
+	ss, err := skills.LoadBuiltin()
+	if err != nil {
+		t.Fatalf("LoadBuiltin: %v", err)
+	}
+	r := skills.New(ss)
+	s, ok := r.Get("service-health")
+	if !ok {
+		t.Fatal("LoadBuiltin missing service-health")
+	}
+	want := []string{
+		"prom.query_range",
+		"log.loki_query_range",
+		"trace.tempo_search",
+		"k8s.events",
+		"change.recent",
+		"correlate.workload",
+		"synthetic.http_check",
+		"cloud.aws_cw_get_metric_statistics",
+		"queue.kafka_consumer_lag",
+	}
+	have := make(map[string]bool, len(s.AllowedTools))
+	for _, tool := range s.AllowedTools {
+		have[tool] = true
+	}
+	for _, tool := range want {
+		if !have[tool] {
+			t.Errorf("service-health allowed_tools missing %q", tool)
+		}
+	}
+}
+
+func skillNames(ss []*skills.Skill) []string {
+	names := make([]string, len(ss))
+	for i, s := range ss {
+		names[i] = s.Name
+	}
+	return names
+}
+
 // ---------------------------------------------------------------------------
 // TestRegistry_Validate
 // ---------------------------------------------------------------------------
