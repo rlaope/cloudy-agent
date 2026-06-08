@@ -209,7 +209,7 @@ func TestRecommend_JVM(t *testing.T) {
 	p := config.Profile{
 		SchemaVersion: config.CurrentSchemaVersion,
 		Contexts: []config.ContextProfile{
-			{Name: "ctx", JVMPodCount: 5},
+			{Name: "ctx", Reachable: true, HasPrometheus: true, JVMPodCount: 5},
 		},
 	}
 	recs := Recommend(p, allTestSkills())
@@ -224,7 +224,7 @@ func TestRecommend_JVM(t *testing.T) {
 func TestRecommend_JVMBelowThreshold(t *testing.T) {
 	p := config.Profile{
 		SchemaVersion: config.CurrentSchemaVersion,
-		Contexts:      []config.ContextProfile{{Name: "ctx", JVMPodCount: 2}},
+		Contexts:      []config.ContextProfile{{Name: "ctx", Reachable: true, HasPrometheus: true, JVMPodCount: 2}},
 	}
 	recs := Recommend(p, allTestSkills())
 	for _, name := range []string{"jvm-gc", "jvm-thread"} {
@@ -238,7 +238,7 @@ func TestRecommend_JVMBelowThreshold(t *testing.T) {
 func TestRecommend_Python(t *testing.T) {
 	p := config.Profile{
 		SchemaVersion: config.CurrentSchemaVersion,
-		Contexts:      []config.ContextProfile{{Name: "ctx", PythonPodCount: 4}},
+		Contexts:      []config.ContextProfile{{Name: "ctx", Reachable: true, HasPrometheus: true, PythonPodCount: 4}},
 	}
 	recs := Recommend(p, allTestSkills())
 	if !hasRec(recs, "py-perf") {
@@ -250,7 +250,7 @@ func TestRecommend_Python(t *testing.T) {
 func TestRecommend_PythonBelowThreshold(t *testing.T) {
 	p := config.Profile{
 		SchemaVersion: config.CurrentSchemaVersion,
-		Contexts:      []config.ContextProfile{{Name: "ctx", PythonPodCount: 1}},
+		Contexts:      []config.ContextProfile{{Name: "ctx", Reachable: true, HasPrometheus: true, PythonPodCount: 1}},
 	}
 	recs := Recommend(p, allTestSkills())
 	if hasRec(recs, "py-perf") {
@@ -278,6 +278,8 @@ func TestRecommend_GenericRuntimeFamilies(t *testing.T) {
 				SchemaVersion: config.CurrentSchemaVersion,
 				Contexts: []config.ContextProfile{{
 					Name:             "ctx",
+					Reachable:        true,
+					HasPrometheus:    true,
 					RuntimePodCounts: map[string]int{tc.runtime: 3},
 				}},
 			}
@@ -295,7 +297,9 @@ func TestRecommend_GenericRuntimeFamiliesBelowThreshold(t *testing.T) {
 	p := config.Profile{
 		SchemaVersion: config.CurrentSchemaVersion,
 		Contexts: []config.ContextProfile{{
-			Name: "ctx",
+			Name:          "ctx",
+			Reachable:     true,
+			HasPrometheus: true,
 			RuntimePodCounts: map[string]int{
 				"go":     2,
 				"node":   2,
@@ -327,13 +331,52 @@ func TestRecommend_UnknownSkillDropped(t *testing.T) {
 	}
 }
 
+func TestRecommend_PrometheusBackedRuntimeSkillsRequirePrometheus(t *testing.T) {
+	p := config.Profile{
+		SchemaVersion: config.CurrentSchemaVersion,
+		Contexts: []config.ContextProfile{{
+			Name:      "ctx",
+			Reachable: true,
+			RuntimePodCounts: map[string]int{
+				"go":     3,
+				"node":   3,
+				"jvm":    3,
+				"python": 3,
+				"ruby":   3,
+				"dotnet": 3,
+			},
+		}},
+	}
+	recs := Recommend(p, allTestSkills())
+	for _, name := range []string{"go-runtime", "node-runtime", "jvm-gc", "jvm-thread", "py-perf", "ruby-runtime", "dotnet-runtime"} {
+		if hasRec(recs, name) {
+			t.Errorf("did not expect %q without Prometheus in the runtime context", name)
+		}
+	}
+}
+
+func TestRecommend_NativeRuntimeOnlyRequiresReachableK8s(t *testing.T) {
+	p := config.Profile{
+		SchemaVersion: config.CurrentSchemaVersion,
+		Contexts: []config.ContextProfile{{
+			Name:             "ctx",
+			Reachable:        true,
+			RuntimePodCounts: map[string]int{"native": 3},
+		}},
+	}
+	recs := Recommend(p, allTestSkills())
+	if !hasRec(recs, "native-perf") {
+		t.Error("expected native-perf for native workloads in a reachable Kubernetes context")
+	}
+}
+
 // TestRecommend_MultiContextJVM verifies JVM count is summed across contexts.
 func TestRecommend_MultiContextJVM(t *testing.T) {
 	p := config.Profile{
 		SchemaVersion: config.CurrentSchemaVersion,
 		Contexts: []config.ContextProfile{
-			{Name: "a", JVMPodCount: 1},
-			{Name: "b", JVMPodCount: 2},
+			{Name: "a", Reachable: true, HasPrometheus: true, JVMPodCount: 1},
+			{Name: "b", Reachable: true, HasPrometheus: true, JVMPodCount: 2},
 		},
 	}
 	recs := Recommend(p, allTestSkills())
@@ -346,12 +389,26 @@ func TestRecommend_MultiContextRuntimePodCounts(t *testing.T) {
 	p := config.Profile{
 		SchemaVersion: config.CurrentSchemaVersion,
 		Contexts: []config.ContextProfile{
-			{Name: "a", RuntimePodCounts: map[string]int{"node": 1}},
-			{Name: "b", RuntimePodCounts: map[string]int{"node": 2}},
+			{Name: "a", Reachable: true, HasPrometheus: true, RuntimePodCounts: map[string]int{"node": 1}},
+			{Name: "b", Reachable: true, HasPrometheus: true, RuntimePodCounts: map[string]int{"node": 2}},
 		},
 	}
 	recs := Recommend(p, allTestSkills())
 	if !hasRec(recs, "node-runtime") {
 		t.Error("expected node-runtime when runtime_pod_counts sum across contexts >= 3")
+	}
+}
+
+func TestRecommend_MultiContextRuntimePodCountsIgnoresIneligibleContexts(t *testing.T) {
+	p := config.Profile{
+		SchemaVersion: config.CurrentSchemaVersion,
+		Contexts: []config.ContextProfile{
+			{Name: "a", Reachable: true, RuntimePodCounts: map[string]int{"node": 2}},
+			{Name: "b", Reachable: true, HasPrometheus: true, RuntimePodCounts: map[string]int{"node": 1}},
+		},
+	}
+	recs := Recommend(p, allTestSkills())
+	if hasRec(recs, "node-runtime") {
+		t.Error("did not expect node-runtime when only one eligible Prometheus-backed Node pod was found")
 	}
 }
