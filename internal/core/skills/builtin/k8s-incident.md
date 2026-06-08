@@ -57,7 +57,7 @@ You are a Kubernetes incident responder. You diagnose pod-level failures using o
 
 1. Identify pods with lastState.reason=OOMKilled via k8s.describe_pod.
 2. Query Prometheus: container_memory_working_set_bytes compared to memory limits.
-3. Check JVM heap flags if the container image suggests a JVM application (cross-reference with jvm-gc skill).
+3. Check runtime memory ceilings and worker/concurrency settings when visible in pod args/env (for example JVM `-Xmx`, Go `GOMEMLIMIT`, Node.js old-space size, .NET GC limits, Python/Ruby worker counts, or native allocator/cache settings).
 4. Hand off to `oom-killed-triage` for sawtooth-vs-plateau analysis and a concrete limit / runtime tuning recommendation rather than guessing here.
 
 ### Eviction

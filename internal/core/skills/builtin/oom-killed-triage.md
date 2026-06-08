@@ -1,6 +1,6 @@
 ---
 name: oom-killed-triage
-description: Deep-dive triage for OOMKilled containers — joins working-set vs. limit, recent restart cadence, node memory pressure, and JVM heap flags so the operator gets a concrete "raise this limit / tune this flag" recommendation instead of "out of memory".
+description: Deep-dive triage for OOMKilled containers — joins working-set vs. limit, recent restart cadence, node memory pressure, and runtime memory/config signals so the operator gets a concrete "raise this limit / tune this setting" recommendation instead of "out of memory".
 triggers:
   - oomkilled
   - oom killed
@@ -67,9 +67,9 @@ You are an OOM-kill triage specialist. The `k8s-incident` skill mentions OOMKill
 ### Step 4: Cause class — leak, load, or misconfig
 
 1. `prom.query_range` on the app's request rate over the same window. If working-set grew with request rate, suspect load.
-2. `prom.query_range` on GC counters if it is a JVM (`jvm_memory_pool_bytes_used`, `jvm_gc_pause_seconds_sum`) or Python (`process_resident_memory_bytes`).
+2. `prom.query_range` on runtime memory counters when present: Go `go_memstats_*` / `process_resident_memory_bytes`, JVM `jvm_memory_pool_bytes_used` / `jvm_gc_pause_seconds_sum`, Python `process_resident_memory_bytes`, Node.js `nodejs_heap_*`, Ruby `ruby_gc_*`, .NET `process_runtime_dotnet_*`, or allocator/native RSS metrics.
 3. `log.loki_query_range` with `{namespace="<ns>", pod=~"<pod>"} |~ "(?i)out of memory|outofmemoryerror|killed|core dump"` for the last terminations.
-4. JVM-image specific: if `-Xmx` is unset or larger than the container limit, that alone explains the kill — say so before anything else.
+4. Runtime-config specific: check memory ceilings and allocator knobs visible in pod args/env before blaming a leak. Examples: JVM `-Xmx`, Go `GOMEMLIMIT`, Node.js `--max-old-space-size`, .NET GC hard limits, Python worker concurrency, Ruby Puma/Sidekiq concurrency, or native allocator/cache settings. If a configured ceiling is unset, larger than the container limit, or multiplies per worker, say that before anything else.
 
 ### Step 5: Synthesise + recommend
 
@@ -85,7 +85,7 @@ Most likely:   <leak | load spike | tight headroom | misconfigured runtime>
 Evidence:      <one prom series + one event line + one log line>
 Recommendation (read-only):
   - <concrete configuration change the operator should propose>
-  - <complementary observation, e.g. "JVM has -Xmx2g inside a 1.5g limit">
+  - <complementary observation, e.g. "runtime memory ceiling exceeds the 1.5g container limit">
 ```
 
 ## Operating Constraints
@@ -93,4 +93,4 @@ Recommendation (read-only):
 - Never recommend `kubectl delete` or `kubectl scale` — the recommendation field is for a **proposed manifest change** the operator will apply themselves.
 - Distinguish RSS from working-set in the report; do not conflate them.
 - If `kube-state-metrics` is missing the resource-limit series, say so rather than asserting "no limit" — absence of the metric is not absence of the limit.
-- Bring in `jvm-gc`, `py-perf`, or `gpu-saturation` skills as follow-ups when the runtime points that way; do not duplicate their playbooks here.
+- Bring in `go-runtime`, `node-runtime`, `jvm-gc`, `jvm-thread`, `py-perf`, `ruby-runtime`, `dotnet-runtime`, `native-perf`, or `gpu-saturation` as follow-ups when the runtime points that way; do not duplicate their playbooks here.

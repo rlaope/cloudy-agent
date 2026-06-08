@@ -5,10 +5,16 @@
 # cloudy
 
 Read-only multi-cluster SRE agent in your terminal. Ask plain-language
-questions about Kubernetes / JVM / Python / GPU workloads across every
-cluster you have credentials for, and get answers stitched together
-from `kubectl`, Prometheus, Loki, jcmd, py-spy, nvidia-smi, perf, eBPF,
-and friends — without typing any of them.
+questions about services, runtimes, frontends, databases, queues, ML
+inference, and infrastructure across every cluster you have credentials for,
+and get answers stitched together from `kubectl`, Prometheus, Loki, traces,
+runtime profilers, device telemetry, perf, eBPF, and friends — without typing
+any of them.
+
+cloudy is language-agnostic by default. Kubernetes state, service metrics,
+logs, traces, changes, and dependency signals are the baseline; Go, Node.js,
+JVM, Python, Ruby, .NET, native-code, GPU, and kernel probes are optional deep
+adapters when the workload exposes them.
 
 cloudy never mutates infrastructure. Every call is `GET` / `LIST` /
 `WATCH`, enforced at four layers.
@@ -35,8 +41,9 @@ You type:
 cloudy plans the investigation, runs the relevant read-only probes
 (metrics, logs, traces, profiles), and explains what it found. The
 agent picks tools from a typed registry — Kubernetes, Prometheus,
-Loki / ES, Tempo / Jaeger, pprof, async-profiler, py-spy, NVIDIA SMI,
-perf, eBPF — based on the question, not on a fixed script.
+Loki / ES, Tempo / Jaeger, pprof, V8 Inspector, async-profiler, py-spy,
+rbspy, NVIDIA SMI / DCGM, perf, eBPF — based on the question, not on a fixed
+script or a fixed language list.
 
 ## Install
 
@@ -228,8 +235,8 @@ On top of those layers cloudy adds two hardening guards:
   LLM never sees them in its tool catalogue and cannot ask for them.
 - A **risk-rated approval gate** sits in front of tools that are
   read-only but expensive enough to perturb the system they're
-  observing — STW JVM pauses, attached eBPF probes, long profiling
-  windows. The TUI surfaces a `y/N` banner; headless entry points
+  observing — runtime safepoints, attached profilers, eBPF probes, long
+  profiling windows. The TUI surfaces a `y/N` banner; headless entry points
   refuse them with a clear message. See
   [docs/SAFETY.md](docs/SAFETY.md).
 
@@ -244,11 +251,9 @@ On top of those layers cloudy adds two hardening guards:
 | Traces        | Tempo, Jaeger                                      |
 | Change        | k8s rollouts / images / scale, Docker containers, Argo CD sync |
 | Correlation   | cross-signal change↔symptom evidence timeline      |
-| JVM           | jcmd, async-profiler (heap / cpu / alloc)          |
-| Python        | py-spy (sampling / dump-stacks)                    |
-| Ruby          | rbspy (sampling) — registered as `perf.rbspy_dump` |
-| GPU           | NVIDIA SMI, DCGM                                   |
-| Kernel        | perf, eBPF (read-only probes only)                 |
+| Application runtimes | Go pprof, V8 Inspector, jcmd / async-profiler, py-spy, rbspy, .NET / CLR metrics, native perf |
+| Accelerators | NVIDIA SMI, DCGM                                   |
+| Kernel / host | perf, eBPF (read-only probes only)                |
 | Databases     | Postgres / MySQL / Redis (read-only query subset)  |
 
 HTTP backends are reached via the K8s apiserver's `services/proxy`,
@@ -341,7 +346,7 @@ Run `cloudy skills --json` for the code-derived skill inventory.
 | `k8s-incident` | First-pass triage for CrashLoopBackOff / Pending / OOMKilled / Eviction. |
 | `docker-incident` | Docker-hosted container triage for slowness, restarts, resource saturation, dependency errors, and logs. |
 | `crashloop-deep-dive` | Beyond exit codes — previous-container logs, probe audit, init-container ordering, traces. |
-| `oom-killed-triage` | Container-limit vs. node-level OOM, sawtooth-vs-plateau working-set pattern, JVM heap flag check. |
+| `oom-killed-triage` | Container-limit vs. node-level OOM, sawtooth-vs-plateau working-set pattern, runtime memory/config checks. |
 | `capacity-scheduling` | Why pods stay Pending — capacity vs. taints/affinity vs. stuck autoscaler / HPA-maxed / PDB block. |
 | `network-connectivity` | Why workload A can't reach B — walks DNS → Service/endpoints → NetworkPolicy → Ingress / mesh sidecar. |
 | `slo-burn` | SLO error-budget burn — multi-window multi-burn-rate, time-to-exhaustion, page-now vs. ticket. |

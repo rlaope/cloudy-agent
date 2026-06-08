@@ -23,11 +23,13 @@ func Recommend(p config.Profile, all []*skills.Skill) []Recommendation {
 	for _, s := range all {
 		known[s.Name] = true
 	}
+	added := make(map[string]bool, len(all))
 
 	add := func(out []Recommendation, name, reason string) []Recommendation {
-		if !known[name] {
+		if !known[name] || added[name] {
 			return out
 		}
+		added[name] = true
 		return append(out, Recommendation{SkillName: name, Reason: reason})
 	}
 
@@ -43,7 +45,7 @@ func Recommend(p config.Profile, all []*skills.Skill) []Recommendation {
 		out = add(out, "triage-orchestrator", "reachable Kubernetes context detected — first-responder routing to the right deep skill")
 	}
 	if hasPrometheusReachableK8sContext(p) {
-		out = add(out, "app-runtime-health", "Prometheus and reachable Kubernetes context detected — application and service-layer p95/p99 triage available")
+		out = add(out, "app-runtime-health", "Prometheus and reachable Kubernetes context detected — language-neutral application, framework, runtime, and service-layer p95/p99 triage available")
 	}
 	if hasObservableFrontendSurface(p) {
 		out = add(out, "frontend-web-health", "frontend/web surface plus Prometheus or OpenTelemetry telemetry detected — Web Vitals, browser error, asset, CDN, and SSR/API triage available")
@@ -58,26 +60,57 @@ func Recommend(p config.Profile, all []*skills.Skill) []Recommendation {
 		}
 	}
 
-	// JVM workload threshold.
-	var totalJVM int
-	for _, cp := range p.Contexts {
-		totalJVM += cp.JVMPodCount
-	}
-	if totalJVM >= 3 {
-		out = add(out, "jvm-gc", "JVM workloads detected — GC analysis available")
-		out = add(out, "jvm-thread", "JVM workloads detected — thread-dump analysis available")
-	}
-
-	// Python workload threshold.
-	var totalPython int
-	for _, cp := range p.Contexts {
-		totalPython += cp.PythonPodCount
-	}
-	if totalPython >= 3 {
-		out = add(out, "py-perf", "Python workloads detected — performance profiling available")
+	for _, rule := range runtimeRecommendationRules {
+		total := totalRuntimePodCount(p, rule.runtime)
+		if total < runtimeRecommendationThreshold {
+			continue
+		}
+		out = add(out, rule.skillName, fmt.Sprintf("%s workloads detected (%d pods) — %s", rule.label, total, rule.reason))
 	}
 
 	return out
+}
+
+const runtimeRecommendationThreshold = 3
+
+var runtimeRecommendationRules = []struct {
+	runtime   string
+	label     string
+	skillName string
+	reason    string
+}{
+	{runtime: "go", label: "Go", skillName: "go-runtime", reason: "goroutine, GC pacing, scheduler, and pprof analysis available"},
+	{runtime: "node", label: "Node.js / V8", skillName: "node-runtime", reason: "event-loop, GC, deopt, and V8 profile analysis available"},
+	{runtime: "jvm", label: "JVM", skillName: "jvm-gc", reason: "GC analysis available"},
+	{runtime: "jvm", label: "JVM", skillName: "jvm-thread", reason: "thread-dump and pool analysis available"},
+	{runtime: "python", label: "Python", skillName: "py-perf", reason: "GIL, async-loop, and py-spy profiling analysis available"},
+	{runtime: "ruby", label: "Ruby", skillName: "ruby-runtime", reason: "GVL, GC, YJIT, and rbspy stack analysis available"},
+	{runtime: "dotnet", label: ".NET / CLR", skillName: "dotnet-runtime", reason: "GC, ThreadPool, and tiered-JIT metric analysis available"},
+	{runtime: "native", label: "Native", skillName: "native-perf", reason: "perf hot-path, cache, branch, and lock-contention analysis available"},
+}
+
+func totalRuntimePodCount(p config.Profile, runtime string) int {
+	var total int
+	for _, cp := range p.Contexts {
+		total += contextRuntimePodCount(cp, runtime)
+	}
+	return total
+}
+
+func contextRuntimePodCount(cp config.ContextProfile, runtime string) int {
+	if cp.RuntimePodCounts != nil {
+		if count, ok := cp.RuntimePodCounts[runtime]; ok {
+			return count
+		}
+	}
+	switch runtime {
+	case "jvm":
+		return cp.JVMPodCount
+	case "python":
+		return cp.PythonPodCount
+	default:
+		return 0
+	}
 }
 
 func hasObservableFrontendSurface(p config.Profile) bool {

@@ -110,14 +110,77 @@ func TestIsPythonPod_ByEnv(t *testing.T) {
 	}
 }
 
-// TestNonGPUNonJVMNonPython ensures plain pods are not misclassified.
-func TestNonGPUNonJVMNonPython(t *testing.T) {
+func TestDetectPodRuntimes_BroadApplicationFamilies(t *testing.T) {
+	cases := []struct {
+		name    string
+		runtime string
+		pod     *corev1.Pod
+	}{
+		{
+			name:    "Go image",
+			runtime: "go",
+			pod:     makePod("checkout-api", "default", "golang:1.23", nil),
+		},
+		{
+			name:    "Go env",
+			runtime: "go",
+			pod:     makePod("checkout-api", "default", "registry.local/checkout:latest", map[string]string{"GODEBUG": "gctrace=1"}),
+		},
+		{
+			name:    "Node image",
+			runtime: "node",
+			pod:     makePod("orders-api", "default", "node:22-alpine", nil),
+		},
+		{
+			name:    "Ruby image",
+			runtime: "ruby",
+			pod:     makePod("billing-api", "default", "ruby:3.3", nil),
+		},
+		{
+			name:    ".NET image",
+			runtime: "dotnet",
+			pod:     makePod("identity-api", "default", "mcr.microsoft.com/dotnet/aspnet:8.0", nil),
+		},
+		{
+			name:    "native image",
+			runtime: "native",
+			pod:     makePod("edge-api", "default", "rust:1.78", nil),
+		},
+		{
+			name:    "runtime label",
+			runtime: "node",
+			pod:     makeLabeledPod("orders-api", "default", "registry.local/orders:latest", map[string]string{"app.kubernetes.io/runtime": "node"}),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !containsRuntime(detectPodRuntimes(*tc.pod), tc.runtime) {
+				t.Errorf("expected %s runtime for %s", tc.runtime, tc.name)
+			}
+		})
+	}
+}
+
+// TestPlainInfrastructurePodDoesNotSuggestLanguageRuntime ensures generic
+// infrastructure images do not make setup look language-specific.
+func TestPlainInfrastructurePodDoesNotSuggestLanguageRuntime(t *testing.T) {
 	p := makePod("p", "default", "nginx:latest", nil)
 	if isJVMPod(*p) {
 		t.Error("nginx should not be JVM")
 	}
 	if isPythonPod(*p) {
 		t.Error("nginx should not be Python")
+	}
+	if got := detectPodRuntimes(*p); len(got) != 0 {
+		t.Errorf("nginx should not suggest an application runtime, got %v", got)
+	}
+}
+
+func TestDetectPodRuntimes_DoesNotTreatNodeExporterAsNodeJS(t *testing.T) {
+	p := makePod("node-exporter", "monitoring", "quay.io/prometheus/node-exporter:v1.9.1", nil)
+	if containsRuntime(detectPodRuntimes(*p), "node") {
+		t.Error("node-exporter should not be classified as Node.js")
 	}
 }
 

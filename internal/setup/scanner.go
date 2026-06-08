@@ -51,24 +51,133 @@ var canonicalPermissionProbes = []struct {
 // to report the result of probing a single kubeconfig context.
 type ContextResult = config.ContextProfile
 
-// jvmEnvVars is the set of environment variable names that signal a JVM process.
-var jvmEnvVars = map[string]bool{
-	"JAVA_TOOL_OPTIONS": true,
-	"_JAVA_OPTIONS":     true,
-	"JAVA_OPTS":         true,
+type runtimeSignal struct {
+	name           string
+	imageRe        *regexp.Regexp
+	blockedImageRe *regexp.Regexp
+	envNames       map[string]bool
+	envPrefixes    []string
+	tokens         map[string]bool
 }
 
-// pythonEnvVars is the set of environment variable names that signal a Python process.
-var pythonEnvVars = map[string]bool{
-	"PYTHONPATH":       true,
-	"PYTHONUNBUFFERED": true,
+var runtimeSignals = []runtimeSignal{
+	{
+		name:    "go",
+		imageRe: regexp.MustCompile(`(^|[/:._-])(go|golang)($|[/:._-])`),
+		envNames: map[string]bool{
+			"GODEBUG":    true,
+			"GOGC":       true,
+			"GOMEMLIMIT": true,
+			"GOMAXPROCS": true,
+		},
+		tokens: map[string]bool{
+			"go":     true,
+			"golang": true,
+		},
+	},
+	{
+		name:           "node",
+		imageRe:        regexp.MustCompile(`(^|[/:._-])(node|nodejs|next|nextjs|nestjs|express)($|[/:._-])`),
+		blockedImageRe: regexp.MustCompile(`(^|[/:._-])(node-exporter|prometheus-node-exporter)($|[/:._-])`),
+		envNames: map[string]bool{
+			"NODE_ENV":            true,
+			"NODE_OPTIONS":        true,
+			"NPM_CONFIG_LOGLEVEL": true,
+		},
+		tokens: map[string]bool{
+			"node":    true,
+			"nodejs":  true,
+			"next":    true,
+			"nextjs":  true,
+			"nestjs":  true,
+			"express": true,
+		},
+	},
+	{
+		name:    "jvm",
+		imageRe: regexp.MustCompile(`(^|[/:._-])(java|jdk|jre|openjdk|eclipse-temurin|temurin|amazoncorretto|corretto)($|[/:._-])|:\d+-jdk|:\d+-jre`),
+		envNames: map[string]bool{
+			"JAVA_TOOL_OPTIONS": true,
+			"_JAVA_OPTIONS":     true,
+			"JAVA_OPTS":         true,
+		},
+		tokens: map[string]bool{
+			"java":            true,
+			"jdk":             true,
+			"jre":             true,
+			"jvm":             true,
+			"openjdk":         true,
+			"eclipse-temurin": true,
+			"temurin":         true,
+			"corretto":        true,
+			"spring":          true,
+			"tomcat":          true,
+			"netty":           true,
+		},
+	},
+	{
+		name:    "python",
+		imageRe: regexp.MustCompile(`(^|[/:._-])(python|django|fastapi|flask|gunicorn|uvicorn|celery)($|[/:._-])`),
+		envNames: map[string]bool{
+			"PYTHONPATH":       true,
+			"PYTHONUNBUFFERED": true,
+		},
+		tokens: map[string]bool{
+			"python":   true,
+			"django":   true,
+			"fastapi":  true,
+			"flask":    true,
+			"gunicorn": true,
+			"uvicorn":  true,
+			"celery":   true,
+		},
+	},
+	{
+		name:    "ruby",
+		imageRe: regexp.MustCompile(`(^|[/:._-])(ruby|rails|puma|sidekiq)($|[/:._-])`),
+		envNames: map[string]bool{
+			"BUNDLE_GEMFILE": true,
+			"RAILS_ENV":      true,
+			"RACK_ENV":       true,
+			"RUBYOPT":        true,
+		},
+		tokens: map[string]bool{
+			"ruby":    true,
+			"rails":   true,
+			"puma":    true,
+			"sidekiq": true,
+		},
+	},
+	{
+		name:    "dotnet",
+		imageRe: regexp.MustCompile(`mcr\.microsoft\.com/dotnet|(^|[/:._-])(dotnet|aspnet|aspnetcore|clr)($|[/:._-])`),
+		envPrefixes: []string{
+			"ASPNETCORE_",
+			"COMPlus_",
+			"DOTNET_",
+		},
+		tokens: map[string]bool{
+			"dotnet":     true,
+			"aspnet":     true,
+			"aspnetcore": true,
+			"clr":        true,
+		},
+	},
+	{
+		name:    "native",
+		imageRe: regexp.MustCompile(`(^|[/:._-])(rust|rustlang|cpp|cxx|clang|gcc|zig|native)($|[/:._-])`),
+		tokens: map[string]bool{
+			"rust":     true,
+			"rustlang": true,
+			"cpp":      true,
+			"cxx":      true,
+			"clang":    true,
+			"gcc":      true,
+			"zig":      true,
+			"native":   true,
+		},
+	},
 }
-
-// jvmImageRe matches image names that suggest a JVM runtime.
-var jvmImageRe = regexp.MustCompile(`jdk|jre|openjdk|:\d+-jdk|:\d+-jre`)
-
-// pythonImageRe matches image names that suggest a Python runtime.
-var pythonImageRe = regexp.MustCompile(`python`)
 
 // frontendEnvPrefixes are public browser-build environment variable prefixes
 // commonly present in web app containers.
@@ -148,10 +257,12 @@ func ScanContext(ctx context.Context, kubeconfigPath, contextName string) (Conte
 		pods = &corev1.PodList{}
 	}
 	for _, p := range pods.Items {
-		if isJVMPod(p) {
+		runtimes := detectPodRuntimes(p)
+		recordRuntimePodCounts(&result, runtimes)
+		if containsRuntime(runtimes, "jvm") {
 			result.JVMPodCount++
 		}
-		if isPythonPod(p) {
+		if containsRuntime(runtimes, "python") {
 			result.PythonPodCount++
 		}
 		if isFrontendPod(p) {
@@ -269,14 +380,48 @@ func probePermissions(ctx context.Context, core kubernetes.Interface) []config.P
 	return out
 }
 
-// isJVMPod returns true when any container in the pod looks like a JVM process.
-func isJVMPod(p corev1.Pod) bool {
+func recordRuntimePodCounts(result *ContextResult, runtimes []string) {
+	if len(runtimes) == 0 {
+		return
+	}
+	if result.RuntimePodCounts == nil {
+		result.RuntimePodCounts = make(map[string]int, len(runtimes))
+	}
+	for _, runtime := range runtimes {
+		result.RuntimePodCounts[runtime]++
+	}
+}
+
+// detectPodRuntimes returns best-effort runtime family hints for setup
+// recommendations. It is intentionally broad: generic service, log, trace, and
+// metric triage still works without a runtime match.
+func detectPodRuntimes(p corev1.Pod) []string {
+	var out []string
+	for _, signal := range runtimeSignals {
+		if podMatchesRuntimeSignal(p, signal) {
+			out = append(out, signal.name)
+		}
+	}
+	return out
+}
+
+func podMatchesRuntimeSignal(p corev1.Pod, signal runtimeSignal) bool {
+	for k, v := range p.Labels {
+		if hasRuntimeMetadataHint(signal, k, v) {
+			return true
+		}
+	}
+	for k, v := range p.Annotations {
+		if hasRuntimeMetadataHint(signal, k, v) {
+			return true
+		}
+	}
 	for _, c := range p.Spec.Containers {
-		if jvmImageRe.MatchString(strings.ToLower(c.Image)) {
+		if imageMatchesRuntimeSignal(signal, c.Image) {
 			return true
 		}
 		for _, env := range c.Env {
-			if jvmEnvVars[env.Name] {
+			if runtimeMatchesEnv(signal, env.Name) {
 				return true
 			}
 		}
@@ -284,19 +429,70 @@ func isJVMPod(p corev1.Pod) bool {
 	return false
 }
 
-// isPythonPod returns true when any container in the pod looks like a Python process.
-func isPythonPod(p corev1.Pod) bool {
-	for _, c := range p.Spec.Containers {
-		if pythonImageRe.MatchString(strings.ToLower(c.Image)) {
+func imageMatchesRuntimeSignal(signal runtimeSignal, image string) bool {
+	lower := strings.ToLower(image)
+	if signal.blockedImageRe != nil && signal.blockedImageRe.MatchString(lower) {
+		return false
+	}
+	return signal.imageRe != nil && signal.imageRe.MatchString(lower)
+}
+
+func hasRuntimeMetadataHint(signal runtimeSignal, key, value string) bool {
+	if !metadataKeySuggestsRuntime(key) {
+		return false
+	}
+	return hasRuntimeToken(signal, value)
+}
+
+func metadataKeySuggestsRuntime(key string) bool {
+	for _, token := range tokenizeHints(key) {
+		switch token {
+		case "framework", "language", "platform", "runtime", "stack":
 			return true
-		}
-		for _, env := range c.Env {
-			if pythonEnvVars[env.Name] {
-				return true
-			}
 		}
 	}
 	return false
+}
+
+func runtimeMatchesEnv(signal runtimeSignal, name string) bool {
+	upper := strings.ToUpper(name)
+	if signal.envNames[upper] {
+		return true
+	}
+	for _, prefix := range signal.envPrefixes {
+		if strings.HasPrefix(upper, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsRuntime(runtimes []string, name string) bool {
+	for _, runtime := range runtimes {
+		if runtime == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRuntimeToken(signal runtimeSignal, values ...string) bool {
+	for _, token := range tokenizeHints(values...) {
+		if signal.tokens[token] {
+			return true
+		}
+	}
+	return false
+}
+
+// isJVMPod returns true when any container in the pod looks like a JVM process.
+func isJVMPod(p corev1.Pod) bool {
+	return containsRuntime(detectPodRuntimes(p), "jvm")
+}
+
+// isPythonPod returns true when any container in the pod looks like a Python process.
+func isPythonPod(p corev1.Pod) bool {
+	return containsRuntime(detectPodRuntimes(p), "python")
 }
 
 // isFrontendPod returns true when a pod looks like a browser-facing web app or
@@ -332,17 +528,22 @@ func isFrontendPod(p corev1.Pod) bool {
 }
 
 func hasFrontendHint(values ...string) bool {
-	for _, value := range values {
-		tokens := strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
-			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
-		})
-		for _, token := range tokens {
-			if frontendHintTokens[token] {
-				return true
-			}
+	for _, token := range tokenizeHints(values...) {
+		if frontendHintTokens[token] {
+			return true
 		}
 	}
 	return false
+}
+
+func tokenizeHints(values ...string) []string {
+	var out []string
+	for _, value := range values {
+		out = append(out, strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		})...)
+	}
+	return out
 }
 
 // detectComponents probes for well-known infrastructure components.
