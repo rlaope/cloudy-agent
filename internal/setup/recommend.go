@@ -61,11 +61,11 @@ func Recommend(p config.Profile, all []*skills.Skill) []Recommendation {
 	}
 
 	for _, rule := range runtimeRecommendationRules {
-		total := totalRuntimePodCount(p, rule.runtime)
+		total := totalRuntimePodCount(p, rule)
 		if total < runtimeRecommendationThreshold {
 			continue
 		}
-		out = add(out, rule.skillName, fmt.Sprintf("%s workloads detected (%d pods) — %s", rule.label, total, rule.reason))
+		out = add(out, rule.skillName, runtimeRecommendationReason(rule, total))
 	}
 
 	return out
@@ -73,28 +73,48 @@ func Recommend(p config.Profile, all []*skills.Skill) []Recommendation {
 
 const runtimeRecommendationThreshold = 3
 
-var runtimeRecommendationRules = []struct {
-	runtime   string
-	label     string
-	skillName string
-	reason    string
-}{
-	{runtime: "go", label: "Go", skillName: "go-runtime", reason: "goroutine, GC pacing, scheduler, and pprof analysis available"},
-	{runtime: "node", label: "Node.js / V8", skillName: "node-runtime", reason: "event-loop, GC, deopt, and V8 profile analysis available"},
-	{runtime: "jvm", label: "JVM", skillName: "jvm-gc", reason: "GC analysis available"},
-	{runtime: "jvm", label: "JVM", skillName: "jvm-thread", reason: "thread-dump and pool analysis available"},
-	{runtime: "python", label: "Python", skillName: "py-perf", reason: "GIL, async-loop, and py-spy profiling analysis available"},
-	{runtime: "ruby", label: "Ruby", skillName: "ruby-runtime", reason: "GVL, GC, YJIT, and rbspy stack analysis available"},
-	{runtime: "dotnet", label: ".NET / CLR", skillName: "dotnet-runtime", reason: "GC, ThreadPool, and tiered-JIT metric analysis available"},
+var runtimeRecommendationRules = []runtimeRecommendationRule{
+	{runtime: "go", label: "Go", skillName: "go-runtime", reason: "goroutine, GC pacing, scheduler, and pprof analysis available", requiresPrometheus: true},
+	{runtime: "node", label: "Node.js / V8", skillName: "node-runtime", reason: "event-loop, GC, deopt, and V8 profile analysis available", requiresPrometheus: true},
+	{runtime: "jvm", label: "JVM", skillName: "jvm-gc", reason: "GC analysis available", requiresPrometheus: true},
+	{runtime: "jvm", label: "JVM", skillName: "jvm-thread", reason: "thread-dump and pool analysis available", requiresPrometheus: true},
+	{runtime: "python", label: "Python", skillName: "py-perf", reason: "GIL, async-loop, and py-spy profiling analysis available", requiresPrometheus: true},
+	{runtime: "ruby", label: "Ruby", skillName: "ruby-runtime", reason: "GVL, GC, YJIT, and rbspy stack analysis available", requiresPrometheus: true},
+	{runtime: "dotnet", label: ".NET / CLR", skillName: "dotnet-runtime", reason: "GC, ThreadPool, and tiered-JIT metric analysis available", requiresPrometheus: true},
 	{runtime: "native", label: "Native", skillName: "native-perf", reason: "perf hot-path, cache, branch, and lock-contention analysis available"},
 }
 
-func totalRuntimePodCount(p config.Profile, runtime string) int {
+type runtimeRecommendationRule struct {
+	runtime            string
+	label              string
+	skillName          string
+	reason             string
+	requiresPrometheus bool
+}
+
+func totalRuntimePodCount(p config.Profile, rule runtimeRecommendationRule) int {
 	var total int
 	for _, cp := range p.Contexts {
-		total += contextRuntimePodCount(cp, runtime)
+		if !contextSupportsRuntimeRule(cp, rule) {
+			continue
+		}
+		total += contextRuntimePodCount(cp, rule.runtime)
 	}
 	return total
+}
+
+func contextSupportsRuntimeRule(cp config.ContextProfile, rule runtimeRecommendationRule) bool {
+	if !cp.Reachable {
+		return false
+	}
+	return !rule.requiresPrometheus || cp.HasPrometheus
+}
+
+func runtimeRecommendationReason(rule runtimeRecommendationRule, total int) string {
+	if rule.requiresPrometheus {
+		return fmt.Sprintf("%s workloads detected in reachable Prometheus-backed contexts (%d pods) — %s", rule.label, total, rule.reason)
+	}
+	return fmt.Sprintf("%s workloads detected in reachable Kubernetes contexts (%d pods) — %s", rule.label, total, rule.reason)
 }
 
 func contextRuntimePodCount(cp config.ContextProfile, runtime string) int {

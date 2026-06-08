@@ -223,6 +223,95 @@ func TestIsFrontendPod_DoesNotTreatPlainNodeAPIAsFrontend(t *testing.T) {
 	}
 }
 
+func TestListPodsForSetupWithPaginatesUntilContinueEmpty(t *testing.T) {
+	pages := []*corev1.PodList{
+		{
+			Items: []corev1.Pod{
+				{ObjectMeta: metav1.ObjectMeta{Name: "p1"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "p2"}},
+			},
+			ListMeta: metav1.ListMeta{Continue: "next-page"},
+		},
+		{
+			Items: []corev1.Pod{
+				{ObjectMeta: metav1.ObjectMeta{Name: "p3"}},
+			},
+		},
+	}
+	var calls []metav1.ListOptions
+	got := listPodsForSetupWith(context.Background(), func(ctx context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
+		idx := len(calls)
+		calls = append(calls, opts)
+		if idx >= len(pages) {
+			t.Fatalf("unexpected pod list call %d", idx+1)
+			return nil, nil
+		}
+		return pages[idx], nil
+	})
+
+	if len(got.Items) != 3 {
+		t.Fatalf("got %d pods, want 3", len(got.Items))
+	}
+	if got.Incomplete {
+		t.Fatal("sample should be complete when final page has no continue token")
+	}
+	if len(calls) != 2 {
+		t.Fatalf("got %d list calls, want 2", len(calls))
+	}
+	if calls[0].Limit != setupPodScanPageLimit {
+		t.Errorf("first call Limit = %d, want %d", calls[0].Limit, setupPodScanPageLimit)
+	}
+	if calls[0].Continue != "" {
+		t.Errorf("first call Continue = %q, want empty", calls[0].Continue)
+	}
+	if calls[1].Continue != "next-page" {
+		t.Errorf("second call Continue = %q, want next-page", calls[1].Continue)
+	}
+}
+
+func TestListPodsForSetupWithCapsSample(t *testing.T) {
+	pages := []*corev1.PodList{
+		{Items: makePodItems(setupPodScanMaxPods + 1)},
+	}
+	got := listPodsForSetupWith(context.Background(), func(ctx context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
+		return pages[0], nil
+	})
+
+	if len(got.Items) != setupPodScanMaxPods {
+		t.Fatalf("got %d pods, want cap %d", len(got.Items), setupPodScanMaxPods)
+	}
+	if !got.Incomplete {
+		t.Fatal("sample should be incomplete when the cap truncates a page")
+	}
+	if got.IncompleteReason != setupPodSampleIncompleteCap {
+		t.Fatalf("IncompleteReason = %q, want %q", got.IncompleteReason, setupPodSampleIncompleteCap)
+	}
+}
+
+func TestListPodsForSetupWithMarksIncompleteOnListError(t *testing.T) {
+	got := listPodsForSetupWith(context.Background(), func(ctx context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
+		return nil, context.Canceled
+	})
+
+	if len(got.Items) != 0 {
+		t.Fatalf("got %d pods, want none after list error", len(got.Items))
+	}
+	if !got.Incomplete {
+		t.Fatal("sample should be incomplete when a pod list page fails")
+	}
+	if got.IncompleteReason != setupPodSampleIncompleteListError {
+		t.Fatalf("IncompleteReason = %q, want %q", got.IncompleteReason, setupPodSampleIncompleteListError)
+	}
+}
+
+func makePodItems(count int) []corev1.Pod {
+	items := make([]corev1.Pod, 0, count)
+	for i := 0; i < count; i++ {
+		items = append(items, corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p"}})
+	}
+	return items
+}
+
 // TestDetectComponents_MetricsServer verifies metrics-server detection.
 func TestDetectComponents_MetricsServer(t *testing.T) {
 	dep := &appsv1.Deployment{

@@ -53,6 +53,20 @@ type ContextProfile struct {
 	// Namespaces is the list of namespaces visible to the probe credentials.
 	Namespaces []string `yaml:"namespaces,omitempty"`
 
+	// PodSampleScanned is true when setup attempted to inspect pods for hints.
+	PodSampleScanned bool `yaml:"pod_sample_scanned,omitempty"`
+
+	// PodSampleCount is the number of pods inspected for setup hints.
+	PodSampleCount int `yaml:"pod_sample_count,omitempty"`
+
+	// PodSampleIncomplete is true when setup could not inspect every visible
+	// pod because the scan hit its safety cap or a list page failed.
+	PodSampleIncomplete bool `yaml:"pod_sample_incomplete,omitempty"`
+
+	// PodSampleIncompleteReason explains why PodSampleIncomplete is true.
+	// Stable values include cap and list_error.
+	PodSampleIncompleteReason string `yaml:"pod_sample_incomplete_reason,omitempty"`
+
 	// JVMPodCount is the count of pods whose images suggest a JVM runtime.
 	// Deprecated compatibility field; new setup scans also populate
 	// RuntimePodCounts["jvm"].

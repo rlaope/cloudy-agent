@@ -47,6 +47,14 @@ var canonicalPermissionProbes = []struct {
 	{"metrics.k8s.io", "nodes", "", "list"},
 }
 
+const (
+	setupPodScanPageLimit int64 = 500
+	setupPodScanMaxPods   int   = 2000
+
+	setupPodSampleIncompleteCap       = "cap"
+	setupPodSampleIncompleteListError = "list_error"
+)
+
 // ContextResult is a type alias for config.ContextProfile, used by the scanner
 // to report the result of probing a single kubeconfig context.
 type ContextResult = config.ContextProfile
@@ -251,12 +259,14 @@ func ScanContext(ctx context.Context, kubeconfigPath, contextName string) (Conte
 	}
 	result.Namespaces = nsNames
 
-	// Sample pods (up to 500 across all namespaces).
-	pods, err := core.CoreV1().Pods("").List(ctx, metav1.ListOptions{Limit: 500})
-	if err != nil {
-		pods = &corev1.PodList{}
-	}
-	for _, p := range pods.Items {
+	// Sample pods across namespaces with pagination, capped to keep setup fast
+	// on very large clusters while avoiding first-page-only bias.
+	podSample := listPodsForSetup(ctx, core)
+	result.PodSampleScanned = true
+	result.PodSampleCount = len(podSample.Items)
+	result.PodSampleIncomplete = podSample.Incomplete
+	result.PodSampleIncompleteReason = podSample.IncompleteReason
+	for _, p := range podSample.Items {
 		runtimes := detectPodRuntimes(p)
 		recordRuntimePodCounts(&result, runtimes)
 		if containsRuntime(runtimes, "jvm") {
@@ -275,6 +285,48 @@ func ScanContext(ctx context.Context, kubeconfigPath, contextName string) (Conte
 	detectComponents(ctx, core, nsNames, &result)
 
 	return result, nil
+}
+
+type podListFunc func(context.Context, metav1.ListOptions) (*corev1.PodList, error)
+
+type podScanSample struct {
+	Items            []corev1.Pod
+	Incomplete       bool
+	IncompleteReason string
+}
+
+func listPodsForSetup(ctx context.Context, core kubernetes.Interface) podScanSample {
+	return listPodsForSetupWith(ctx, func(ctx context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
+		return core.CoreV1().Pods("").List(ctx, opts)
+	})
+}
+
+func listPodsForSetupWith(ctx context.Context, list podListFunc) podScanSample {
+	var out podScanSample
+	opts := metav1.ListOptions{Limit: setupPodScanPageLimit}
+	for len(out.Items) < setupPodScanMaxPods {
+		page, err := list(ctx, opts)
+		if err != nil || page == nil {
+			out.Incomplete = true
+			out.IncompleteReason = setupPodSampleIncompleteListError
+			return out
+		}
+		remaining := setupPodScanMaxPods - len(out.Items)
+		if len(page.Items) > remaining {
+			out.Items = append(out.Items, page.Items[:remaining]...)
+			out.Incomplete = true
+			out.IncompleteReason = setupPodSampleIncompleteCap
+			return out
+		}
+		out.Items = append(out.Items, page.Items...)
+		if page.Continue == "" {
+			return out
+		}
+		opts.Continue = page.Continue
+	}
+	out.Incomplete = true
+	out.IncompleteReason = setupPodSampleIncompleteCap
+	return out
 }
 
 // buildCoreClient constructs a read-only kubernetes.Interface for the given
