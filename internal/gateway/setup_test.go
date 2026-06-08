@@ -110,6 +110,37 @@ func TestRunSetupDiscordRejectsInvalidPublicKey(t *testing.T) {
 	}
 }
 
+func TestRunSetupRejectsUnknownPlatformWithKnownChoices(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLOUDY_HOME", home)
+
+	_, err := RunSetup(t.Context(), SetupOptions{
+		ConfigPath: config.Path(),
+		AssumeYes:  true,
+		Platform:   "matrix",
+	})
+	if err == nil {
+		t.Fatal("RunSetup error = nil, want unknown platform rejection")
+	}
+	for _, want := range []string{PlatformSlack, PlatformDiscord, PlatformTelegram} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("RunSetup error = %q, want it to list %q", err, want)
+		}
+	}
+}
+
+func TestStatusReportsAllKnownPlatformsInStableOrder(t *testing.T) {
+	rep := Status(config.Default())
+	got := make([]string, 0, len(rep.Platforms))
+	for _, platform := range rep.Platforms {
+		got = append(got, platform.Platform)
+	}
+	want := []string{PlatformSlack, PlatformDiscord, PlatformTelegram}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("platform order = %v, want %v", got, want)
+	}
+}
+
 func TestStatusDiscordDoesNotRequireBotToken(t *testing.T) {
 	t.Setenv("CLOUDY_DISCORD_PUBLIC_KEY", validDiscordPublicKey())
 	cfg := config.Default()

@@ -69,14 +69,13 @@ func RunSetup(_ context.Context, opts SetupOptions) (Report, error) {
 	reader := bufio.NewReader(in)
 	w := setupWizard{in: in, reader: reader, out: out, opts: opts}
 
-	platform := strings.ToLower(strings.TrimSpace(opts.Platform))
+	platform := normalizePlatform(opts.Platform)
 	if platform == "" {
-		platform = strings.ToLower(w.prompt("Platform [slack/discord/telegram]", "telegram"))
+		platform = normalizePlatform(w.prompt(fmt.Sprintf("Platform [%s]", platformChoicePrompt()), PlatformTelegram))
 	}
-	switch platform {
-	case PlatformSlack, PlatformDiscord, PlatformTelegram:
-	default:
-		return Report{}, fmt.Errorf("gateway setup: platform must be slack, discord, or telegram")
+	spec, ok := lookupPlatform(platform)
+	if !ok {
+		return Report{}, unknownPlatformError()
 	}
 
 	cfg.ChatOps.Enabled = true
@@ -87,19 +86,8 @@ func RunSetup(_ context.Context, opts SetupOptions) (Report, error) {
 		cfg.ChatOps.PublicURL = opts.PublicURL
 	}
 
-	switch platform {
-	case PlatformSlack:
-		if err := w.setupSlack(&cfg); err != nil {
-			return Report{}, err
-		}
-	case PlatformDiscord:
-		if err := w.setupDiscord(&cfg); err != nil {
-			return Report{}, err
-		}
-	case PlatformTelegram:
-		if err := w.setupTelegram(&cfg); err != nil {
-			return Report{}, err
-		}
+	if err := spec.setup(w, &cfg); err != nil {
+		return Report{}, err
 	}
 	if err := config.ValidateChatOps(cfg.ChatOps); err != nil {
 		return Report{}, err

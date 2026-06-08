@@ -12,12 +12,6 @@ import (
 	"github.com/rlaope/cloudy/internal/config"
 )
 
-const (
-	PlatformSlack    = "slack"
-	PlatformDiscord  = "discord"
-	PlatformTelegram = "telegram"
-)
-
 // Requirement describes one field or secret a platform needs before it can run.
 type Requirement struct {
 	Key      string `json:"key"`
@@ -60,11 +54,7 @@ func Status(cfg config.Config) Report {
 		DefaultVisibility: firstNonEmpty(cfg.ChatOps.DefaultVisibility, "private"),
 		SessionPath:       firstNonEmpty(cfg.ChatOps.Session.Path, defaultSessionMapPath()),
 	}
-	rep.Platforms = []PlatformReport{
-		slackReport(cfg.ChatOps),
-		discordReport(cfg.ChatOps),
-		telegramReport(cfg.ChatOps),
-	}
+	rep.Platforms = platformReports(cfg.ChatOps)
 	anyEnabled := false
 	allEnabledReady := true
 	for _, p := range rep.Platforms {
@@ -84,6 +74,14 @@ func Status(cfg config.Config) Report {
 		rep.Warnings = append(rep.Warnings, "no chat platform is enabled.")
 	}
 	return rep
+}
+
+func platformReports(cfg config.ChatOpsConfig) []PlatformReport {
+	reports := make([]PlatformReport, 0, len(platformSpecs))
+	for _, spec := range platformSpecs {
+		reports = append(reports, spec.report(cfg))
+	}
+	return reports
 }
 
 func slackReport(cfg config.ChatOpsConfig) PlatformReport {
