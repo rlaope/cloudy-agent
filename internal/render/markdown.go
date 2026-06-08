@@ -1,22 +1,6 @@
 package render
 
-import (
-	"sync"
-
-	"github.com/charmbracelet/glamour"
-)
-
-type markdownRendererKey struct {
-	noColor bool
-	width   int
-}
-
-type cachedMarkdownRenderer struct {
-	mu       sync.Mutex
-	renderer *glamour.TermRenderer
-}
-
-var markdownRendererCache sync.Map
+import "github.com/charmbracelet/glamour"
 
 // RenderMarkdown renders markdown-formatted text to an ANSI-escaped string
 // suitable for terminal display.
@@ -27,41 +11,19 @@ var markdownRendererCache sync.Map
 // The width parameter constrains the rendered line length; pass 0 for
 // glamour's default (80 columns).
 func RenderMarkdown(md string, theme Theme, width int) (string, error) {
-	renderer, err := cachedTermRenderer(theme.NoColor(), width)
-	if err != nil {
-		return "", err
-	}
-	renderer.mu.Lock()
-	defer renderer.mu.Unlock()
-	return renderer.renderer.Render(md)
-}
-
-func cachedTermRenderer(noColor bool, width int) (*cachedMarkdownRenderer, error) {
-	if width < 0 {
-		width = 0
-	}
-	key := markdownRendererKey{noColor: noColor, width: width}
-	if cached, ok := markdownRendererCache.Load(key); ok {
-		return cached.(*cachedMarkdownRenderer), nil
+	style := glamour.WithStandardStyle("dark")
+	if theme.NoColor() {
+		style = glamour.WithStandardStyle("notty")
 	}
 
-	style := glamour.WithStylePath("dark")
-	if noColor {
-		style = glamour.WithStylePath("notty")
-	}
 	opts := []glamour.TermRendererOption{style}
 	if width > 0 {
 		opts = append(opts, glamour.WithWordWrap(width))
 	}
 
-	termRenderer, err := glamour.NewTermRenderer(opts...)
+	r, err := glamour.NewTermRenderer(opts...)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	renderer := &cachedMarkdownRenderer{renderer: termRenderer}
-	cached, loaded := markdownRendererCache.LoadOrStore(key, renderer)
-	if loaded {
-		return cached.(*cachedMarkdownRenderer), nil
-	}
-	return renderer, nil
+	return r.Render(md)
 }

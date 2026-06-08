@@ -64,7 +64,7 @@ func TestStreamModel_TokenBatching_CoalescesBurst(t *testing.T) {
 }
 
 // TestStreamModel_FlushTick_DrainsPending checks the other end of the
-// pipeline: when the flush tick arrives AND mdBuf has crossed a
+// pipeline: when the flush tick arrives AND mdTail has crossed a
 // sentence boundary, the committed prefix lands in content and the
 // viewport refreshes. Mid-sentence bursts do NOT commit under the
 // sentence-batched streaming model — that path is covered by
@@ -75,7 +75,7 @@ func TestStreamModel_FlushTick_DrainsPending(t *testing.T) {
 
 	s, _ = s.Update(streamTokenMsg("partial "))
 	// Newline is an unambiguous sentence boundary, so the flush tick
-	// commits as soon as it lands in mdBuf.
+	// commits as soon as it lands in mdTail.
 	s, _ = s.Update(streamTokenMsg("answer.\n"))
 
 	s, _ = s.Update(streamFlushTickMsg{})
