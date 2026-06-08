@@ -213,7 +213,7 @@ secret entry and no config edits**.
 | GCP metrics | Deferred | Document limitation only for this release; direct Monitoring API work needs a separate design because `gcloud monitoring` has no read-only time-series command. |
 | GCP traces | Deferred | Document limitation only for this release; Cloud Trace reads need the Trace API rather than a stable `gcloud trace` read command. |
 | GCP cost | Deferred | Document limitation only for this release; billing/cost data has no clean `gcloud` read path matching the current CLI-only cloud design. |
-| JVM/Python sidecar or ephemeral attach | Deferred | Later RFC. Current runtime tools stay local/host-process oriented and never create pods, sidecars, or ephemeral containers. |
+| Runtime sidecar or ephemeral attach | Deferred | Later RFC. Current runtime tools stay local/host-process oriented and never create pods, sidecars, or ephemeral containers. |
 | Broader cloud parity | Later | Add as explicit follow-up issues after release readiness, not as hidden README promises. |
 
 ## 9. GCP path decision (locked)

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 
 	"github.com/rlaope/cloudy/internal/config"
 	"github.com/rlaope/cloudy/internal/permission"
@@ -152,8 +154,38 @@ func profileCluster(stdout io.Writer) error {
 		p.SchemaVersion, p.GeneratedAt.Format("2006-01-02 15:04:05"),
 		len(p.Contexts), len(p.RecommendedSkills))
 	for _, c := range p.Contexts {
-		fmt.Fprintf(stdout, "  - %s  reachable=%v  nodes=%d  gpu=%d  jvm_pods=%d  py_pods=%d  frontend_pods=%d  ingress_hosts=%d\n",
-			c.Name, c.Reachable, c.NodeCount, c.GPUNodeCount, c.JVMPodCount, c.PythonPodCount, c.FrontendPodCount, c.IngressHostCount)
+		fmt.Fprintf(stdout, "  - %s  reachable=%v  nodes=%d  gpu=%d  runtimes=%s  frontend_pods=%d  ingress_hosts=%d\n",
+			c.Name, c.Reachable, c.NodeCount, c.GPUNodeCount, formatRuntimePodCounts(c), c.FrontendPodCount, c.IngressHostCount)
 	}
 	return nil
+}
+
+func formatRuntimePodCounts(c config.ContextProfile) string {
+	counts := make(map[string]int, len(c.RuntimePodCounts)+2)
+	for runtime, count := range c.RuntimePodCounts {
+		if count > 0 {
+			counts[runtime] = count
+		}
+	}
+	if _, ok := counts["jvm"]; !ok && c.JVMPodCount > 0 {
+		counts["jvm"] = c.JVMPodCount
+	}
+	if _, ok := counts["python"]; !ok && c.PythonPodCount > 0 {
+		counts["python"] = c.PythonPodCount
+	}
+	if len(counts) == 0 {
+		return "-"
+	}
+
+	keys := make([]string, 0, len(counts))
+	for runtime := range counts {
+		keys = append(keys, runtime)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, runtime := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", runtime, counts[runtime]))
+	}
+	return strings.Join(parts, ",")
 }

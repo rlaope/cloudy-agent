@@ -54,10 +54,19 @@ type ContextProfile struct {
 	Namespaces []string `yaml:"namespaces,omitempty"`
 
 	// JVMPodCount is the count of pods whose images suggest a JVM runtime.
+	// Deprecated compatibility field; new setup scans also populate
+	// RuntimePodCounts["jvm"].
 	JVMPodCount int `yaml:"jvm_pod_count"`
 
 	// PythonPodCount is the count of pods whose images suggest a Python runtime.
+	// Deprecated compatibility field; new setup scans also populate
+	// RuntimePodCounts["python"].
 	PythonPodCount int `yaml:"python_pod_count"`
+
+	// RuntimePodCounts counts detected application runtime families by stable
+	// lowercase key, for example go, node, jvm, python, ruby, dotnet, or native.
+	// It is a best-effort setup hint for recommendations, not a support boundary.
+	RuntimePodCounts map[string]int `yaml:"runtime_pod_counts,omitempty"`
 
 	// FrontendPodCount is the count of pods whose names, labels, env, or images
 	// suggest a browser-facing web/frontend workload.

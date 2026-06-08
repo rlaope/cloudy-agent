@@ -23,6 +23,7 @@ func TestProfile_SaveAndLoad_RoundTrip(t *testing.T) {
 				NodeCount:          10,
 				GPUNodeCount:       2,
 				Namespaces:         []string{"default", "kube-system"},
+				RuntimePodCounts:   map[string]int{"go": 4, "node": 3, "ruby": 1},
 				HasPrometheus:      true,
 				FrontendPodCount:   3,
 				IngressHostCount:   2,
@@ -58,6 +59,12 @@ func TestProfile_SaveAndLoad_RoundTrip(t *testing.T) {
 	}
 	if loaded.Contexts[0].FrontendPodCount != 3 {
 		t.Errorf("FrontendPodCount: got %d, want 3", loaded.Contexts[0].FrontendPodCount)
+	}
+	if got := loaded.Contexts[0].RuntimePodCounts["go"]; got != 4 {
+		t.Errorf("RuntimePodCounts[go]: got %d, want 4", got)
+	}
+	if got := loaded.Contexts[0].RuntimePodCounts["node"]; got != 3 {
+		t.Errorf("RuntimePodCounts[node]: got %d, want 3", got)
 	}
 	if loaded.Contexts[0].IngressHostCount != 2 {
 		t.Errorf("IngressHostCount: got %d, want 2", loaded.Contexts[0].IngressHostCount)

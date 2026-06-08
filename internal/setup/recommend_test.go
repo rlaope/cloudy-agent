@@ -19,9 +19,14 @@ func allTestSkills() []*skills.Skill {
 		"prom-explorer",
 		"cluster-recon",
 		"gpu-saturation",
+		"go-runtime",
+		"node-runtime",
 		"jvm-gc",
 		"jvm-thread",
 		"py-perf",
+		"ruby-runtime",
+		"dotnet-runtime",
+		"native-perf",
 	}
 	out := make([]*skills.Skill, 0, len(names))
 	for _, n := range names {
@@ -253,6 +258,61 @@ func TestRecommend_PythonBelowThreshold(t *testing.T) {
 	}
 }
 
+func TestRecommend_GenericRuntimeFamilies(t *testing.T) {
+	cases := []struct {
+		runtime string
+		skills  []string
+	}{
+		{runtime: "go", skills: []string{"go-runtime"}},
+		{runtime: "node", skills: []string{"node-runtime"}},
+		{runtime: "jvm", skills: []string{"jvm-gc", "jvm-thread"}},
+		{runtime: "python", skills: []string{"py-perf"}},
+		{runtime: "ruby", skills: []string{"ruby-runtime"}},
+		{runtime: "dotnet", skills: []string{"dotnet-runtime"}},
+		{runtime: "native", skills: []string{"native-perf"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.runtime, func(t *testing.T) {
+			p := config.Profile{
+				SchemaVersion: config.CurrentSchemaVersion,
+				Contexts: []config.ContextProfile{{
+					Name:             "ctx",
+					RuntimePodCounts: map[string]int{tc.runtime: 3},
+				}},
+			}
+			recs := Recommend(p, allTestSkills())
+			for _, skill := range tc.skills {
+				if !hasRec(recs, skill) {
+					t.Errorf("expected %q for runtime %q", skill, tc.runtime)
+				}
+			}
+		})
+	}
+}
+
+func TestRecommend_GenericRuntimeFamiliesBelowThreshold(t *testing.T) {
+	p := config.Profile{
+		SchemaVersion: config.CurrentSchemaVersion,
+		Contexts: []config.ContextProfile{{
+			Name: "ctx",
+			RuntimePodCounts: map[string]int{
+				"go":     2,
+				"node":   2,
+				"ruby":   2,
+				"dotnet": 2,
+				"native": 2,
+			},
+		}},
+	}
+	recs := Recommend(p, allTestSkills())
+	for _, name := range []string{"go-runtime", "node-runtime", "ruby-runtime", "dotnet-runtime", "native-perf"} {
+		if hasRec(recs, name) {
+			t.Errorf("did not expect %q below runtime pod threshold", name)
+		}
+	}
+}
+
 // TestRecommend_UnknownSkillDropped verifies that skills not in the registry
 // are silently dropped.
 func TestRecommend_UnknownSkillDropped(t *testing.T) {
@@ -279,5 +339,19 @@ func TestRecommend_MultiContextJVM(t *testing.T) {
 	recs := Recommend(p, allTestSkills())
 	if !hasRec(recs, "jvm-gc") {
 		t.Error("expected jvm-gc when sum of JVMPodCount across contexts >= 3")
+	}
+}
+
+func TestRecommend_MultiContextRuntimePodCounts(t *testing.T) {
+	p := config.Profile{
+		SchemaVersion: config.CurrentSchemaVersion,
+		Contexts: []config.ContextProfile{
+			{Name: "a", RuntimePodCounts: map[string]int{"node": 1}},
+			{Name: "b", RuntimePodCounts: map[string]int{"node": 2}},
+		},
+	}
+	recs := Recommend(p, allTestSkills())
+	if !hasRec(recs, "node-runtime") {
+		t.Error("expected node-runtime when runtime_pod_counts sum across contexts >= 3")
 	}
 }
