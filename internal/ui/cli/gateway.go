@@ -46,7 +46,7 @@ type gatewayOptions struct {
 func (o *gatewayOptions) bind(fs *flagSet) {
 	o.base.bind(fs.FlagSet)
 	fs.BoolVar(&o.yes, "yes", false, "accept defaults and fail instead of prompting for missing required values")
-	fs.StringVar(&o.platform, "platform", "", "platform to configure: slack, discord, or telegram")
+	fs.StringVar(&o.platform, "platform", "", "platform to configure: "+gateway.SupportedPlatformsText())
 	fs.StringVar(&o.mode, "mode", "", "platform mode where applicable: webhook or polling")
 	fs.StringVar(&o.listen, "listen", "", "gateway listen address")
 	fs.StringVar(&o.publicURL, "public-url", "", "public base URL for webhook platforms")
