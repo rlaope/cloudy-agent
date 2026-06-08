@@ -60,6 +60,10 @@ type ContextProfile struct {
 	// pod because the scan hit its safety cap or a list page failed.
 	PodSampleIncomplete bool `yaml:"pod_sample_incomplete,omitempty"`
 
+	// PodSampleIncompleteReason explains why PodSampleIncomplete is true.
+	// Stable values include cap and list_error.
+	PodSampleIncompleteReason string `yaml:"pod_sample_incomplete_reason,omitempty"`
+
 	// JVMPodCount is the count of pods whose images suggest a JVM runtime.
 	// Deprecated compatibility field; new setup scans also populate
 	// RuntimePodCounts["jvm"].

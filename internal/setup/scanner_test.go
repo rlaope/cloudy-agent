@@ -283,6 +283,9 @@ func TestListPodsForSetupWithCapsSample(t *testing.T) {
 	if !got.Incomplete {
 		t.Fatal("sample should be incomplete when the cap truncates a page")
 	}
+	if got.IncompleteReason != setupPodSampleIncompleteCap {
+		t.Fatalf("IncompleteReason = %q, want %q", got.IncompleteReason, setupPodSampleIncompleteCap)
+	}
 }
 
 func TestListPodsForSetupWithMarksIncompleteOnListError(t *testing.T) {
@@ -295,6 +298,9 @@ func TestListPodsForSetupWithMarksIncompleteOnListError(t *testing.T) {
 	}
 	if !got.Incomplete {
 		t.Fatal("sample should be incomplete when a pod list page fails")
+	}
+	if got.IncompleteReason != setupPodSampleIncompleteListError {
+		t.Fatalf("IncompleteReason = %q, want %q", got.IncompleteReason, setupPodSampleIncompleteListError)
 	}
 }
 

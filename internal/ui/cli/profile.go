@@ -154,8 +154,8 @@ func profileCluster(stdout io.Writer) error {
 		p.SchemaVersion, p.GeneratedAt.Format("2006-01-02 15:04:05"),
 		len(p.Contexts), len(p.RecommendedSkills))
 	for _, c := range p.Contexts {
-		fmt.Fprintf(stdout, "  - %s  reachable=%v  nodes=%d  gpu=%d  pod_sample=%s  runtimes=%s  frontend_pods=%d  ingress_hosts=%d\n",
-			c.Name, c.Reachable, c.NodeCount, c.GPUNodeCount, formatPodSample(c), formatRuntimePodCounts(c), c.FrontendPodCount, c.IngressHostCount)
+		fmt.Fprintf(stdout, "  - %s  reachable=%v  nodes=%d  gpu=%d  prometheus=%v  pod_sample=%s  runtimes=%s  frontend_pods=%d  ingress_hosts=%d\n",
+			c.Name, c.Reachable, c.NodeCount, c.GPUNodeCount, c.HasPrometheus, formatPodSample(c), formatRuntimePodCounts(c), c.FrontendPodCount, c.IngressHostCount)
 	}
 	return nil
 }
@@ -165,6 +165,9 @@ func formatPodSample(c config.ContextProfile) string {
 		return "-"
 	}
 	if c.PodSampleIncomplete {
+		if c.PodSampleIncompleteReason != "" {
+			return fmt.Sprintf("%d(incomplete:%s)", c.PodSampleCount, c.PodSampleIncompleteReason)
+		}
 		return fmt.Sprintf("%d(incomplete)", c.PodSampleCount)
 	}
 	return fmt.Sprintf("%d", c.PodSampleCount)

@@ -17,19 +17,20 @@ func TestProfile_SaveAndLoad_RoundTrip(t *testing.T) {
 		GeneratedAt:   time.Now().UTC().Truncate(time.Second),
 		Contexts: []config.ContextProfile{
 			{
-				Name:                "prod",
-				Reachable:           true,
-				K8sVersion:          "v1.28.5",
-				NodeCount:           10,
-				GPUNodeCount:        2,
-				Namespaces:          []string{"default", "kube-system"},
-				PodSampleCount:      2000,
-				PodSampleIncomplete: true,
-				RuntimePodCounts:    map[string]int{"go": 4, "node": 3, "ruby": 1},
-				HasPrometheus:       true,
-				FrontendPodCount:    3,
-				IngressHostCount:    2,
-				HasFrontendSurface:  true,
+				Name:                      "prod",
+				Reachable:                 true,
+				K8sVersion:                "v1.28.5",
+				NodeCount:                 10,
+				GPUNodeCount:              2,
+				Namespaces:                []string{"default", "kube-system"},
+				PodSampleCount:            2000,
+				PodSampleIncomplete:       true,
+				PodSampleIncompleteReason: "cap",
+				RuntimePodCounts:          map[string]int{"go": 4, "node": 3, "ruby": 1},
+				HasPrometheus:             true,
+				FrontendPodCount:          3,
+				IngressHostCount:          2,
+				HasFrontendSurface:        true,
 			},
 		},
 		RecommendedSkills: []string{"k8s-incident", "gpu-saturation"},
@@ -64,6 +65,9 @@ func TestProfile_SaveAndLoad_RoundTrip(t *testing.T) {
 	}
 	if !loaded.Contexts[0].PodSampleIncomplete {
 		t.Error("PodSampleIncomplete: got false, want true")
+	}
+	if loaded.Contexts[0].PodSampleIncompleteReason != "cap" {
+		t.Errorf("PodSampleIncompleteReason: got %q, want cap", loaded.Contexts[0].PodSampleIncompleteReason)
 	}
 	if loaded.Contexts[0].FrontendPodCount != 3 {
 		t.Errorf("FrontendPodCount: got %d, want 3", loaded.Contexts[0].FrontendPodCount)

@@ -50,6 +50,9 @@ var canonicalPermissionProbes = []struct {
 const (
 	setupPodScanPageLimit int64 = 500
 	setupPodScanMaxPods   int   = 2000
+
+	setupPodSampleIncompleteCap       = "cap"
+	setupPodSampleIncompleteListError = "list_error"
 )
 
 // ContextResult is a type alias for config.ContextProfile, used by the scanner
@@ -261,6 +264,7 @@ func ScanContext(ctx context.Context, kubeconfigPath, contextName string) (Conte
 	podSample := listPodsForSetup(ctx, core)
 	result.PodSampleCount = len(podSample.Items)
 	result.PodSampleIncomplete = podSample.Incomplete
+	result.PodSampleIncompleteReason = podSample.IncompleteReason
 	for _, p := range podSample.Items {
 		runtimes := detectPodRuntimes(p)
 		recordRuntimePodCounts(&result, runtimes)
@@ -285,8 +289,9 @@ func ScanContext(ctx context.Context, kubeconfigPath, contextName string) (Conte
 type podListFunc func(context.Context, metav1.ListOptions) (*corev1.PodList, error)
 
 type podScanSample struct {
-	Items      []corev1.Pod
-	Incomplete bool
+	Items            []corev1.Pod
+	Incomplete       bool
+	IncompleteReason string
 }
 
 func listPodsForSetup(ctx context.Context, core kubernetes.Interface) podScanSample {
@@ -302,12 +307,14 @@ func listPodsForSetupWith(ctx context.Context, list podListFunc) podScanSample {
 		page, err := list(ctx, opts)
 		if err != nil || page == nil {
 			out.Incomplete = true
+			out.IncompleteReason = setupPodSampleIncompleteListError
 			return out
 		}
 		remaining := setupPodScanMaxPods - len(out.Items)
 		if len(page.Items) > remaining {
 			out.Items = append(out.Items, page.Items[:remaining]...)
 			out.Incomplete = true
+			out.IncompleteReason = setupPodSampleIncompleteCap
 			return out
 		}
 		out.Items = append(out.Items, page.Items...)
@@ -317,6 +324,7 @@ func listPodsForSetupWith(ctx context.Context, list podListFunc) podScanSample {
 		opts.Continue = page.Continue
 	}
 	out.Incomplete = true
+	out.IncompleteReason = setupPodSampleIncompleteCap
 	return out
 }
 
