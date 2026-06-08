@@ -575,12 +575,14 @@ func TestProfileCluster_PrintsRuntimeSummary(t *testing.T) {
 	profile := config.Profile{
 		SchemaVersion: config.CurrentSchemaVersion,
 		Contexts: []config.ContextProfile{{
-			Name:             "prod",
-			Reachable:        true,
-			NodeCount:        3,
-			RuntimePodCounts: map[string]int{"node": 4, "go": 2},
-			JVMPodCount:      1,
-			PythonPodCount:   0,
+			Name:                "prod",
+			Reachable:           true,
+			NodeCount:           3,
+			PodSampleCount:      2000,
+			PodSampleIncomplete: true,
+			RuntimePodCounts:    map[string]int{"node": 4, "go": 2},
+			JVMPodCount:         1,
+			PythonPodCount:      0,
 		}},
 	}
 	if err := config.SaveProfile(config.ProfilePath(), profile); err != nil {
@@ -592,7 +594,7 @@ func TestProfileCluster_PrintsRuntimeSummary(t *testing.T) {
 		t.Fatalf("profile cluster: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"runtimes=go=2,jvm=1,node=4", "frontend_pods=", "ingress_hosts="} {
+	for _, want := range []string{"pod_sample=2000(incomplete)", "runtimes=go=2,jvm=1,node=4", "frontend_pods=", "ingress_hosts="} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("profile cluster output missing %q:\n%s", want, got)
 		}

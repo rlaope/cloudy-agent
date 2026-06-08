@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/rlaope/cloudy/internal/config"
@@ -41,12 +42,17 @@ func allTestSkills() []*skills.Skill {
 }
 
 func hasRec(recs []Recommendation, name string) bool {
+	_, ok := recReason(recs, name)
+	return ok
+}
+
+func recReason(recs []Recommendation, name string) (string, bool) {
 	for _, r := range recs {
 		if r.SkillName == name {
-			return true
+			return r.Reason, true
 		}
 	}
-	return false
+	return "", false
 }
 
 // TestRecommend_AlwaysOn verifies always-on skills are present regardless of profile.
@@ -396,6 +402,35 @@ func TestRecommend_MultiContextRuntimePodCounts(t *testing.T) {
 	recs := Recommend(p, allTestSkills())
 	if !hasRec(recs, "node-runtime") {
 		t.Error("expected node-runtime when runtime_pod_counts sum across contexts >= 3")
+	}
+}
+
+func TestRecommend_RuntimeRecommendationReasonExplainsContextGate(t *testing.T) {
+	p := config.Profile{
+		SchemaVersion: config.CurrentSchemaVersion,
+		Contexts: []config.ContextProfile{{
+			Name:             "ctx",
+			Reachable:        true,
+			HasPrometheus:    true,
+			RuntimePodCounts: map[string]int{"node": 3, "native": 3},
+		}},
+	}
+	recs := Recommend(p, allTestSkills())
+
+	nodeReason, ok := recReason(recs, "node-runtime")
+	if !ok {
+		t.Fatal("expected node-runtime recommendation")
+	}
+	if !strings.Contains(nodeReason, "reachable Prometheus-backed contexts") {
+		t.Fatalf("node-runtime reason should explain Prometheus-backed context gate, got %q", nodeReason)
+	}
+
+	nativeReason, ok := recReason(recs, "native-perf")
+	if !ok {
+		t.Fatal("expected native-perf recommendation")
+	}
+	if !strings.Contains(nativeReason, "reachable Kubernetes contexts") {
+		t.Fatalf("native-perf reason should explain Kubernetes context gate, got %q", nativeReason)
 	}
 }
 

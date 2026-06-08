@@ -252,6 +252,9 @@ func TestListPodsForSetupWithPaginatesUntilContinueEmpty(t *testing.T) {
 	if len(got.Items) != 3 {
 		t.Fatalf("got %d pods, want 3", len(got.Items))
 	}
+	if got.Incomplete {
+		t.Fatal("sample should be complete when final page has no continue token")
+	}
 	if len(calls) != 2 {
 		t.Fatalf("got %d list calls, want 2", len(calls))
 	}
@@ -276,6 +279,22 @@ func TestListPodsForSetupWithCapsSample(t *testing.T) {
 
 	if len(got.Items) != setupPodScanMaxPods {
 		t.Fatalf("got %d pods, want cap %d", len(got.Items), setupPodScanMaxPods)
+	}
+	if !got.Incomplete {
+		t.Fatal("sample should be incomplete when the cap truncates a page")
+	}
+}
+
+func TestListPodsForSetupWithMarksIncompleteOnListError(t *testing.T) {
+	got := listPodsForSetupWith(context.Background(), func(ctx context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
+		return nil, context.Canceled
+	})
+
+	if len(got.Items) != 0 {
+		t.Fatalf("got %d pods, want none after list error", len(got.Items))
+	}
+	if !got.Incomplete {
+		t.Fatal("sample should be incomplete when a pod list page fails")
 	}
 }
 

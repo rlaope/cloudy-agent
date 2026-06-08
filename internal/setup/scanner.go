@@ -258,8 +258,10 @@ func ScanContext(ctx context.Context, kubeconfigPath, contextName string) (Conte
 
 	// Sample pods across namespaces with pagination, capped to keep setup fast
 	// on very large clusters while avoiding first-page-only bias.
-	pods := listPodsForSetup(ctx, core)
-	for _, p := range pods.Items {
+	podSample := listPodsForSetup(ctx, core)
+	result.PodSampleCount = len(podSample.Items)
+	result.PodSampleIncomplete = podSample.Incomplete
+	for _, p := range podSample.Items {
 		runtimes := detectPodRuntimes(p)
 		recordRuntimePodCounts(&result, runtimes)
 		if containsRuntime(runtimes, "jvm") {
@@ -282,23 +284,30 @@ func ScanContext(ctx context.Context, kubeconfigPath, contextName string) (Conte
 
 type podListFunc func(context.Context, metav1.ListOptions) (*corev1.PodList, error)
 
-func listPodsForSetup(ctx context.Context, core kubernetes.Interface) *corev1.PodList {
+type podScanSample struct {
+	Items      []corev1.Pod
+	Incomplete bool
+}
+
+func listPodsForSetup(ctx context.Context, core kubernetes.Interface) podScanSample {
 	return listPodsForSetupWith(ctx, func(ctx context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
 		return core.CoreV1().Pods("").List(ctx, opts)
 	})
 }
 
-func listPodsForSetupWith(ctx context.Context, list podListFunc) *corev1.PodList {
-	out := &corev1.PodList{}
+func listPodsForSetupWith(ctx context.Context, list podListFunc) podScanSample {
+	var out podScanSample
 	opts := metav1.ListOptions{Limit: setupPodScanPageLimit}
 	for len(out.Items) < setupPodScanMaxPods {
 		page, err := list(ctx, opts)
 		if err != nil || page == nil {
+			out.Incomplete = true
 			return out
 		}
 		remaining := setupPodScanMaxPods - len(out.Items)
 		if len(page.Items) > remaining {
 			out.Items = append(out.Items, page.Items[:remaining]...)
+			out.Incomplete = true
 			return out
 		}
 		out.Items = append(out.Items, page.Items...)
@@ -307,6 +316,7 @@ func listPodsForSetupWith(ctx context.Context, list podListFunc) *corev1.PodList
 		}
 		opts.Continue = page.Continue
 	}
+	out.Incomplete = true
 	return out
 }
 

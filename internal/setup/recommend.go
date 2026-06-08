@@ -65,7 +65,7 @@ func Recommend(p config.Profile, all []*skills.Skill) []Recommendation {
 		if total < runtimeRecommendationThreshold {
 			continue
 		}
-		out = add(out, rule.skillName, fmt.Sprintf("%s workloads detected (%d pods) — %s", rule.label, total, rule.reason))
+		out = add(out, rule.skillName, runtimeRecommendationReason(rule, total))
 	}
 
 	return out
@@ -108,6 +108,13 @@ func contextSupportsRuntimeRule(cp config.ContextProfile, rule runtimeRecommenda
 		return false
 	}
 	return !rule.requiresPrometheus || cp.HasPrometheus
+}
+
+func runtimeRecommendationReason(rule runtimeRecommendationRule, total int) string {
+	if rule.requiresPrometheus {
+		return fmt.Sprintf("%s workloads detected in reachable Prometheus-backed contexts (%d pods) — %s", rule.label, total, rule.reason)
+	}
+	return fmt.Sprintf("%s workloads detected in reachable Kubernetes contexts (%d pods) — %s", rule.label, total, rule.reason)
 }
 
 func contextRuntimePodCount(cp config.ContextProfile, runtime string) int {
