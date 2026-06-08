@@ -9,6 +9,11 @@
   the one deep read-only specialist. `triage-orchestrator` now hands broad
   health cases to this skill and is recommended only when setup finds a
   reachable Kubernetes context.
+- **`app-runtime-health` application-layer triage skill** — maps service p95/p99,
+  framework latency, and language-runtime symptoms onto HTTP RED metrics,
+  traces, logs, Kubernetes state, and existing Go/Node/Python/JVM/.NET/Ruby/native
+  runtime playbooks. Setup recommends it automatically when Prometheus and a
+  reachable Kubernetes context are discovered.
 
 ### Added — Tool surface (45 → 112, 10 → 16 groups)
 - **Cloud observability group (`cloud`, 24 tools)** — read-only AWS + Azure + GCP

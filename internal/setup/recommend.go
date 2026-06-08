@@ -42,6 +42,9 @@ func Recommend(p config.Profile, all []*skills.Skill) []Recommendation {
 	if hasReachableK8sContext(p) {
 		out = add(out, "triage-orchestrator", "reachable Kubernetes context detected — first-responder routing to the right deep skill")
 	}
+	if hasPrometheusReachableK8sContext(p) {
+		out = add(out, "app-runtime-health", "Prometheus and reachable Kubernetes context detected — application and service-layer p95/p99 triage available")
+	}
 
 	// GPU nodes present in any context.
 	for _, cp := range p.Contexts {
@@ -77,6 +80,15 @@ func Recommend(p config.Profile, all []*skills.Skill) []Recommendation {
 func hasReachableK8sContext(p config.Profile) bool {
 	for _, cp := range p.Contexts {
 		if cp.Reachable {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPrometheusReachableK8sContext(p config.Profile) bool {
+	for _, cp := range p.Contexts {
+		if cp.HasPrometheus && cp.Reachable {
 			return true
 		}
 	}
