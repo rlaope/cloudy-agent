@@ -16,6 +16,10 @@ triggers:
   - 5xx
   - traffic drop
   - saturation
+  - frontend slow
+  - web app slow
+  - webpage slow
+  - user experience
   - high cpu
   - high memory
   - queue backlog
@@ -27,6 +31,10 @@ triggers:
   - 부분 장애
   - 고객 영향
   - 지연 증가
+  - 프론트 느려
+  - 웹앱 느려
+  - 웹페이지 느려
+  - 사용자 체감
   - 에러율
   - 트래픽 감소
   - 포화
@@ -54,6 +62,7 @@ allowed_tools:
   - k8s.describe_pod
   - k8s.events
   - k8s.list_nodes
+  - k8s.list_ingresses
   - k8s.top_pods
   - k8s.top_nodes
   - gitops.argo_list_apps
@@ -90,7 +99,7 @@ Use four lenses in order:
 1. **Golden signals** — latency, traffic, errors, saturation.
 2. **Telemetry correlation** — metrics first, then traces/logs for the same window.
 3. **Runtime and control-plane state** — pods, nodes, events, recent deploys/changes.
-4. **Edge and managed-provider signals** — blackbox probes, queues, cloud metrics/logs/traces when the service boundary is outside Kubernetes or a managed dependency is implicated.
+4. **Edge, frontend, and managed-provider signals** — Web Vitals/RUM, blackbox probes, queues, cloud metrics/logs/traces when the service boundary is outside Kubernetes or a managed dependency is implicated.
 
 ## Investigation Playbook
 
@@ -118,6 +127,7 @@ Run the cheapest wired path first:
 Pick one dominant signal and deepen only there:
 
 - **Latency/errors**: if service-layer p95/p99 is the headline and the framework/runtime owner is not known, hand off to `app-runtime-health`. If the path itself needs span detail, use `trace.route_red`; otherwise search Tempo or Jaeger for the service and worst route/operation. Fetch only the top traces needed to identify a repeated bottleneck. Cross-check with `log.loki_query_range` for the same minutes.
+- **Frontend user experience**: if the operator says the webpage/web app is slow, Core Web Vitals regressed, users see browser JavaScript or hydration errors, or the page is up but feels bad, hand off to `frontend-web-health`. Use `k8s.list_ingresses` only to identify the likely host/service boundary before handing off.
 - **Traffic drop or external failure**: run `synthetic.http_check` when an endpoint URL is known, then compare to blackbox Prometheus history if present.
 - **Saturation**: use `k8s.top_pods`, `k8s.top_nodes`, `k8s.list_nodes`, and `k8s.describe_pod` to identify the constrained pod/node. If the constraint is DB/runtime-specific, hand off instead of profiling here.
 - **Queue backlog**: use `queue.rabbitmq_queues`, `queue.kafka_consumer_lag`, or `cloud.aws_sqs_queue_depth` to classify "no consumer" vs. "consumers falling behind."
@@ -136,6 +146,7 @@ Do not solve every subsystem in this skill. Route to the deep skill that matches
 | Dominant evidence | Hand off to |
 |---|---|
 | Recent deploy aligns with onset | `deploy-regression` |
+| Frontend/webpage UX, Core Web Vitals, browser JS/hydration, asset, or CDN/cache signal | `frontend-web-health` |
 | Service-layer p95/p99, framework, or language-runtime lead | `app-runtime-health` |
 | Error/latency path needs span detail | `trace-error-pivot` |
 | Log volume or top error pattern leads | `log-spike-correlation` |

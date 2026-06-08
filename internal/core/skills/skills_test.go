@@ -273,6 +273,46 @@ func TestRegistry_Suggest_ServiceLayerRuntimeSymptom(t *testing.T) {
 	}
 }
 
+func TestRegistry_Suggest_FrontendWebHealthSymptoms(t *testing.T) {
+	ss, err := skills.LoadBuiltin()
+	if err != nil {
+		t.Fatalf("LoadBuiltin: %v", err)
+	}
+	r := skills.New(ss)
+
+	cases := []string{
+		"core web vitals lcp inp cls regressed after deploy",
+		"frontend slow with browser javascript error and hydration error",
+		"웹페이지 느려 사용자 체감과 브라우저 에러를 봐줘",
+	}
+	for _, input := range cases {
+		t.Run(input, func(t *testing.T) {
+			results := r.Suggest(input)
+			if len(results) == 0 || results[0].Name != "frontend-web-health" {
+				t.Fatalf("Suggest(%q) = %v, want frontend-web-health first", input, skillNames(results))
+			}
+		})
+	}
+}
+
+func TestRegistry_Suggest_FrontendDoesNotStealEndpointOrP99(t *testing.T) {
+	ss, err := skills.LoadBuiltin()
+	if err != nil {
+		t.Fatalf("LoadBuiltin: %v", err)
+	}
+	r := skills.New(ss)
+
+	endpointResults := r.Suggest("endpoint down")
+	if len(endpointResults) == 0 || endpointResults[0].Name != "synthetic-probe" {
+		t.Fatalf("Suggest endpoint down = %v, want synthetic-probe first", skillNames(endpointResults))
+	}
+
+	p99Results := r.Suggest("p99 latency")
+	if len(p99Results) == 0 || p99Results[0].Name != "app-runtime-health" {
+		t.Fatalf("Suggest p99 latency = %v, want app-runtime-health first", skillNames(p99Results))
+	}
+}
+
 func TestRegistry_Suggest_ShortTriggerNeedsBoundary(t *testing.T) {
 	ss := []*skills.Skill{
 		{Name: "cloud-recon", Triggers: []string{"gcp status"}},
@@ -373,6 +413,45 @@ func TestLoadBuiltin_ServiceHealthCoversCoreObservabilityTools(t *testing.T) {
 	for _, tool := range want {
 		if !have[tool] {
 			t.Errorf("service-health allowed_tools missing %q", tool)
+		}
+	}
+}
+
+func TestLoadBuiltin_FrontendWebHealthCoversUXAndHandoffTools(t *testing.T) {
+	ss, err := skills.LoadBuiltin()
+	if err != nil {
+		t.Fatalf("LoadBuiltin: %v", err)
+	}
+	r := skills.New(ss)
+	s, ok := r.Get("frontend-web-health")
+	if !ok {
+		t.Fatal("LoadBuiltin missing frontend-web-health")
+	}
+	want := []string{
+		"synthetic.http_check",
+		"prom.query_range",
+		"prom.series",
+		"log.loki_query_range",
+		"trace.route_red",
+		"k8s.list_ingresses",
+		"change.recent",
+		"correlate.workload",
+		"cloud.aws_cw_get_metric_statistics",
+		"cloud.azure_appinsights_query",
+		"cloud.gcp_logging_read",
+	}
+	have := make(map[string]bool, len(s.AllowedTools))
+	for _, tool := range s.AllowedTools {
+		have[tool] = true
+	}
+	for _, tool := range want {
+		if !have[tool] {
+			t.Errorf("frontend-web-health allowed_tools missing %q", tool)
+		}
+	}
+	for _, phrase := range []string{"LCP", "INP", "CLS", "p75", "TTFB", "frontend-web-health"} {
+		if !strings.Contains(s.SystemPrompt, phrase) {
+			t.Errorf("frontend-web-health prompt should mention %q", phrase)
 		}
 	}
 }

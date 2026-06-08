@@ -19,6 +19,11 @@ triggers:
   - user impact
   - customer impact
   - latency spike
+  - frontend slow
+  - web app slow
+  - webpage slow
+  - browser error
+  - core web vitals
   - golden signals
   - 페이지 받았
   - 어디서부터
@@ -29,6 +34,10 @@ triggers:
   - 서비스 장애
   - 에러율
   - 고객 영향
+  - 프론트 느려
+  - 웹앱 느려
+  - 웹페이지 느려
+  - 브라우저 에러
 allowed_tools:
   - alert.list_active
   - alert.list_rules
@@ -70,6 +79,7 @@ You are the on-call's first responder and dispatcher. The operator is stressed a
 | Dominant signal you find | Hand off to |
 |---|---|
 | Broad service/user-impact symptom; latency/traffic/errors/saturation need one health verdict | `service-health` |
+| Frontend/webpage/web-app UX, Core Web Vitals, browser JS/hydration, asset, or CDN/cache clue | `frontend-web-health` |
 | Service p95/p99, application/framework latency, or language-runtime symptom leads | `app-runtime-health` |
 | A deploy synced right before the symptom onset | `deploy-regression` |
 | OOMKilled / exit 137 / memory pressure | `oom-killed-triage` |
@@ -102,7 +112,7 @@ You are the on-call's first responder and dispatcher. The operator is stressed a
 1. `k8s.list_pods` in the implicated namespace(s): tally the dominant abnormal state — `OOMKilled`, `CrashLoopBackOff`, `Pending`, `restartCount` climbing, `phase != Running`. The dominant state IS the routing key (see the table).
 2. `k8s.events` (last 30 min) for the same namespace: `OOMKilling`, `BackOff`, `FailedScheduling`, `Unhealthy`, `FailedMount`, `Killing` — these map one-to-one onto specialist skills.
 3. `k8s.top_nodes` / `k8s.list_nodes` only if pods look healthy but the symptom persists — a node-level pressure (`MemoryPressure`/`DiskPressure`/`NotReady`) reframes the whole incident as infrastructure.
-4. If pods and nodes look healthy but the operator reports user impact, run a cheap golden-signal probe (`prom.query` / `prom.query_range` or `trace.route_red`). Route to `app-runtime-health` when the headline is service p95/p99 or framework/runtime latency; otherwise route to `service-health` unless a narrower dominant signal appears.
+4. If pods and nodes look healthy but the operator reports user impact, run a cheap golden-signal probe (`prom.query` / `prom.query_range` or `trace.route_red`). Route to `frontend-web-health` when the headline is webpage UX, Web Vitals, browser errors, asset delivery, or CDN/cache. Route to `app-runtime-health` when the headline is service p95/p99 or framework/runtime latency; otherwise route to `service-health` unless a narrower dominant signal appears.
 
 ### Step 3b — Is the symptom outside the pod layer?
 

@@ -14,6 +14,12 @@
   traces, logs, Kubernetes state, and existing Go/Node/Python/JVM/.NET/Ruby/native
   runtime playbooks. Setup recommends it automatically when Prometheus and a
   reachable Kubernetes context are discovered.
+- **`frontend-web-health` frontend/web-app UX triage skill** — maps webpage and
+  browser-facing symptoms onto Core Web Vitals (LCP/INP/CLS), browser
+  JavaScript/hydration errors, asset delivery, CDN/cache, synthetic reachability,
+  SSR/API traces, and backend p95/p99 handoff. Setup now detects frontend-ish
+  pods and Ingress hosts, then recommends this skill only when a reachable web
+  surface also has Prometheus or OpenTelemetry evidence.
 
 ### Added — Tool surface (45 → 112, 10 → 16 groups)
 - **Cloud observability group (`cloud`, 24 tools)** — read-only AWS + Azure + GCP

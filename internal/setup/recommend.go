@@ -45,6 +45,9 @@ func Recommend(p config.Profile, all []*skills.Skill) []Recommendation {
 	if hasPrometheusReachableK8sContext(p) {
 		out = add(out, "app-runtime-health", "Prometheus and reachable Kubernetes context detected — application and service-layer p95/p99 triage available")
 	}
+	if hasObservableFrontendSurface(p) {
+		out = add(out, "frontend-web-health", "frontend/web surface plus Prometheus or OpenTelemetry telemetry detected — Web Vitals, browser error, asset, CDN, and SSR/API triage available")
+	}
 
 	// GPU nodes present in any context.
 	for _, cp := range p.Contexts {
@@ -75,6 +78,15 @@ func Recommend(p config.Profile, all []*skills.Skill) []Recommendation {
 	}
 
 	return out
+}
+
+func hasObservableFrontendSurface(p config.Profile) bool {
+	for _, cp := range p.Contexts {
+		if cp.Reachable && cp.HasFrontendSurface && (cp.HasPrometheus || cp.HasOTel) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasReachableK8sContext(p config.Profile) bool {

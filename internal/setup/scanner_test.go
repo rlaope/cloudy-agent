@@ -7,6 +7,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -39,6 +40,12 @@ func makePod(name, ns, image string, envs map[string]string) *corev1.Pod {
 			Containers: []corev1.Container{{Name: "c", Image: image, Env: envVars}},
 		},
 	}
+}
+
+func makeLabeledPod(name, ns, image string, labels map[string]string) *corev1.Pod {
+	p := makePod(name, ns, image, nil)
+	p.Labels = labels
+	return p
 }
 
 // TestIsGPUNode_ByAllocatable verifies detection via nvidia.com/gpu allocatable.
@@ -114,6 +121,45 @@ func TestNonGPUNonJVMNonPython(t *testing.T) {
 	}
 }
 
+func TestIsFrontendPod_ByImageNameLabelAndEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		pod  *corev1.Pod
+	}{
+		{
+			name: "nginx image",
+			pod:  makePod("static-assets", "default", "nginx:1.27", nil),
+		},
+		{
+			name: "next app name",
+			pod:  makePod("checkout-next-web", "default", "registry.local/app:20260608", nil),
+		},
+		{
+			name: "component label",
+			pod:  makeLabeledPod("checkout", "default", "registry.local/app:20260608", map[string]string{"app.kubernetes.io/component": "frontend"}),
+		},
+		{
+			name: "public build env",
+			pod:  makePod("checkout", "default", "registry.local/app:20260608", map[string]string{"NEXT_PUBLIC_API_BASE": "https://api.example.com"}),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !isFrontendPod(*tc.pod) {
+				t.Errorf("expected frontend pod for %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestIsFrontendPod_DoesNotTreatPlainNodeAPIAsFrontend(t *testing.T) {
+	p := makePod("orders-api", "default", "node:22-alpine", map[string]string{"NODE_ENV": "production"})
+	if isFrontendPod(*p) {
+		t.Error("plain Node API should not be classified as frontend")
+	}
+}
+
 // TestDetectComponents_MetricsServer verifies metrics-server detection.
 func TestDetectComponents_MetricsServer(t *testing.T) {
 	dep := &appsv1.Deployment{
@@ -149,6 +195,26 @@ func TestDetectComponents_Prometheus(t *testing.T) {
 	}
 	if len(result.PrometheusURLs) == 0 {
 		t.Error("expected at least one PrometheusURL")
+	}
+}
+
+func TestDetectComponents_IngressFrontendSurface(t *testing.T) {
+	ing := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{Name: "checkout-web", Namespace: "default"},
+		Spec: networkingv1.IngressSpec{
+			Rules: []networkingv1.IngressRule{{Host: "checkout.example.com"}},
+		},
+	}
+	core := fake.NewSimpleClientset(ing)
+
+	result := &ContextResult{}
+	detectComponents(context.Background(), core, []string{"default"}, result)
+
+	if !result.HasFrontendSurface {
+		t.Error("expected HasFrontendSurface=true")
+	}
+	if result.IngressHostCount != 1 {
+		t.Errorf("IngressHostCount = %d, want 1", result.IngressHostCount)
 	}
 }
 

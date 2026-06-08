@@ -152,8 +152,8 @@ func profileCluster(stdout io.Writer) error {
 		p.SchemaVersion, p.GeneratedAt.Format("2006-01-02 15:04:05"),
 		len(p.Contexts), len(p.RecommendedSkills))
 	for _, c := range p.Contexts {
-		fmt.Fprintf(stdout, "  - %s  reachable=%v  nodes=%d  gpu=%d  jvm_pods=%d  py_pods=%d\n",
-			c.Name, c.Reachable, c.NodeCount, c.GPUNodeCount, c.JVMPodCount, c.PythonPodCount)
+		fmt.Fprintf(stdout, "  - %s  reachable=%v  nodes=%d  gpu=%d  jvm_pods=%d  py_pods=%d  frontend_pods=%d  ingress_hosts=%d\n",
+			c.Name, c.Reachable, c.NodeCount, c.GPUNodeCount, c.JVMPodCount, c.PythonPodCount, c.FrontendPodCount, c.IngressHostCount)
 	}
 	return nil
 }

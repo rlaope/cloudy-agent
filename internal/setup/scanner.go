@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -39,6 +40,7 @@ var canonicalPermissionProbes = []struct {
 	{"", "services", "", "list"},
 	{"", "events", "", "list"},
 	{"", "namespaces", "", "list"},
+	{"networking.k8s.io", "ingresses", "", "list"},
 	{"apps", "deployments", "", "list"},
 	{"apps", "daemonsets", "", "list"},
 	{"metrics.k8s.io", "pods", "", "list"},
@@ -67,6 +69,27 @@ var jvmImageRe = regexp.MustCompile(`jdk|jre|openjdk|:\d+-jdk|:\d+-jre`)
 
 // pythonImageRe matches image names that suggest a Python runtime.
 var pythonImageRe = regexp.MustCompile(`python`)
+
+// frontendEnvPrefixes are public browser-build environment variable prefixes
+// commonly present in web app containers.
+var frontendEnvPrefixes = []string{"NEXT_PUBLIC_", "VITE_", "REACT_APP_"}
+
+var frontendHintTokens = map[string]bool{
+	"frontend": true,
+	"web":      true,
+	"webapp":   true,
+	"www":      true,
+	"static":   true,
+	"spa":      true,
+	"ui":       true,
+	"nginx":    true,
+	"httpd":    true,
+	"caddy":    true,
+	"next":     true,
+	"nextjs":   true,
+	"vite":     true,
+	"react":    true,
+}
 
 // ScanContext probes a single Kubernetes context and returns a ContextResult
 // with the discovered topology. If the API server is unreachable the result has
@@ -130,6 +153,10 @@ func ScanContext(ctx context.Context, kubeconfigPath, contextName string) (Conte
 		}
 		if isPythonPod(p) {
 			result.PythonPodCount++
+		}
+		if isFrontendPod(p) {
+			result.FrontendPodCount++
+			result.HasFrontendSurface = true
 		}
 	}
 
@@ -272,6 +299,52 @@ func isPythonPod(p corev1.Pod) bool {
 	return false
 }
 
+// isFrontendPod returns true when a pod looks like a browser-facing web app or
+// static frontend surface. It intentionally avoids treating every Node.js image
+// as frontend, since many Node services are server-only APIs.
+func isFrontendPod(p corev1.Pod) bool {
+	if hasFrontendHint(p.Name, p.GenerateName) {
+		return true
+	}
+	for k, v := range p.Labels {
+		if hasFrontendHint(k, v) {
+			return true
+		}
+	}
+	for k, v := range p.Annotations {
+		if hasFrontendHint(k, v) {
+			return true
+		}
+	}
+	for _, c := range p.Spec.Containers {
+		if hasFrontendHint(c.Name, c.Image) {
+			return true
+		}
+		for _, env := range c.Env {
+			for _, prefix := range frontendEnvPrefixes {
+				if strings.HasPrefix(env.Name, prefix) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func hasFrontendHint(values ...string) bool {
+	for _, value := range values {
+		tokens := strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		})
+		for _, token := range tokens {
+			if frontendHintTokens[token] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // detectComponents probes for well-known infrastructure components.
 func detectComponents(ctx context.Context, core kubernetes.Interface, namespaces []string, result *ContextResult) {
 	// metrics-server: Deployment named "metrics-server" in kube-system.
@@ -307,6 +380,24 @@ func detectComponents(ctx context.Context, core kubernetes.Interface, namespaces
 
 			if strings.Contains(name, "otel") || strings.Contains(appName, "opentelemetry") {
 				result.HasOTel = true
+			}
+		}
+
+		ingresses, err := core.NetworkingV1().Ingresses(ns).List(ctx, metav1.ListOptions{})
+		if err == nil {
+			for _, ing := range ingresses.Items {
+				if len(ing.Spec.Rules) == 0 && ing.Spec.DefaultBackend != nil {
+					result.IngressHostCount++
+					result.HasFrontendSurface = true
+					continue
+				}
+				for _, rule := range ing.Spec.Rules {
+					if rule.Host == "" {
+						continue
+					}
+					result.IngressHostCount++
+					result.HasFrontendSurface = true
+				}
 			}
 		}
 
