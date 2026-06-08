@@ -88,6 +88,8 @@ You are an application runtime health analyst. The operator is already past "is 
 
 The core question is: **which application layer owns the bad tail latency, and which specialist should take the next step?**
 
+If the operator's headline is frontend/webpage UX, Core Web Vitals, browser JavaScript or hydration errors, chunk load failures, source-map/release skew, or CDN/cache behavior, route to `frontend-web-health` first. This skill should take over only after TTFB, SSR/API, server p95/p99, framework latency, or language-runtime evidence becomes the dominant signal.
+
 ## Investigation Playbook
 
 ### Step 1 — Identify service, framework, runtime, and window
@@ -150,6 +152,7 @@ Do not solve every subsystem here. Pick the first owner that the evidence suppor
 | Dominant evidence | Hand off to |
 |---|---|
 | Service/user-impact verdict is still unclear | `service-health` |
+| Frontend/webpage UX, Web Vitals, browser JS/hydration, asset, or CDN/cache lead | `frontend-web-health` |
 | One slow route needs span detail | `trace-error-pivot` |
 | DB/cache/query/lock dominates the trace | `db-latency-hunt` |
 | Recent deploy aligns with framework-level regression | `deploy-regression` |

@@ -17,13 +17,16 @@ func TestProfile_SaveAndLoad_RoundTrip(t *testing.T) {
 		GeneratedAt:   time.Now().UTC().Truncate(time.Second),
 		Contexts: []config.ContextProfile{
 			{
-				Name:          "prod",
-				Reachable:     true,
-				K8sVersion:    "v1.28.5",
-				NodeCount:     10,
-				GPUNodeCount:  2,
-				Namespaces:    []string{"default", "kube-system"},
-				HasPrometheus: true,
+				Name:               "prod",
+				Reachable:          true,
+				K8sVersion:         "v1.28.5",
+				NodeCount:          10,
+				GPUNodeCount:       2,
+				Namespaces:         []string{"default", "kube-system"},
+				HasPrometheus:      true,
+				FrontendPodCount:   3,
+				IngressHostCount:   2,
+				HasFrontendSurface: true,
 			},
 		},
 		RecommendedSkills: []string{"k8s-incident", "gpu-saturation"},
@@ -52,6 +55,15 @@ func TestProfile_SaveAndLoad_RoundTrip(t *testing.T) {
 	}
 	if loaded.Contexts[0].K8sVersion != "v1.28.5" {
 		t.Errorf("K8sVersion: got %q, want v1.28.5", loaded.Contexts[0].K8sVersion)
+	}
+	if loaded.Contexts[0].FrontendPodCount != 3 {
+		t.Errorf("FrontendPodCount: got %d, want 3", loaded.Contexts[0].FrontendPodCount)
+	}
+	if loaded.Contexts[0].IngressHostCount != 2 {
+		t.Errorf("IngressHostCount: got %d, want 2", loaded.Contexts[0].IngressHostCount)
+	}
+	if !loaded.Contexts[0].HasFrontendSurface {
+		t.Error("HasFrontendSurface: got false, want true")
 	}
 	if len(loaded.RecommendedSkills) != 2 {
 		t.Errorf("RecommendedSkills len: got %d, want 2", len(loaded.RecommendedSkills))

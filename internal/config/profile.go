@@ -59,6 +59,18 @@ type ContextProfile struct {
 	// PythonPodCount is the count of pods whose images suggest a Python runtime.
 	PythonPodCount int `yaml:"python_pod_count"`
 
+	// FrontendPodCount is the count of pods whose names, labels, env, or images
+	// suggest a browser-facing web/frontend workload.
+	FrontendPodCount int `yaml:"frontend_pod_count"`
+
+	// IngressHostCount is the number of Ingress host/default-backend surfaces
+	// visible to setup probing.
+	IngressHostCount int `yaml:"ingress_host_count"`
+
+	// HasFrontendSurface indicates that setup saw at least one browser-facing
+	// workload or Ingress surface.
+	HasFrontendSurface bool `yaml:"has_frontend_surface"`
+
 	// HasMetricsServer indicates whether the metrics-server API is available.
 	HasMetricsServer bool `yaml:"has_metrics_server"`
 

@@ -13,6 +13,7 @@ func allTestSkills() []*skills.Skill {
 	names := []string{
 		"service-health",
 		"app-runtime-health",
+		"frontend-web-health",
 		"triage-orchestrator",
 		"k8s-incident",
 		"prom-explorer",
@@ -102,6 +103,73 @@ func TestRecommend_AppRuntimeHealthAbsentWithoutPrometheus(t *testing.T) {
 	recs := Recommend(p, allTestSkills())
 	if hasRec(recs, "app-runtime-health") {
 		t.Error("did not expect app-runtime-health without Prometheus")
+	}
+}
+
+func TestRecommend_FrontendWebHealthRequiresObservableFrontendSurface(t *testing.T) {
+	p := config.Profile{
+		SchemaVersion: config.CurrentSchemaVersion,
+		Contexts: []config.ContextProfile{{
+			Name:               "ctx",
+			Reachable:          true,
+			HasPrometheus:      true,
+			HasFrontendSurface: true,
+			FrontendPodCount:   2,
+			IngressHostCount:   1,
+		}},
+	}
+	recs := Recommend(p, allTestSkills())
+	if !hasRec(recs, "frontend-web-health") {
+		t.Error("expected frontend-web-health when a reachable frontend surface has telemetry")
+	}
+}
+
+func TestRecommend_FrontendWebHealthAllowsOTelTelemetry(t *testing.T) {
+	p := config.Profile{
+		SchemaVersion: config.CurrentSchemaVersion,
+		Contexts: []config.ContextProfile{{
+			Name:               "ctx",
+			Reachable:          true,
+			HasOTel:            true,
+			HasFrontendSurface: true,
+			IngressHostCount:   1,
+		}},
+	}
+	recs := Recommend(p, allTestSkills())
+	if !hasRec(recs, "frontend-web-health") {
+		t.Error("expected frontend-web-health when a reachable frontend surface has OTel")
+	}
+}
+
+func TestRecommend_FrontendWebHealthAbsentWithoutSurfaceOrTelemetry(t *testing.T) {
+	cases := []struct {
+		name string
+		cp   config.ContextProfile
+	}{
+		{
+			name: "telemetry without frontend surface",
+			cp:   config.ContextProfile{Name: "ctx", Reachable: true, HasPrometheus: true},
+		},
+		{
+			name: "frontend surface without telemetry",
+			cp:   config.ContextProfile{Name: "ctx", Reachable: true, HasFrontendSurface: true, FrontendPodCount: 1},
+		},
+		{
+			name: "unreachable frontend surface",
+			cp:   config.ContextProfile{Name: "ctx", Reachable: false, HasPrometheus: true, HasFrontendSurface: true, IngressHostCount: 1},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := config.Profile{
+				SchemaVersion: config.CurrentSchemaVersion,
+				Contexts:      []config.ContextProfile{tc.cp},
+			}
+			recs := Recommend(p, allTestSkills())
+			if hasRec(recs, "frontend-web-health") {
+				t.Errorf("did not expect frontend-web-health for %s", tc.name)
+			}
+		})
 	}
 }
 
